@@ -1835,3 +1835,27 @@ label.cap-off {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
+
+
+/* =========================================================================
+   ✨ THE AI EDITOR TAB
+   ========================================================================= */
+/* A radio or a checkbox with a paragraph beside it. ⚠ `align-items: start` and
+   not `center`: the note wraps to three lines on a narrow panel, and a centred
+   control floats into the middle of its own explanation. */
+.admin-chat-dock {
+  display: flex;
+  align-items: start;
+  gap: 0.6rem;
+}
+.admin-chat-dock input {
+  margin-top: 0.25rem;
+  flex: 0 0 auto;
+}
+/* ⚠ NARROW ON PURPOSE. `theme.css` puts `select { width: 100% }` on everything
+   and these number boxes inherit the same instinct from `.admin-search`; a
+   four-digit allowance in a full-width field reads as a text box somebody forgot
+   to size. Same bug the Work Log records for the project settings selects. */
+.admin-chat-num {
+  max-width: 9rem;
+}

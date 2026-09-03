@@ -14,6 +14,11 @@ import AdminOverview from "./AdminOverview.jsx";
 import AdminUsers from "./AdminUsers.jsx";
 import AdminActivity from "./AdminActivity.jsx";
 import AdminFeatures from "./AdminFeatures.jsx";
+// ✨ The AI Editor chat. ⚠ ITS OWN TAB RATHER THAN A PANEL INSIDE Features,
+// because Features answers "is it on" for forty things and this answers five
+// different questions about one — where it opens, what it costs, how careful it
+// is. See the header of AdminChat.jsx for the three stores behind it.
+import AdminChat from "./AdminChat.jsx";
 import AdminPricing from "./AdminPricing.jsx";
 import AdminSales from "./AdminSales.jsx";
 import AdminBrand from "./AdminBrand.jsx";
@@ -36,6 +41,11 @@ const TABS = [
   { id: "users", label: "Users", ico: "👥" },
   { id: "features", label: "Features", ico: "🎛️" },
   { id: "pricing", label: "Pricing", ico: "💳" },
+  // ⚠ BETWEEN PRICING AND SALES, AND THAT IS THE ARGUMENT FOR IT. This tab
+  // edits a per-tier allowance, so it belongs with the two tabs that answer
+  // "what does a plan get you" — not off beside Brand with the things an
+  // operator opens once a year.
+  { id: "chat", label: "AI Editor", ico: "✨" },
   // Pricing is the MENU (what a plan costs); Sales is the TRANSACTIONS and the
   // discounts that shaped them. Kept apart because they are edited at
   // completely different moments.
@@ -123,6 +133,7 @@ export default function AdminPanel() {
       )}
       {tab === "features" && <AdminFeatures />}
       {tab === "pricing" && <AdminPricing />}
+      {tab === "chat" && <AdminChat />}
       {tab === "sales" && <AdminSales onOpenUser={openUser} />}
       {tab === "brand" && <AdminBrand />}
       {tab === "explore" && <AdminExplore />}

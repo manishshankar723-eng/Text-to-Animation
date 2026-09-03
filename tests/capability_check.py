@@ -157,16 +157,20 @@ print("\n--- the boot call carries the capabilities, shaped for a button ---")
 # that out from the raw `states` map would put the drawing rules in two places,
 # which is the thing the resolver exists to end.
 rows = caps(CUST)
-check("all six are there", len(rows), 6)
+# ⚠ DERIVED FROM `_CAPABILITIES`, NOT TYPED OUT. This assertion was `6` and it
+# broke the day a seventh capability shipped — a test that has to be edited every
+# time the thing it guards grows is a test people learn to edit without reading.
+# What is worth pinning is that the resolver returns ALL of them, whatever there
+# happens to be, and section below still pins the ids against the client's copy.
+EXPECTED_CAPS = sorted(cid for cid, *_ in feat._CAPABILITIES)
+check("every capability is there", len(rows), len(EXPECTED_CAPS))
 check("…every one of them on", all(c["on"] for c in rows.values()))
 check("…each carrying the label to print", rows["veo-render"]["label"], "Veo video renders")
 check("…and the icon", bool(rows["veo-render"]["icon"]), True)
 check("…with no reason, because there is nothing to refuse", rows["veo-render"]["reason"], "")
 check("…and the key, so a caller can find it in `states`",
       rows["veo-render"]["key"], "cap.veo-render")
-check("the ids are the key without its prefix",
-      sorted(rows), ["3d-meshy", "captions", "director", "image-generate",
-                     "tts-voiceover", "veo-render"])
+check("the ids are the key without its prefix", sorted(rows), EXPECTED_CAPS)
 
 # ⚠ THE FALLBACK IN THE BROWSER IS A COPY OF THE SERVER'S CATALOGUE, and it is
 # what the app draws with before this call lands. If the two drift, an account
@@ -263,7 +267,7 @@ client.post("/admin/users/cust@example.com/override",
             json={"key": "cap.director", "value": None}, headers=bearer(BOSS))
 client.post("/admin/users/cust@example.com/override",
             json={"key": "cap.tts-voiceover", "value": None}, headers=bearer(BOSS))
-check("clearing them puts everything back", len(caps(CUST)), 6)
+check("clearing them puts everything back", len(caps(CUST)), len(EXPECTED_CAPS))
 
 
 # ===========================================================================

@@ -249,6 +249,134 @@ export function musicCue({ analysis } = {}) {
 }
 
 /**
+ * THE BED A FILM GETS WHEN NOBODY READ IT — phase E's answer on the free door.
+ *
+ * ⚠ THIS FILE ARGUED AGAINST EXACTLY THIS, AND THE ARGUMENT WAS TOO WIDE. The
+ * note over `sfxCues` says the rules planner "writes no words — no captions, no
+ * motion prompts, no cues", and that is right about a DOOR SLAM: which moment in
+ * a film is a door closing is a story question and arithmetic cannot answer it.
+ * It is not right about a music bed. A bed is not an event in the film, it is a
+ * property of the whole of it, and the one thing a timeline knows without being
+ * told — how fast it cuts — is the same thing an editor uses to choose one.
+ *
+ * Reported from the screen: the AI pass failed with a 403, the run fell back to
+ * "Just the rhythm", and Background music was ticked — so the panel showed a
+ * ticked box that could not do anything. *"Sound and bg music nhi aaya timeline
+ * pe"*.
+ *
+ * ⚠ THE QUERY IS READ OFF THE CUTTING PACE, which is the only evidence there is.
+ * A film that cuts every two seconds is not asking for the same bed as one that
+ * holds every shot for eight. Three bands rather than a curve, because the
+ * search is a bag of words and "3.4-second-median music" is not a thing anyone
+ * has uploaded.
+ *
+ * ⚠ AND IT IS INSTRUMENTAL, EVERY TIME. A bed with a vocal on it fights the
+ * voiceover for the same part of the ear, and phase B may add one after this cue
+ * was written. The word is in the query rather than in a filter because
+ * Freesound has no such filter — see `_cue_attempts` in `server/animatics.py`.
+ *
+ * ⚠ IT IS ONLY EVER A FALLBACK. A reading that named its own music wins: it read
+ * the film and this counted its cuts. See `loadCues` in `useDirectorRun.js`.
+ *
+ * @returns `{ key, query, mood, kind }` — the same shape `musicCue` returns
+ */
+export function houseMusicCue({ frames } = {}) {
+  const row = frames || [];
+  if (!row.length) return null;
+  const lengths = row
+    .map((f) => Math.max(1, Number(f?.duration_ms) || 0))
+    .sort((a, b) => a - b);
+  const mid = Math.floor(lengths.length / 2);
+  const median =
+    lengths.length % 2 ? lengths[mid] : Math.round((lengths[mid - 1] + lengths[mid]) / 2);
+  const band =
+    median <= 2500
+      ? { mood: "upbeat", query: "upbeat energetic corporate background music instrumental" }
+      : median <= 5000
+        ? { mood: "warm", query: "calm cinematic background music instrumental" }
+        : { mood: "ambient", query: "slow ambient atmospheric background music instrumental" };
+  const key = cueKey(band.query);
+  if (!key) return null;
+  return { key, query: band.query, mood: band.mood, kind: "music" };
+}
+
+/** What a house sound effect is. One recording, laid on the cuts that were treated. */
+export const HOUSE_SFX_QUERY = "whoosh transition swoosh";
+
+/**
+ * THE EFFECTS A FILM GETS WHEN NOBODY READ IT — phase D's answer on the free door.
+ *
+ * ⚠ AND IT IS NOT "A WHOOSH ON EVERY CUT", which is what `sfxCues`' note refuses
+ * and is still refused here. It is a whoosh on the cuts THE PLAN ALREADY
+ * TREATED — the ones that carry a dissolve, a slide or a wipe. That distinction
+ * is the whole justification: laying a sound on an ordinary cut is an opinion
+ * about the story ("something happens here"), while laying one under a
+ * transition is an opinion about the TRANSITION, and rhythm is the one thing
+ * this planner is allowed to have opinions about. It is also what an editor
+ * does — a swoosh under a wipe is craft, not narrative.
+ *
+ * ⚠ ONE RECORDING, NOT ONE PER CUT. Eleven different whooshes is eleven searches
+ * out of a shared budget and eleven different noises in one film; one is a
+ * choice. Same reasoning as `sfxCues`' "six shots that all cue footsteps on
+ * gravel are one search".
+ *
+ * ⚠ IT LANDS WITH THE TRANSITION, NOT ON THE CUT. A transition is
+ * boundary-local — half of it plays before the cut and half after (see
+ * `transitions.js`) — so a sound started ON the cut arrives halfway through the
+ * gesture it is supposed to be sounding.
+ *
+ * ⚠ IT IS ONLY EVER A FALLBACK, like `houseMusicCue`: a reading that cued its own
+ * effects wins.
+ *
+ * @param plan   the plan being previewed — only its `add_transition` steps are read
+ * @param frames the picture row, for turning a cut into the arriving clip
+ * @param starts where each frame begins
+ * @returns the same `{ cues, sounds, skipped }` shape `sfxCues` returns
+ */
+export function houseSfxCues({ plan, frames, starts } = {}) {
+  const row = frames || [];
+  const at = starts || [];
+  const cues = [];
+  const skipped = [];
+  const steps = (plan && Array.isArray(plan.steps) ? plan.steps : []).filter(
+    (step) => step && step.verb === "add_transition"
+  );
+  if (!steps.length || !row.length) return { cues, sounds: [], skipped };
+  const key = cueKey(HOUSE_SFX_QUERY);
+  if (!key) return { cues, sounds: [], skipped };
+
+  for (const step of steps) {
+    const cut = Number(step.args && step.args.cut);
+    // The ARRIVING shot: cut 1 is between shot 1 and shot 2, so the sound belongs
+    // to `frames[cut]`. A cut naming a shot that is no longer there is skipped in
+    // silence — the transition step itself is already refused by `validatePlan`.
+    const frame = row[cut];
+    if (!Number.isFinite(cut) || !frame) continue;
+    if (cues.length >= MAX_SFX_CLIPS) {
+      skipped.push({
+        shot: cut + 1,
+        query: HOUSE_SFX_QUERY,
+        why: `past the ${MAX_SFX_CLIPS}-cue ceiling`,
+      });
+      continue;
+    }
+    const ms = Math.max(0, Math.round(Number(step.args && step.args.ms) || 0));
+    const start = Math.max(0, Math.round(Number(at[cut]) || 0));
+    cues.push({
+      shot: cut + 1,
+      frame_id: frame.id,
+      key,
+      query: HOUSE_SFX_QUERY,
+      at_ms: Math.max(0, start - Math.round(ms / 2)),
+      hold_ms: Math.max(0, Math.round(Number(frame.duration_ms) || 0)),
+    });
+  }
+
+  if (!cues.length) return { cues: [], sounds: [], skipped };
+  return { cues, sounds: [{ key, query: HOUSE_SFX_QUERY, kind: "sfx" }], skipped };
+}
+
+/**
  * IS THERE A PASS TO RUN AT ALL?
  *
  * Returns a reason rather than a boolean, for the same reason `speechDue` does:
@@ -263,8 +391,9 @@ export function sfxDue(include, sounds) {
     return {
       due: false,
       why:
-        "Nothing cued any sound effects. The reading writes them, so “Just the rhythm” " +
-        "never has any — ask the AI to read the film and it will.",
+        "Nothing cued any sound effects. “Just the rhythm” lays one under each cut it " +
+        "treats, so a plan with no transitions in it has nowhere to put a sound — " +
+        "ask the AI to read the film for effects that belong to the story.",
     };
   }
   return { due: true, why: "" };
@@ -277,9 +406,7 @@ export function musicDue(include, cue) {
   if (!cue) {
     return {
       due: false,
-      why:
-        "The reading asked for no music. “Just the rhythm” never does — it writes no " +
-        "words at all — and a film the reading thinks should play dry is left dry.",
+      why: "There is nothing on the timeline to score yet.",
     };
   }
   return { due: true, why: "" };

@@ -3026,15 +3026,63 @@ print(chr(10) + "8q · A drawn shape: its rectangle, and its fill colour")
 import struct as _struct  # noqa: E402
 
 
-def _appearance(rgb: bytes, *, size=404, before=None, after=None, pad=0) -> bytes:
-    """A shape's `Appearance` blob, laid out the way every real one is."""
-    blob = bytearray(size)
-    blob[0x170:0x17E] = (before if before is not None
-                         else bytes.fromhex("0a000700080009000a0000000000"))
-    blob[0x17E] = pad
-    blob[0x17F:0x182] = rgb
-    blob[0x182:0x186] = after if after is not None else bytes.fromhex("0a000800")
-    return bytes(blob)
+def _appearance(rgb: bytes, *, magic=b"\x44\x33\x22\x11", stroke=None) -> bytes:
+    """A shape's `Appearance` blob — the same FlatBuffer a caption is written in.
+
+    ⚠ **REWRITTEN FROM A FIXED-OFFSET FIXTURE TO A REAL ONE (§8t).** E76 pinned
+    this record by DIFFERENCE at absolute offsets, which worked — on the 441
+    blobs that happen to be exactly 404 bytes. 533 of the 974 in the corpus are
+    not, and every one of those was refused. The record is `root → field 0 →
+    field 0 = fill` (field 5 is the outline), so a fixture that lays out bytes at
+    0x170 is no longer testing anything the reader does.
+
+    Built by hand, vtables and all, for the reason §8s gives: the layout IS the
+    finding, so a fixture that asked the module where the fields were would
+    follow the code anywhere it moved.
+    """
+    buf = bytearray(bytes(12))
+    buf[8:12] = magic
+
+    def pad4():
+        while len(buf) % 4:
+            buf.append(0)
+
+    def table(fields, body):
+        width = max((fid for fid, _ in fields), default=-1) + 1
+        slots = dict(fields)
+        vt = bytearray(_struct.pack("<HH", 4 + 2 * width, 4 + len(body)))
+        for fid in range(width):
+            vt += _struct.pack("<H", slots.get(fid, 0))
+        vt_at = len(buf)
+        buf.extend(vt)
+        pos = len(buf)
+        buf.extend(_struct.pack("<i", pos - vt_at))
+        buf.extend(body)
+        pad4()
+        return pos
+
+    def colour(channels):
+        # A channel equal to 255 is NOT written — it equals the default.
+        body = bytearray()
+        slots = []
+        for i, value in enumerate(channels):
+            if value == 255:
+                continue
+            slots.append((i, 4 + len(body)))
+            body.append(value)
+        return table(slots, bytes(body))
+
+    root_at = table([(0, 4)], _struct.pack("<i", 0))
+    buf[12:16] = _struct.pack("<I", root_at - 12)
+    fields = [(0, 4)] + ([(5, 8)] if stroke else [])
+    body = _struct.pack("<i", 0) + (_struct.pack("<i", 0) if stroke else b"")
+    app_at = table(fields, body)
+    _struct.pack_into("<i", buf, root_at + 4, app_at - (root_at + 4))
+    _struct.pack_into("<i", buf, app_at + 4, colour(rgb) - (app_at + 4))
+    if stroke:
+        _struct.pack_into("<i", buf, app_at + 8, colour(stroke) - (app_at + 8))
+    buf[0:4] = _struct.pack("<I", len(buf) - 12)
+    return bytes(buf)
 
 
 def _path(points) -> bytes:
@@ -3055,15 +3103,31 @@ check("…and it is the fill, not a fixed answer",
 # ⚠ THE GUARDS. A shape drawn from a misread blob is a full-frame rectangle in a
 # colour nobody chose, over somebody's film — E45 in a new coat of paint. Every
 # one of these has to answer "" and fall back to the invisible placeholder.
-check("a blob of the wrong length is refused",
-      interchange.prproj_shape_fill(_appearance(b"\xff\xff\xff", size=403)) == "")
-check("…so is one whose layout does not match what this was measured on",
+check("a blob with the wrong magic is refused",
       interchange.prproj_shape_fill(
-          _appearance(b"\xff\xff\xff", before=bytes(14))) == ""
+          _appearance(b"\xff\xff\xff", magic=b"\x00\x00\x00\x00")) == "")
+_APP = _appearance(bytes.fromhex("f25d5d"))
+check("…so is one truncated anywhere at all",
+      all(interchange.prproj_shape_fill(_APP[:n]) == ""
+          for n in range(len(_APP) - 4)),
+      "a truncated Appearance blob answered a colour")
+check("…and so is one whose root offset points off the end",
+      interchange.prproj_shape_fill(
+          _APP[:12] + b"\xff\xff\xff\x7f" + _APP[16:]) == "")
+# ⚠ THE FILL IS FIELD 0 AND THE OUTLINE IS FIELD 5, AND READING THE WRONG ONE IS
+# A SHAPE IN A COLOUR NOBODY CHOSE. 679 of the corpus's 974 blobs carry `#3f3f3f`
+# in field 5 — Premiere's default swatch grey, and the same value the caption bar
+# turned out to be — so a reader that took field 5 would paint most of them grey.
+check("the FILL is read, not the outline beside it",
+      interchange.prproj_shape_fill(
+          _appearance(bytes.fromhex("f25d5d"),
+                      stroke=bytes.fromhex("3f3f3f"))) == "#f25d5d")
+# ⚠ AND A CHANNEL EQUAL TO 255 IS NOT IN THE FILE — the same rule as a caption's
+# fill (§8s). Defaulting a missing channel to 0 turns white into black here.
+check("…and a channel Premiere left out is 255, not 0",
+      interchange.prproj_shape_fill(_appearance(b"\xff\xff\xff")) == "#ffffff"
       and interchange.prproj_shape_fill(
-          _appearance(b"\xff\xff\xff", after=bytes(4))) == "")
-check("…and so is one whose padding byte is not where it should be",
-      interchange.prproj_shape_fill(_appearance(b"\xff\xff\xff", pad=9)) == "")
+          _appearance(bytes([255, 0, 255]))) == "#ff00ff")
 
 check("a four-point Path reads as the rectangle it is",
       interchange.prproj_shape_rect(_path(_FULL)) == (-122.0, -107.0, 1911.0, 1105.0),
@@ -3554,6 +3618,17 @@ check("…and an absent opacity is 75%, not 100%",
 check("…while an opacity that IS written is used",
       interchange.prproj_text_paint(
           _fb_style(bg=(True, 50.0, 20.0, 10.0))).get("backdrop_opacity") == 0.5)
+# ⚠ THE BAR'S COLOUR IS THE ONE VALUE NOT READ OUT OF THE CAPTION, AND IT IS
+# PINNED HERE BECAUSE IT IS GROUND TRUTH RATHER THAN A PREFERENCE. Premiere's own
+# Color Picker on that Background swatch reads **#3F3F3F**; the caption whose
+# opacity is 100 renders its bar flat #3e3e3e in the export (one level — h.264);
+# and the same value is WRITTEN in field 5 of 679 of the corpus's 974 shape
+# `Appearance` blobs, i.e. it is Premiere's default swatch grey — which is
+# exactly why no caption carries it.
+check("…and the bar arrives in Premiere's own default swatch grey",
+      interchange.prproj_text_paint(
+          _fb_style(bg=(True, None, 20.0, 10.0))).get("backdrop_color") == "#3f3f3f",
+      str(interchange.prproj_text_paint(_fb_style(bg=(True, None, 20.0, 10.0)))))
 # ⚠ NO FLAG MEANS NO BAR, and it must not be conjured from the size alone: 51
 # documents in the corpus carry a size and a radius with the background switched
 # OFF, and a bar behind every one of those captions is a change to somebody's

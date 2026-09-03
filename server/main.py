@@ -54,6 +54,7 @@ from .script_chat import router as script_chat_router
 from .script_intake import router as script_intake_router
 from .script_concept import router as script_concept_router
 from .director import router as director_router
+from .editor_chat import router as editor_chat_router
 from .plans import router as plans_router
 from .sounds import router as sounds_router
 from .videos import router as videos_router
@@ -210,6 +211,11 @@ app.include_router(videos_router)
 # the browser, through the same validator and fence the deterministic planner's
 # plan goes through. See server/director.py and director.py.
 app.include_router(director_router)
+# ✨ The AI Editor chat (/editor-chat/…) — the SAME verb registry as the
+# Director, reached by conversation instead of by one popup. Spends TEXT quota,
+# one call per message; what it returns is a proposal the user presses Apply on.
+# ⚠ It cannot start a paid render — see the docstring of server/editor_chat.py.
+app.include_router(editor_chat_router)
 # The admin panel (/admin/…) — who registered, who signed in, and the levers on
 # an account. ⚠ EVERY ROUTE IN IT IS BEHIND `require_admin`, which reads the role
 # out of the database rather than out of the token, and answers 404 (not 403) to

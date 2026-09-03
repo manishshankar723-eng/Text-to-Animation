@@ -261,6 +261,49 @@ const rhythm = {
     .map((s) => s.note || ""),
 };
 
+// ⚠ THE TREATED CUTS ARE NOT ALL THE SAME GESTURE. Reported off a 27-shot cut
+// where all eleven came out as one dissolve: "mai dekha hi transition bas
+// dissolve hi lagaya gaya, transition alag alag use hona chahiye video editor ke
+// hisab se soch kar". The answer is the same shape as the MOVE rule — a weighted
+// pattern with one house gesture carrying most of the film — not a rotation
+// through the library. See `treatmentFor`.
+const wide = timeline(27, 3600);
+const widePlan = housePlan(wide, { include: { ...defaultInclude(), veo: false } })
+  .steps.filter((s) => s.verb === "add_transition")
+  .map((s) => ({ cut: s.args.cut, kind: s.args.kind, params: s.args.params || {} }));
+// A film with one very long hold in it: the ladder still outranks the pattern.
+const held = timeline(9, 2000, [8]);
+const heldPlan = housePlan(held, { include: { ...defaultInclude(), veo: true } })
+  .steps.filter((s) => s.verb === "add_transition")
+  .map((s) => ({ cut: s.args.cut, kind: s.args.kind }));
+// And a build that renders only the two the planner used to know about must not
+// be able to make it propose a step the validator would then drop.
+const poorCaps = {
+  ...caps,
+  transitions: (caps.transitions || []).filter((t) => t.id === "dissolve" || t.id === "dip"),
+};
+const poorPlan = housePlan(
+  { ...wide, caps: poorCaps },
+  { include: { ...defaultInclude(), veo: false } }
+)
+  .steps.filter((s) => s.verb === "add_transition")
+  .map((s) => s.args.kind);
+
+const variety = {
+  wide: widePlan,
+  held: heldPlan,
+  poor: poorPlan,
+  // Every kind the planner asked for has to be one this build renders, or the
+  // preview lists a film that cannot be made.
+  known: widePlan.every((t) => (caps.transitions || []).some((c) => c.id === t.kind)),
+  legal:
+    validatePlan(
+      housePlan(wide, { include: { ...defaultInclude(), veo: false } }),
+      caps,
+      wide
+    ).dropped.length === 0,
+};
+
 const house = {
   varied: planned(varied),
   neighbours: planned(neighbours),
@@ -282,7 +325,7 @@ const house = {
 process.stdout.write(JSON.stringify({
   capsTable: HOUSE_CAPS,
   twoOnOne, everyShot, everyCut, everyCutWithVeo, sameCutTwice, nextDoor, manyShapes, manyTexts,
-  orphan, house, model, rhythm,
+  orphan, house, model, rhythm, variety,
 }));
 """
 
@@ -584,6 +627,45 @@ def main():
     check("nothing the filler added was dropped or trimmed",
           not r["silent"]["dropped"] and not r["silent"]["trimmed"],
           json.dumps(r["silent"]["dropped"] + r["silent"]["trimmed"]))
+
+    print()
+    print("⚠ AND THE TREATED CUTS ARE NOT ALL THE SAME GESTURE")
+    print("  (27 shots, eleven treated cuts, every one a dissolve — reported as")
+    print('   "transition alag alag use hona chahiye video editor ke hisab se")')
+    print()
+    v = data["variety"]
+    kinds = [t["kind"] for t in v["wide"]]
+    check("a 27-shot cut no longer comes out as one gesture repeated",
+          len(set(kinds)) >= 3, json.dumps(kinds))
+    check("⚠ BUT THE DISSOLVE STILL CARRIES MOST OF THE FILM — variety for its own\n"
+          "       sake reads as a tour of the library, which is the thing being avoided",
+          kinds.count("dissolve") * 2 > len(kinds),
+          f"{kinds.count('dissolve')} of {len(kinds)}: {json.dumps(kinds)}")
+    check("...a slide comes round every 4th treated cut",
+          [i for i, k in enumerate(kinds) if k == "slide"] == [3, 7],
+          json.dumps(kinds))
+    check("...a wipe every 6th, and no oftener, because it is the most graphic one",
+          [i for i, k in enumerate(kinds) if k in ("wipe", "diagonal")] == [5, 11],
+          json.dumps(kinds))
+    check("⚠ AND THE TWO NEAREST WIPES ARE NEVER THE SAME GESTURE TWICE — the second\n"
+          "       is an angled edge, travelling the other way (the rule the pans keep)",
+          kinds[5] == "wipe" and kinds[11] == "diagonal"
+          and v["wide"][5]["params"].get("direction")
+          != v["wide"][11]["params"].get("direction"),
+          json.dumps([v["wide"][5], v["wide"][11]]))
+    check("...and neither do the two nearest slides",
+          v["wide"][3]["params"].get("direction") != v["wide"][7]["params"].get("direction"),
+          json.dumps([v["wide"][3], v["wide"][7]]))
+    check("⚠ A HOLD LONG ENOUGH TO END A SCENE STILL OVERRIDES THE PATTERN — that is\n"
+          "       a decision about the FILM, and it outranks a pattern about the cuts",
+          any(t["kind"] == "dip" for t in v["held"]), json.dumps(v["held"]))
+    check("⚠ every kind asked for is one this build actually renders",
+          v["known"] is True, json.dumps(kinds))
+    check("...and the whole plan clears validation with nothing dropped",
+          v["legal"] is True, "a step the preview lists must be a step that runs")
+    check("⚠ AND A BUILD THAT RENDERS ONLY dissolve/dip FALLS BACK TO THEM rather\n"
+          "       than proposing a treatment the validator would drop",
+          set(v["poor"]) <= {"dissolve", "dip"}, json.dumps(sorted(set(v["poor"]))))
 
     print()
     if failures:

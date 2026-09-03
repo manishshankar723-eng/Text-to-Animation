@@ -538,8 +538,21 @@ def main():
             # before it had left in the store. A resize is thirty state changes and
             # the debounce is what stops it being thirty synchronous writes.
             page.wait_for_timeout(450)
-            stored = page.evaluate("() => localStorage.getItem('cas_animatic_rows')")
+            # ⚠ AND IT IS WRITTEN UNDER THE PROJECT'S ID, not under the lane key
+            # alone. The flat record was a bug you could see on the first screen:
+            # a lane key is the same string in every project (`text:`, `frames:0`,
+            # and the `_import_text_0` ids every import produces), so one drag
+            # made every project opened afterwards come up with some rows tall and
+            # some short. See `row_heights.js`.
+            stored = page.evaluate("() => localStorage.getItem('cas_animatic_rows2')")
             check("the drag was written to storage", bool(stored), str(stored))
+            check("...under THIS project's id, and nowhere else",
+                  bool(stored) and list(json.loads(stored)) == ["probe"]
+                  and bool(json.loads(stored)["probe"]["rows"]),
+                  str(stored))
+            check("...and the flat, project-less record is gone",
+                  page.evaluate("() => localStorage.getItem('cas_animatic_rows')") is None,
+                  "cas_animatic_rows still present")
             page.reload()
             page.wait_for_function("window.__probe && window.__probe.ready", timeout=60000)
             page.wait_for_selector('[data-sel^="frame:"]', timeout=45000)
@@ -557,7 +570,7 @@ def main():
                   abs(back[others[0]]["gutter"]["h"] - before[others[0]]["gutter"]["h"]) <= 1,
                   f"{before[others[0]]['gutter']['h']} -> {back[others[0]]['gutter']['h']}")
             # Leave the store as we found it, or the next run starts with a tall row.
-            page.evaluate("() => localStorage.removeItem('cas_animatic_rows')")
+            page.evaluate("() => localStorage.removeItem('cas_animatic_rows2')")
 
             errors = page.evaluate("() => window.__probe.errors")
             check("nothing reached window.onerror or console.error",

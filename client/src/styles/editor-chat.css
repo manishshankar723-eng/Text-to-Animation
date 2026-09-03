@@ -1,0 +1,456 @@
+/* editor-chat — the ✨ AI Editor panel: the dock chrome, the question block and
+ * the plan preview.
+ *
+ * ⚠ ONLY WHAT IS NEW IS HERE. The log, the bubbles and the composer wear
+ * `sc-*` and are styled in `storyboard.css` — three chats in one product that
+ * look like three different products is three products. See the header of
+ * `EditorChat.jsx`.
+ *
+ * ⚠ TWO DOCKS, ONE COMPONENT, AND THE DIFFERENCE IS ENTIRELY IN HERE. The panel
+ * renders identical markup either way; `.ec-dock-right` and `.ec-dock-sidebar`
+ * are the whole of the layout fork. A second render path would have been two
+ * panels to fix every bug in.
+ */
+
+/* =========================================================================
+   THE PANEL
+   ========================================================================= */
+.ec-panel {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.9rem;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  /* ⚠ 120 CLEARS THE RAIL AND STAYS UNDER THE MODALS. The sidebar is 100 (see
+     the long note on `.sidebar` in shell.css for why it is that high), the
+     editor's own panes top out at 60, and the modals and lightbox sit at
+     9999/10000 and must still cover this. */
+  z-index: 120;
+  box-shadow: -12px 0 32px rgba(0, 0, 0, 0.28);
+}
+
+/* THE RIGHT-HAND DOCK — what Descript and Premiere both do, and the one with
+   room to read a plan without scrolling it. */
+.ec-dock-right {
+  right: 0;
+  width: clamp(320px, 26vw, 420px);
+}
+
+/* SLIDING OUT OF THE RAIL. ⚠ `left: 280px` IS THE SHELL'S OWN TRACK WIDTH, and
+   it is not a coincidence that has to be kept in step by hand — the rail can
+   collapse to 92px, which the rule below follows. Anchored to the rail's edge
+   rather than to 0 so the panel never sits ON the rail it opened from. */
+.ec-dock-sidebar {
+  left: 280px;
+  width: clamp(320px, 24vw, 400px);
+  border-left: none;
+  border-right: 1px solid var(--border);
+  box-shadow: 12px 0 32px rgba(0, 0, 0, 0.28);
+}
+.shell.nav-collapsed .ec-dock-sidebar {
+  left: 92px;
+}
+/* Under 820px the rail is a full-width block above the page, so a panel beside
+   it has nothing to be beside. Both docks become the same full-width sheet —
+   which is what a phone wants from either of them anyway. */
+@media (max-width: 820px) {
+  .ec-dock-right,
+  .ec-dock-sidebar {
+    left: 0;
+    right: 0;
+    width: auto;
+  }
+}
+
+/* ⚠ THIS HEADER IS A TITLE BAR WITH TWO CONTROLS IN IT, SO ITS ✕ SITS IN THE
+   ROW — IT IS THE ONE SURFACE IN THE APP WHERE THAT IS RIGHT. Shared
+   `.modal-close` is `position: absolute`, and the nearest positioned ancestor
+   here is `.ec-panel` itself (`fixed`), NOT this row — so left alone the glyph
+   leaves the flex line and parks in the panel's own corner. That put it on top
+   of the dock switcher (*"chat bot panel mai x overlap ho raha hai ye right
+   left icon se"*), and reserving the corner with a `padding-right` only turned
+   the overlap into a step: the ✕ a few pixels above the two icons beside it,
+   which is the next thing that got reported — *"icon aur x close buttun upper
+   niche dikh raha hia ek jaisa rakho"*. See the rule on `.modal-close` below
+   for why the row won and not the corner. */
+.ec-head {
+  /* ⚠ ONE HEIGHT FOR EVERY CONTROL IN THIS ROW — the switcher pill and the ✕
+     stand side by side, so they are one box with one top edge. Hand-tuned
+     padding on each is exactly how they drifted apart. */
+  --ec-ctl: 1.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding-bottom: 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+.ec-head-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  /* Takes the slack so the close button stays hard right whether or not the
+     dock switcher is drawn. */
+  flex: 1;
+  min-width: 0;
+}
+
+/* The two-way dock switch. Only drawn when the operator set "let each person
+   choose" — two buttons that do nothing on a locked deployment would be two
+   buttons to explain. */
+.ec-dock-pick {
+  display: inline-flex;
+  align-items: stretch;
+  height: var(--ec-ctl);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.ec-dock-btn {
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0 0.45rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+.ec-dock-btn:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+.ec-dock-btn.on {
+  background: var(--panel-2);
+  color: var(--primary);
+}
+
+/* ⚠ THE ONE PLACE THE SHARED ✕ COMES OUT OF THE CORNER — AND IT IS NOT A
+   DIALOG, WHICH IS WHY THIS DOES NOT REOPEN E65. E65 pinned `.modal-close` to
+   the top-right corner of all 31 DIALOGS, asked for twice with a picture of a
+   browser title bar; every one of those has an EMPTY corner for it to sit in.
+   This panel does not: the header already carries the dock switcher at its
+   right edge, and an absolute ✕ resolving against `.ec-panel` either covers
+   those two buttons or floats a few pixels above them. Asked for directly —
+   *"icon aur x close buttun upper niche dikh raha hia ek jaisa rakho please
+   align ye achha nhi lag raha hai"*. In the flow it lines up WITH the control
+   beside it, which is what a title bar looks like anyway, and it is still hard
+   right because `.ec-head-title` takes the slack.
+   ⚠ **THE TAP TARGET GOES UP, NOT DOWN.** E65's other half is that the ✕ is
+   the way out and must stay easy to hit: the glyph is one character, so this
+   sets a `min-width` as well as the shared height rather than trusting padding
+   round a character. Same box as the pill beside it, so same top edge. */
+.ec-head .modal-close {
+  position: static;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--ec-ctl);
+  min-width: var(--ec-ctl);
+  padding: 0 0.35rem;
+  font-size: 1rem;
+  border-radius: 8px;
+}
+.ec-head .modal-close:hover {
+  background: var(--panel-2);
+}
+
+/* ⚠ THE LOG TAKES THE HEIGHT, THE COMPOSER KEEPS ITS OWN. `.sc-chat-log` caps
+   itself at 320px for the script form, where it sits inside a scrolling page.
+   Here it is the whole middle of a full-height rail, so the cap is lifted and
+   the flex child does the work. */
+.ec-log {
+  flex: 1;
+  max-height: none;
+  min-height: 0;
+}
+
+/* =========================================================================
+   THE EMPTY STATE
+   ========================================================================= */
+.ec-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 0.4rem 0.2rem;
+}
+.ec-examples {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+/* ⚠ THREE REAL SENTENCES, NOT FEATURE NAMES. They are the three SHAPES of thing
+   this can do — a question, a clear instruction, and a vague ask that comes back
+   as a question with options. The third one is the behaviour most worth
+   discovering early, and nobody discovers it from a label. */
+.ec-example {
+  text-align: left;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  padding: 0.5rem 0.7rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.ec-example:hover:not(:disabled) {
+  border-color: var(--border-gold);
+  border-style: solid;
+  color: var(--text);
+  background: var(--panel-2);
+}
+.ec-example:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* =========================================================================
+   ⭐ THE QUESTION WITH OPTIONS — the reply kind this feature exists for
+   ========================================================================= */
+.ec-ask {
+  margin-top: 0.4rem;
+  border: 1px solid var(--border-gold);
+  border-radius: 12px;
+  background: var(--panel-2);
+  padding: 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+/* ⚠ ANSWERED, NOT GONE. The question stays in the scrollback because it is half
+   the record of why the film looks the way it does — it just stops being live. */
+.ec-ask.is-answered {
+  border-color: var(--border);
+  opacity: 0.75;
+}
+.ec-ask-q {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  font-weight: 500;
+}
+.ec-ask-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.ec-option {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  align-items: flex-start;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  padding: 0.5rem 0.7rem;
+  cursor: pointer;
+  width: 100%;
+}
+.ec-option:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: var(--panel-2);
+}
+.ec-option:disabled {
+  cursor: default;
+}
+.ec-option.is-chosen {
+  border-color: var(--primary);
+  background: var(--tl-clip-bg);
+}
+.ec-option-label {
+  font-size: 0.88rem;
+  font-weight: 500;
+}
+/* The half-line that turns three nouns into a decision. "Dhol / festive" tells
+   you nothing next to "celebration mood". */
+.ec-option-note {
+  font-size: 0.76rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+/* ⚠ THE LINE THE WHOLE FEATURE TURNS ON: "if not these then what". Styled as a
+   hint rather than a fourth button on purpose — it points at the composer, which
+   is where an answer that was not on the list gets typed. */
+.ec-ask-other {
+  margin: 0;
+}
+
+/* =========================================================================
+   THE PLAN PREVIEW — nothing has happened yet
+   ========================================================================= */
+.ec-plan {
+  margin-top: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2);
+  padding: 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.ec-plan-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+/* ⚠ BY FAMILY, NOT BY STEP. Forty rows of "add_transition" is a log; what a
+   person checks a plan against is how much of their film it will touch, and four
+   chips answer that. */
+.ec-plan-chip {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.74rem;
+  background: var(--panel);
+}
+.ec-plan-chip b {
+  color: var(--text);
+}
+.ec-plan-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.ec-plan-steps li.is-done {
+  color: var(--ok);
+}
+.ec-plan-steps li.is-failed {
+  color: var(--fail);
+}
+.ec-plan-more {
+  align-self: flex-start;
+}
+.ec-plan-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.ec-plan.is-applied {
+  border-color: var(--ok);
+}
+.ec-plan-done {
+  margin: 0;
+  font-size: 0.84rem;
+}
+.ec-plan-stale {
+  margin: 0.35rem 0 0;
+}
+
+/* =========================================================================
+   WHAT COULD NOT BE USED — on screen, never in a console
+   ========================================================================= */
+.ec-drops {
+  margin-top: 0.35rem;
+}
+.ec-drops-toggle {
+  border: 0;
+  background: transparent;
+  color: var(--warn);
+  font-size: 0.76rem;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.ec-drops-list {
+  margin: 0.3rem 0 0;
+  padding-left: 1rem;
+  font-size: 0.76rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+/* =========================================================================
+   THE FOOT AND THE BLOCKED LINE
+   ========================================================================= */
+/* ⚠ THE ALLOWANCE IS SHOWN BEFORE IT RUNS OUT, not at the refusal. A quota you
+   discover by being blocked is a bad surprise; one you can see is a budget. */
+.ec-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+.ec-blocked {
+  border: 1px solid var(--border-gold);
+  border-radius: 10px;
+  background: var(--panel-2);
+  padding: 0.55rem 0.7rem;
+  font-size: 0.82rem;
+  color: var(--warn);
+}
+.ec-composer {
+  flex: 0 0 auto;
+}
+
+/* =========================================================================
+   THE RAIL'S OWN BUTTON — ✨ AI Editor, directly above the theme switch
+   ========================================================================= */
+/* ⚠ ABOVE "Light mode", WHICH IS WHERE IT WAS ASKED TO GO: *"chat bot light
+   mode ke upar rakhna"*. It is the first row of `.sb-footer`, so it is reachable
+   from every screen without being mixed in with the workflow list — this is not
+   a workflow, it is a tool that opens over one. */
+.sb-chat {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border-gold);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.9rem;
+  text-align: left;
+}
+.sb-chat:hover {
+  background: var(--panel-2);
+  border-color: var(--primary);
+}
+.sb-chat.active {
+  background: var(--tl-clip-bg);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.sb-chat-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* ⚠ THE COLLAPSED RAIL KEEPS THE GLYPH AND DROPS THE WORDS, exactly as
+   `.sb-item` does — the row must stay a hit target at 92px, not disappear. */
+.nav-collapsed .sb-chat {
+  justify-content: center;
+  padding: 0.55rem 0.3rem;
+}
+.nav-collapsed .sb-chat-label {
+  display: none;
+}
+
+
+/* The cued sounds, listed under the steps. ⚠ TINTED, NOT INDENTED — they are not
+   steps and must not read as steps, but they ARE part of the same approval. */
+.ec-plan-sound {
+  color: var(--primary);
+  opacity: 0.85;
+}

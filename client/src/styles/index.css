@@ -39,6 +39,11 @@
 @import "./properties.css";
 @import "./animatic-scrollbar.css";
 @import "./director.css";
+/* Beside director.css, per the note at the top: the AI Editor chat runs the
+   SAME verb registry the Director does, reached by conversation instead of by
+   one popup. It also styles the rail's own ✨ button, which is why it has to
+   come after shell.css. */
+@import "./editor-chat.css";
 /* Last, per the note above: the admin panel is a screen of its own and nothing
    else reads from it, so the end of the cascade is exactly where it belongs. */
 @import "./admin.css";

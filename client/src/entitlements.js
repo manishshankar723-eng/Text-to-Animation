@@ -41,6 +41,7 @@ export const CAPABILITIES = [
   { id: "tts-voiceover", label: "Voiceover (text to speech)", icon: "🗣️" },
   { id: "captions", label: "Automatic captions", icon: "💬" },
   { id: "director", label: "🎬 Make Video (the auto-editor)", icon: "🎬" },
+  { id: "editor-chat", label: "✨ AI Editor (the chat)", icon: "✨" },
   { id: "3d-meshy", label: "3D models (Meshy / Tripo)", icon: "🧊" },
 ];
 

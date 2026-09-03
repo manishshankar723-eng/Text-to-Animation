@@ -81,7 +81,10 @@ import {
   MUSIC_VOLUME_ALONE,
   MUSIC_VOLUME_UNDER_SPEECH,
   SFX_VOLUME,
+  HOUSE_SFX_QUERY,
   cueKey,
+  houseMusicCue,
+  houseSfxCues,
   musicCue,
   musicDue,
   musicPlacement,
@@ -287,6 +290,52 @@ out.report = {
   nothing: scoreReport({ sfx: [], music: [], sfxMissing: [] }),
 };
 
+// ---------------------------------------------------------------------------
+// ⚠ THE HOUSE CUES — what a film gets when NOBODY READ IT.
+// ---------------------------------------------------------------------------
+// Reported from the screen: the analyse call answered 403, the run fell back to
+// "Just the rhythm", and both Background music and Sound effects were ticked
+// with nothing arriving on the timeline — two switches that could not do
+// anything. See `houseMusicCue` / `houseSfxCues`.
+const fast = timeline([1800, 1800, 1800, 1800, 1800, 1800]);
+const mid = timeline([3600, 3600, 3600, 3600, 3600, 3600]);
+const slow = timeline([8000, 8000, 8000, 8000, 8000, 8000]);
+
+/** A plan with transitions on the cuts after shots 1, 3 and 5. */
+const treated = {
+  steps: [
+    { verb: "note", args: { text: "x" } },
+    { verb: "add_transition", args: { cut: 1, kind: "dissolve", ms: 700 } },
+    { verb: "add_shot_motion", args: { shot: 2, kind: "zoom_in" } },
+    { verb: "add_transition", args: { cut: 3, kind: "slide", ms: 400 } },
+    { verb: "add_transition", args: { cut: 5, kind: "wipe", ms: 400 } },
+  ],
+};
+
+out.houseQuery = HOUSE_SFX_QUERY;
+out.house = {
+  fast: houseMusicCue(fast),
+  mid: houseMusicCue(mid),
+  slow: houseMusicCue(slow),
+  empty: houseMusicCue({ frames: [] }),
+  // ⚠ THE READING WINS WHEN THERE IS ONE. The fallback is a fallback.
+  read: musicCue({ analysis: { music: { query: "sad piano", mood: "elegiac" } } }),
+  sfx: houseSfxCues({ plan: treated, frames: mid.frames, starts: mid.starts }),
+  straight: houseSfxCues({ plan: { steps: [] }, frames: mid.frames, starts: mid.starts }),
+  noPlan: houseSfxCues({ frames: mid.frames, starts: mid.starts }),
+  // A transition on the LAST cut of a film that then lost its final shot: the
+  // arriving clip is gone, so there is nothing to sound.
+  gone: houseSfxCues({
+    plan: { steps: [{ verb: "add_transition", args: { cut: 9, kind: "dissolve", ms: 600 } }] },
+    frames: mid.frames,
+    starts: mid.starts,
+  }),
+  // What the tick boxes say once the house has cued something.
+  sfxDue: sfxDue({ sfx: true }, houseSfxCues({ plan: treated, frames: mid.frames, starts: mid.starts }).sounds),
+  musicDue: musicDue({ music: true }, houseMusicCue(mid)),
+  sfxOff: sfxDue({ sfx: false }, [{ key: "k", query: "q", kind: "sfx" }]),
+};
+
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -307,6 +356,56 @@ def run_node():
         return json.loads(proc.stdout)
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+def check_house(data):
+    print("\n⚠ THE HOUSE CUES — a ticked box has to be able to DO something. The AI\n"
+          "  pass answered 403, the run fell back to the rules planner, and both\n"
+          "  Background music and Sound effects were ticked with nothing arriving:\n"
+          '  "Sound and bg music nhi aaya timeline pe".\n')
+    h = data["house"]
+    check("a film with no reading still gets a music cue",
+          bool(h["mid"]) and bool(h["mid"]["query"]), json.dumps(h["mid"]))
+    check("⚠ and the cue is read off the CUTTING PACE — three bands, three queries",
+          len({h["fast"]["query"], h["mid"]["query"], h["slow"]["query"]}) == 3,
+          json.dumps([h["fast"]["query"], h["mid"]["query"], h["slow"]["query"]]))
+    check("...a 1.8s cut asks for something upbeat",
+          "upbeat" in h["fast"]["query"], h["fast"]["query"])
+    check("...and an 8s hold asks for something ambient",
+          "ambient" in h["slow"]["query"], h["slow"]["query"])
+    check("⚠ every one of them is INSTRUMENTAL — a vocal fights the voiceover",
+          all("instrumental" in h[k]["query"] for k in ("fast", "mid", "slow")),
+          json.dumps([h[k]["query"] for k in ("fast", "mid", "slow")]))
+    check("an empty timeline cues no music rather than an empty query",
+          h["empty"] is None, json.dumps(h["empty"]))
+    check("⚠ A READING THAT NAMED ITS OWN MUSIC IS NOT OVERRULED",
+          h["read"]["query"] == "sad piano", json.dumps(h["read"]))
+
+    sfx = h["sfx"]
+    check("⚠ the house effects sit on the cuts the plan TREATED, not on every cut",
+          [c["shot"] for c in sfx["cues"]] == [2, 4, 6],
+          json.dumps([c["shot"] for c in sfx["cues"]]))
+    check("...and they are ONE recording, so one search out of the shared budget",
+          len(sfx["sounds"]) == 1 and sfx["sounds"][0]["query"] == data["houseQuery"],
+          json.dumps(sfx["sounds"]))
+    check("⚠ each one lands HALF THE TRANSITION EARLY, because a transition is "
+          "boundary-local — half of it plays before the cut",
+          [c["at_ms"] for c in sfx["cues"]] == [3600 - 350, 3600 * 3 - 200, 3600 * 5 - 200],
+          json.dumps([c["at_ms"] for c in sfx["cues"]]))
+    check("a plan that treats no cut cues no effects — a whoosh on a straight cut "
+          "is an opinion about the STORY, which this planner does not have",
+          sfx and h["straight"]["cues"] == [] and h["straight"]["sounds"] == [],
+          json.dumps(h["straight"]))
+    check("...and so does no plan at all",
+          h["noPlan"]["cues"] == [], json.dumps(h["noPlan"]))
+    check("a transition whose arriving shot is gone is skipped in silence",
+          h["gone"]["cues"] == [] and h["gone"]["sounds"] == [], json.dumps(h["gone"]))
+
+    check("⚠ AND BOTH TICK BOXES NOW SAY “yes” ON THE FREE DOOR",
+          h["sfxDue"]["due"] is True and h["musicDue"]["due"] is True,
+          json.dumps([h["sfxDue"], h["musicDue"]]))
+    check("...while un-ticking one still switches it off",
+          h["sfxOff"]["due"] is False, json.dumps(h["sfxOff"]))
 
 
 def check_js(data):
@@ -645,6 +744,7 @@ def main():
         failures.append("node harness")
     else:
         check_js(data)
+        check_house(data)
     check_ladder()
     check_python()
 

@@ -1160,11 +1160,26 @@ def main():
             # rostrum move ("add zoom in / zoom out on all the images when Veo
             # is not selected"). See `STILL_CYCLE` in `house_style.js`.
             flat_rows = page.evaluate("() => window.__probe.planRows()")
-            treated = [i + 1 for i, r in enumerate(flat_rows)
-                       if "dissolve" in r[2].lower() or "dip" in r[2].lower()]
+            # ⚠ ANY TRANSITION COUNTS, NOT ONLY A DISSOLVE OR A DIP, and that is a
+            # correction rather than a loosening. This line used to read
+            # `"dissolve" in r[2] or "dip" in r[2]`, which was an exact
+            # description of the planner right up until it learned to VARY the
+            # treatment: `treatmentFor` now spends a `slide` every 4th treated cut
+            # and a `wipe` every 6th, so on this eight-shot flat board the fourth
+            # treated cut is a slide and the old filter counted [2, 4, 6] — a red
+            # line about the RHYTHM caused entirely by a change to the KIND.
+            #
+            # ⚠ THE KIND IS NOT THIS FILE'S BUSINESS. `director_guardrails_check.py`
+            # already pins the whole pattern — slide every 4th, wipe every 6th and
+            # no oftener, the direction alternating — against the planner directly,
+            # which is where a rule about house style belongs. What THIS suite is
+            # for is the property in its own check name: on a board with no rhythm
+            # to read, one arrives anyway, on alternate cuts. `r[2]` is the "in"
+            # column and `"—"` is how `DirectorPanel` draws an empty cell.
+            treated = [i + 1 for i, r in enumerate(flat_rows) if r[2] != "—"]
             check("⚠ A FLAT BOARD IS GIVEN A RHYTHM — a transition arrives INTO"
                   " every other shot",
-                  treated == [2, 4, 6, 8], json.dumps(treated))
+                  treated == [2, 4, 6, 8], json.dumps(flat_rows))
             check("⚠ ...but every drawing still moves, because nothing is being"
                   " rendered over it",
                   flat_rows and all(r[3] != "—" for r in flat_rows),

@@ -158,7 +158,10 @@ print("\n--- one statement of what a tier includes ---")
 # "what's in Pro" is derived by asking them — which is why the two can never
 # disagree. Moving the requirement moves the derivation, with nothing else edited.
 before = set(bill.includes("trial"))
-check("everything is in the free tier to begin with", len(before), 12)
+# ⚠ COUNTED FROM THE CATALOGUE, NOT TYPED OUT. It was `12` and a new
+# capability broke it; what this line is actually asserting is that NOTHING has
+# a minimum tier until something is given one, which is true at any size.
+check("everything is in the free tier to begin with", len(before), len(feat._catalog()))
 
 set_min_tier("cap.veo-render", "pro")
 check("Veo leaves the free tier", "cap.veo-render" in bill.includes("trial"), False)

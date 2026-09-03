@@ -139,6 +139,8 @@ import {
 import { defaultInclude, emptyPlan, planTotals, validatePlan } from "./plan_schema.js";
 import { reanchor, scriptFor, shiftsOf, speechDue, spokenWords } from "./voice_pass.js";
 import {
+  houseMusicCue,
+  houseSfxCues,
   musicCue,
   musicDue,
   musicPlacement,
@@ -404,6 +406,13 @@ export default function useDirectorRun({
   // mid-flight and leave a downloaded soundtrack attached to nothing.
   const sfxRef = useRef(NO_SFX);
   sfxRef.current = sfx;
+  // ⚠ THE FENCED PLAN, FOR THE SECOND CUE PASS. Phase D re-reads its cues off the
+  // film the steps left behind (see the scoring effect), and the HOUSE cues are
+  // read off the plan's own transitions rather than off a reading — so that pass
+  // needs the plan as well as the timeline. A ref rather than a dependency
+  // because the scoring effect is keyed on the phase alone.
+  const planRef = useRef(emptyPlan);
+  planRef.current = plan;
   const musicRef = useRef(null);
   musicRef.current = music;
   // The reading, for the SECOND cue pass. `analysis` state would do, but the
@@ -549,15 +558,31 @@ export default function useDirectorRun({
    * leave behind. Both are correct about the moment they are asked.
    */
   const loadCues = useCallback(
-    (reading) => {
+    (reading, made) => {
       analysisRef.current = reading || null;
       const ctx = readCtx();
-      const cues = sfxCues({
+      const read = sfxCues({
         analysis: reading,
         frames: ctx.frames || [],
         starts: ctx.starts || [],
       });
-      const bed = musicCue({ analysis: reading });
+      // ⚠ AND WHEN NOBODY READ THE FILM, THE HOUSE STILL SCORES IT. Both boxes
+      // used to be switches that could not do anything on the free door — and on
+      // the AI door whenever the model call failed, which is how this was
+      // reported: a 403 on the analyse call, the run falling back to "Just the
+      // rhythm", and Background music ticked with nothing arriving on the
+      // timeline. The fallbacks are rhythm decisions rather than story ones (a
+      // bed chosen by cutting pace, a whoosh under the cuts the plan already
+      // treats) — see `houseMusicCue` and `houseSfxCues` for why that line is
+      // where it is. A reading that cued its own always wins: it read the film.
+      const cues = read.sounds.length
+        ? read
+        : houseSfxCues({
+            plan: made || planRef.current,
+            frames: ctx.frames || [],
+            starts: ctx.starts || [],
+          });
+      const bed = musicCue({ analysis: reading }) || houseMusicCue(ctx);
       setSfx(cues);
       setMusic(bed);
       return { sfx: cues, music: bed };
@@ -706,9 +731,15 @@ export default function useDirectorRun({
       loadShoot(veoRef.current, spokenOver(nextInclude, scriptRef.current)).then((priced) =>
         resolvePoses(priced, nextInclude)
       );
-      return adopt(raw, nextInclude);
+      const out = adopt(raw, nextInclude);
+      // ⚠ AND THE CUES ARE RE-READ, because one of them is read off the PLAN. The
+      // house sound effects sit under the cuts this plan treats, so un-ticking
+      // Transitions has to take them away with it — otherwise the panel offers a
+      // whoosh on a cut that is no longer being treated.
+      loadCues(analysisRef.current, out.plan);
+      return out;
     },
-    [adopt, loadShoot, readCtx, resolvePoses, spokenOver]
+    [adopt, loadCues, loadShoot, readCtx, resolvePoses, spokenOver]
   );
 
   const setInclude = useCallback(
@@ -745,11 +776,13 @@ export default function useDirectorRun({
       // that did nothing: the panel priced the run at zero and Run applied the
       // camera moves and rendered nothing at all.
       veoRef.current = [];
-      // ⚠ AND NO SOUND CUES EITHER, FOR THE SAME REASON. Arithmetic can tell
-      // which shots were HELD; it cannot tell that one of them is a door closing.
-      // `sfxDue` and `musicDue` then say so under the two tick boxes rather than
-      // leaving them looking like switches that do nothing.
-      loadCues(null);
+      // ⚠ AND ITS SOUND IS THE HOUSE'S TOO. Arithmetic cannot tell that one of
+      // these shots is a door closing — that is still the reading's job — but it
+      // can tell how fast the film cuts and which cuts this plan just treated,
+      // and those are a music bed and a whoosh under each transition. The plan is
+      // handed over because the effects are read off ITS transitions; see
+      // `houseSfxCues`.
+      loadCues(null, out.plan);
       // ⚠ AND PHASE C2 NEEDS NO PLANNER AT ALL, which is why it works identically
       // on this door and on the AI one. What to block out is not a story
       // decision: it is every board shot on the timeline, four drawings per
@@ -849,7 +882,7 @@ export default function useDirectorRun({
         // like is a story decision — see `sound_instruction` in `director.py`.
         // Nothing is fetched here; these are search terms on a plan the user
         // reads before pressing anything.
-        loadCues(answer.analysis || null);
+        loadCues(answer.analysis || null, out.plan);
         setPoses(NO_POSES);
         posesRawRef.current = [];
         loadScript(answer.analysis || null).then(async (next) => {
@@ -1885,13 +1918,26 @@ export default function useDirectorRun({
       const items = (answer && answer.items) || [];
       const ctx = readCtx();
       // The second reading: the same cues, timed against the finished film.
-      const fresh = willSfxRef.current
+      // ⚠ THE SAME TWO SOURCES AS THE PREVIEW, IN THE SAME ORDER. Re-read here
+      // against the finished film — the steps re-time shots, so a cue placed off
+      // the preview's clock would land on the wrong frame — and falling back the
+      // same way, or a run whose cues came from the house would lay down nothing
+      // at all after promising them on screen.
+      const reread = willSfxRef.current
         ? sfxCues({
             analysis: analysisRef.current,
             frames: ctx.frames || [],
             starts: ctx.starts || [],
           })
         : NO_SFX;
+      const fresh =
+        !willSfxRef.current || reread.sounds.length
+          ? reread
+          : houseSfxCues({
+              plan: planRef.current,
+              frames: ctx.frames || [],
+              starts: ctx.starts || [],
+            });
       const placedSfx = sfxPlacements({ cues: fresh.cues, imported: items });
       const placedBed = bed
         ? musicPlacement({

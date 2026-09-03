@@ -336,6 +336,18 @@ export default function Timeline({
   // Every row on the timeline, top to bottom, built by the editor. The gutter
   // and the tracks both render from this one list.
   lanes = [],
+  /**
+   * WHICH PROJECT THIS IS — the only thing this file uses it for is the memory
+   * of what you dragged a row's seam to (`row_heights.js`).
+   *
+   * ⚠ AND IT IS WHY THAT MEMORY NEEDS IT. A lane KEY is not unique to a project
+   * (`text:`, `frames:0`, and the `_import_text_0` ids every import produces),
+   * so a record keyed by lane key alone put one project's row heights on every
+   * other project's rows — a timeline that opened with some rows tall and some
+   * short before the user had dragged anything. Empty is legal: nothing is
+   * remembered, and every row is the vertical zoom's height.
+   */
+  projectId = "",
   totalMs,
   // How much time the timeline SHOWS. Longer than `totalMs` whenever the audio
   // outlasts the frames — otherwise the ruler stopped at the last picture and
@@ -690,8 +702,23 @@ export default function Timeline({
    * row height is how you are looking at the film, not part of the film — and
    * putting it in the document would put it in the undo stack, where a Ctrl+Z
    * after a resize would be looking for an edit and find a row.
+   *
+   * ⚠ AND THE PROJECT IS PART OF THE STATE, not just part of the write —
+   * `{ id, rows }` together, so the heights on screen and the project they were
+   * read for can never disagree. With the id only on the write, switching
+   * projects left the debounced save below about to write the OLD project's rows
+   * under the NEW project's id.
    */
-  const [laneH, setLaneH] = useState(getRowHeights);
+  const [laneH, setLaneH] = useState(() => ({
+    id: projectId,
+    rows: getRowHeights(projectId),
+  }));
+  // Another project: its own rows, read here rather than in an effect so the
+  // first paint after the switch is already right. (React's own "adjusting state
+  // when a prop changes" — it re-renders before anything is drawn.)
+  if (laneH.id !== projectId) {
+    setLaneH({ id: projectId, rows: getRowHeights(projectId) });
+  }
   /**
    * ⚠ REMEMBERED, BECAUSE THE PANES ARE. Written a beat after the drag stops
    * rather than on every pointer move: a resize is thirty `setLaneH` calls and
@@ -700,12 +727,12 @@ export default function Timeline({
    * anything else and long enough that a drag writes once.
    */
   useEffect(() => {
-    const timer = setTimeout(() => saveRowHeights(laneH), 250);
+    const timer = setTimeout(() => saveRowHeights(laneH.id, laneH.rows), 250);
     return () => clearTimeout(timer);
   }, [laneH]);
   /** The row's height in rem: its own if it has one, else the vertical zoom's. */
   const heightOf = (lane) => {
-    const own = lane && laneH[lane.key];
+    const own = lane && laneH.rows[lane.key];
     return typeof own === "number" && Number.isFinite(own) ? own : trackH;
   };
   /**
@@ -726,7 +753,7 @@ export default function Timeline({
    * is reset.
    */
   const laneStyle = (lane) => {
-    const own = lane && laneH[lane.key];
+    const own = lane && laneH.rows[lane.key];
     return typeof own === "number" && Number.isFinite(own)
       ? { "--tl-track-h": `${own}rem` }
       : undefined;
@@ -4017,14 +4044,17 @@ export default function Timeline({
                   sign={1}
                   step={8}
                   onChange={(px) =>
-                    setLaneH((was) => ({ ...was, [lane.key]: px / remPx() }))
+                    setLaneH((was) => ({
+                      ...was,
+                      rows: { ...was.rows, [lane.key]: px / remPx() },
+                    }))
                   }
                   onReset={() =>
                     setLaneH((was) => {
-                      if (!(lane.key in was)) return was;
-                      const next = { ...was };
-                      delete next[lane.key];
-                      return next;
+                      if (!(lane.key in was.rows)) return was;
+                      const rows = { ...was.rows };
+                      delete rows[lane.key];
+                      return { ...was, rows };
                     })
                   }
                   label={`${lane.name} height`}

@@ -312,7 +312,11 @@ feat._read_stored = lambda: (_ for _ in ()).throw(RuntimeError("Mongo is gone"))
 try:
     feat._bump()  # drop the cache so the next read has nothing to fall back on
     got = feat.all_features()
-    check("an unreachable store still returns the catalogue", len(got), 12)
+    # ⚠ COUNTED FROM `_catalog()`, NOT TYPED OUT. This was `12` and a
+    # new capability broke it — a test that has to be hand-edited every time
+    # the thing it guards grows is a test people learn to edit without reading.
+    # The property actually meant is "the WHOLE catalogue comes back".
+    check("an unreachable store still returns the catalogue", len(got), len(feat._catalog()))
     check("…all of it live", {f["status"] for f in got.values()}, {"live"})
     check("…and a guard lets the request through",
           feat.is_on("cust@example.com", "cap.veo-render"), True)
@@ -332,7 +336,7 @@ check("a customer cannot read it",
       client.get("/admin/features", headers=bearer(CUST)).status_code, 404)
 r = client.get("/admin/features", headers=bearer(BOSS))
 check("an admin can", r.status_code, 200)
-check("…and it lists every feature", len(r.json()["features"]), 12)
+check("…and it lists every feature", len(r.json()["features"]), len(feat._catalog()))
 
 r = client.patch("/admin/features/cap.veo-render", json={"status": "nonsense"}, headers=bearer(BOSS))
 check("an unknown status is rejected", r.status_code, 422)

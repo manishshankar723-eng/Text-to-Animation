@@ -284,7 +284,15 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-09-02 — **THE BACKGROUND BAR COMES ACROSS TOO, AND IT WAS ONE TABLE UP FROM WHERE THE COLOUR WAS.** *“fix karo isko v please tum kar sakte ho”* — and this time the walk started from a photographed Properties panel rather than from a guess. ⚠ **THE BAR IS ON THE DOCUMENT TABLE, NOT ON A RUN**, which is exactly why the first look missed it: a fill and a stroke are per RUN (Premiere lets you paint one word), but a bar is drawn once around the whole block. Fields: **f18** bool = background ON, **f19** float = opacity as a percentage, **f20** = padding in px, **f34** = corner radius in px; f18 travels with f20 and f34 in 3,301 of 6,513 documents. ⚠ **THE DEFAULT OPACITY IS 75, PROVED BY WHAT IS *WRITTEN*** — both photographed captions read 75 with f19 absent, and `f19 = 100.0` is written 71 times in the corpus, which is impossible if 100 were the default. ⚠ **NO FLAG MEANS NO BAR** (51 documents carry a size with the background switched OFF). ⚠ **AND THE TWO APPS DO NOT PAD THE SAME BOX** — Premiere pads the INK, `draw_texts` pads the LINE BOX, so copying the number across made the bar half again too tall. Measured on one caption (45 px type, size 20): Premiere's bar is 72 px at 1080 and this app's bar at `backdrop_pad: 0` is already 71, so the honest conversion comes out at ≈0 and the rendered bar lands at **76 px against Premiere's 72** — while a background four times as wide still gets four times the padding. The radius needs no correction. ⚠ **THE BAR'S COLOUR IS THE ONE PART MEASURED RATHER THAN READ** — every background in the corpus is the same bar, so nothing can be differenced against it. It is taken off the caption whose `f19 = 100`, where the export shows the stored colour with no compositing in the way: a flat **#3e3e3e over 116,915 pixels**, cross-checked against the 75% one (predicts 121.3, measures 124). ⚠ **SECOND SIGHTING OF PREMIERE COMPOSITING IN LINEAR LIGHT** (the first was a 10% black card reading 244 where sRGB says 229), so an imported bar over a bright shot comes out slightly darker here — named rather than fudged. Rendered from the user's own file both captions now match their frames: white on a grey bar, and amber with a black outline on a dark grey one. New **RULEBOOK E81**; `tests/interchange_check.py` §8s grows to 33 checks with TEN guards proved to fail in total. Green with `interchange_check`, `effects_check`, `render_parity`, `captions_check`, `import_dedupe_check`, `media_cleanup_check`, `hidden_lane_check`, `animatic_motion_check`, `monitor_video_check`, `dialog_frame_check`, `audio_mix_check`, `frame_save_fields_check`, `editor_project_import_check` and `npm run build`. ⚠ **Not yet seen in the running app** — needs a restart and a re-import. See the Work Log.
+**Last updated:** 2026-09-03 — **THE AI EDITOR'S HEADER BECOMES A TITLE BAR.** *“chat bot panel mai x overlap ho raha hai ye right left icon se”*, then — after the first fix — *“icon aur x close buttun upper niche dikh raha hia ek jaisa rakho”*. The shared `.modal-close` is absolutely positioned and, in a `fixed` panel, resolves against the PANEL rather than the header row, so it sat on top of the two dock buttons. Reserving the corner only turned the overlap into a step; `.ec-head .modal-close` is `position: static` now and both controls take one height from `--ec-ctl`. **E65 is untouched — it is about the 31 dialogs, which all have an empty corner; this panel's title bar does not.** New **RULEBOOK E101**. `dialog_frame_check.py` and `editor_chat_render_check.py` green; ⚠ **not opened in a browser** — neither suite measures a pixel, so a screenshot in BOTH docks is still owed.
+
+**Previously:** 2026-09-03 — **THE FREE DOOR SCORES THE FILM, AND ELEVEN CUTS ARE NOT ONE DISSOLVE.** Three reports off one 🎬 run; two fixed, one written up as OPEN with the measurements. ⚠ **(1) BOTH SOUND BOXES WERE SWITCHES THAT COULD NOT DO ANYTHING.** The analyse call answered **403 PERMISSION_DENIED**, the run fell back to “Just the rhythm”, and phases D and E read their cues off that reading and nothing else — *“Sound and bg music nhi aaya timeline pe”*. The line `sound_pass.js` draws between STORY and RHYTHM is right and was drawn too wide: which moment is a door closing is still refused, but **how fast the film cuts** is a bed (`houseMusicCue` — three bands off the median hold, instrumental every time so it does not fight a voiceover) and **which cuts this plan just treated** is a whoosh under each transition (`houseSfxCues` — ONE recording, landing half the transition early because a transition is boundary-local). A whoosh on an ordinary cut is still refused. Both are fallbacks — a reading that cued its own wins — and both fire on the AI door too, which is where it was reported. ⚠ **(2) ELEVEN TREATED CUTS CAME OUT AS ONE DISSOLVE** — *“transition alag alag use hona chahiye video editor ke hisab se soch kar”*. The fix is the shape the MOVES already had: dissolve carries most of the film, a **slide every 4th** treated cut, a **wipe every 6th** with the second an angled edge the other way, and the **dip still outranks the pattern** on a scene-ending hold. The counter indexes the TREATED cuts in film order, a moving edge is 0.6× a dissolve's length, and every kind is checked against `caps` first so the preview cannot list a film that will not be made. ⚠ **(3) THE LOGO IN THE PROGRAM MONITOR IS OPEN, AND IT IS NOT THE RUN'S DOING** — measured off the screenshots the shot is ≈1.15× (the Ken Burns move, correct) and the logo overlay ≈2.5×; the Director has **no overlay verb at all**, `sceneAt` resolves an overlay from its own keyframes and `overlayRect` from its own box, and the largest transform any step can write is **±17%**. Left in RULEBOOK's Still open list with the two questions a reproduction needs. New **RULEBOOK E84, E85**. Green with 15 suites and `npm run build`; ⚠ **not seen in the running app**, and the sound half needs a Freesound key and a live run. See the Work Log.
+
+**Previously:** 2026-09-02 — **A TIMELINE OPENS AT ONE HEIGHT AGAIN.** *“jab mai editor open karta hun to layer chota bara kyun rahta hai jab user layer ka size ghiza hi nhi… first time mai ek look rahna chahiye”* — with two screenshots of a fresh import showing six of thirteen rows taller than the rest, nothing dragged. ⚠ **ROW HEIGHTS WERE STORED WITHOUT THE PROJECT IN THE KEY.** The record was a flat `{ laneKey: rem }`, on the theory that “I like my Text row tall” is a reading preference rather than a property of one edit — but **a lane key is not unique to a project**: the structural rows are `text:`, `shape:`, `image:`, `frames:0`, `audio:` everywhere, and `interchange.py` names an imported project's lanes `_import_text_0`, `_import_shape_0`, … **deterministically**, so every import mints the same ids as the last one. One accidental nudge of a seam (a 9px strip under every gutter row, exactly where a row-restack drag starts) made every project opened afterwards — and every fresh import — open half-tall. ⚠ **BOTH COLUMNS BEING TALL TOGETHER IS THE PROOF IT WAS THE RECORD**, not a stylesheet: that is the signature of the inline `--tl-track-h` that `laneStyle` writes. Now `{ [projectId]: { at, rows } }` under `cas_animatic_rows2`, the flat record **deleted on sight**, capped at 24 projects, and an all-reset project deletes its entry rather than storing `{}`. A project nobody has dragged a row in has no record — one look, first time. ⚠ **AND THE PROJECT IS PART OF THE STATE, NOT JUST OF THE WRITE**: `laneH` is `{ id, rows }`, because with the id only on the write a project switch left the 250 ms debounce about to save the OLD project's rows under the NEW id. New **RULEBOOK E83**. Verified by driving the storage module under Node against a stub `localStorage` (legacy record removed, projects isolated, clamp/rounding, empty-save deletes, no-id no-op, 30 saved → 24 kept); all three changed files parse clean. ⚠ **The Playwright row-height suite was not run** — its two new checks are unproven. See the Work Log.
+
+**Previously:** 2026-09-02 — **THE BAR'S COLOUR IS #3F3F3F, AND CHASING IT FOUND 533 SHAPES THIS APP HAD BEEN THROWING AWAY.** *“oye v same tarike se colour daalta hun premiere pro mai jaise text ka dalta hun, check karo mil jayega”* — with a photograph of Premiere's Color Picker reading **#3F3F3F**. ⚠ **THE COLOUR IS NOT IN THE CAPTION, AND NOW IT IS KNOWN WHY.** Searching both projects for `3f 3f 3f` finds it twice — not in any caption, but inside a **shape's `Appearance` blob**, in a second colour table beside the fill. It is **Premiere's default swatch grey**, which is exactly why no caption carries it: a FlatBuffer does not write a field equal to its default. Three independent confirmations now agree — the picker (#3F3F3F), the full-opacity caption's export (#3e3e3e, one level, h.264), and 679 of 974 shape blobs. ⚠ **AND THAT SEARCH TURNED OVER SOMETHING BIGGER.** `Appearance` carries the same `44 33 22 11` header as a caption's `Source Text`, so E76's fixed-offset reader — correct, and guarded by a length check of exactly 404 bytes — was answering for the **441** blobs that are that length and **REFUSING THE OTHER 533**, every one of which arrived as an invisible placeholder. Walking the structure instead reads all 974. ⚠ **ZERO REGRESSION BY MEASUREMENT, NOT BY ARGUMENT**: both readers run over all 974 — 441 answered by both, **agreeing on every single one**, 533 answered only by the new one, none lost. The new fills are a designer's palette (`#78adcb`, `#7a51d1`, `#2d81ec`, `#a955d1`, `#fe8d7e`…). ⚠ **FIELD 0 IS THE FILL AND FIELD 5 IS THE OUTLINE** — reading 5 by mistake paints 679 of them grey. ⚠ **AND A TABLE'S DECLARED LENGTH MUST BE BOUNDS-CHECKED, NOT JUST ITS VTABLE**: a blob cut off inside a colour table still has a valid vtable, and because an absent channel is 255, a red truncated after one byte comes back WHITE rather than refused. New **RULEBOOK E82**, and **E81**'s colour paragraph corrected from “measured” to what it actually is. `tests/interchange_check.py` §8q's fixture is now a real FlatBuffer built by hand rather than bytes laid at 0x170; three more guards proved to fail. Re-checked on the user's own two projects: the white card, the black card, the faded end card and both caption styles all unchanged. Green with all 13 suites and `npm run build`. ⚠ **Not yet seen in the running app** — needs a restart and a re-import. See the Work Log.
+
+**Previously:** 2026-09-02 — **THE BACKGROUND BAR COMES ACROSS TOO, AND IT WAS ONE TABLE UP FROM WHERE THE COLOUR WAS.** *“fix karo isko v please tum kar sakte ho”* — and this time the walk started from a photographed Properties panel rather than from a guess. ⚠ **THE BAR IS ON THE DOCUMENT TABLE, NOT ON A RUN**, which is exactly why the first look missed it: a fill and a stroke are per RUN (Premiere lets you paint one word), but a bar is drawn once around the whole block. Fields: **f18** bool = background ON, **f19** float = opacity as a percentage, **f20** = padding in px, **f34** = corner radius in px; f18 travels with f20 and f34 in 3,301 of 6,513 documents. ⚠ **THE DEFAULT OPACITY IS 75, PROVED BY WHAT IS *WRITTEN*** — both photographed captions read 75 with f19 absent, and `f19 = 100.0` is written 71 times in the corpus, which is impossible if 100 were the default. ⚠ **NO FLAG MEANS NO BAR** (51 documents carry a size with the background switched OFF). ⚠ **AND THE TWO APPS DO NOT PAD THE SAME BOX** — Premiere pads the INK, `draw_texts` pads the LINE BOX, so copying the number across made the bar half again too tall. Measured on one caption (45 px type, size 20): Premiere's bar is 72 px at 1080 and this app's bar at `backdrop_pad: 0` is already 71, so the honest conversion comes out at ≈0 and the rendered bar lands at **76 px against Premiere's 72** — while a background four times as wide still gets four times the padding. The radius needs no correction. ⚠ **THE BAR'S COLOUR IS THE ONE PART MEASURED RATHER THAN READ** — every background in the corpus is the same bar, so nothing can be differenced against it. It is taken off the caption whose `f19 = 100`, where the export shows the stored colour with no compositing in the way: a flat **#3e3e3e over 116,915 pixels**, cross-checked against the 75% one (predicts 121.3, measures 124). ⚠ **SECOND SIGHTING OF PREMIERE COMPOSITING IN LINEAR LIGHT** (the first was a 10% black card reading 244 where sRGB says 229), so an imported bar over a bright shot comes out slightly darker here — named rather than fudged. Rendered from the user's own file both captions now match their frames: white on a grey bar, and amber with a black outline on a dark grey one. New **RULEBOOK E81**; `tests/interchange_check.py` §8s grows to 33 checks with TEN guards proved to fail in total. Green with `interchange_check`, `effects_check`, `render_parity`, `captions_check`, `import_dedupe_check`, `media_cleanup_check`, `hidden_lane_check`, `animatic_motion_check`, `monitor_video_check`, `dialog_frame_check`, `audio_mix_check`, `frame_save_fields_check`, `editor_project_import_check` and `npm run build`. ⚠ **Not yet seen in the running app** — needs a restart and a re-import. See the Work Log.
 
 **Previously:** 2026-09-02 — **THE COLOUR OF A CAPTION *IS* IN THE `.prproj`, AND THIS FILE HAD TWICE SAID IT WAS NOT.** The user photographed Premiere's own Properties panel — *“kaise nhi mil raha hai tumko, sab hai yaha pe”* — Fill `#FFBC0F`, Stroke black, Width 5.0. ⚠ **THE BUG WAS THE METHOD, NOT THE FILE.** The fill was written off in E59 and RE-CONFIRMED as unreadable after E76 by decoding every payload in a real project (345 of them, 73 kB) and searching each for the known colour as bytes AND as floats. It was four bytes from the end of a blob that search had already decoded: **`#FFBC0F` is stored as `bc 0f`**, because a `Source Text` blob is a FLATBUFFER and a FlatBuffer does not write a field equal to its default — and each colour channel defaults to **255**. `ff bc 0f` appears nowhere and never could. The corpus “proof” was wrong the same way: “90 records all read `00 00 00 00`” was measured at a guessed offset inside a variable-length structure. New **RULEBOOK E78** is that lesson — *a byte search cannot disprove the presence of a value in a schema'd binary* — and **E80** is the layout, walked field by field: root → document → vector of RUNS → run field 1 is the STYLE table → fields 2 / 4 / 6 are fill colour, stroke colour and stroke width. ⚠ Channel default **255 not 0** (zero turns the amber into `#00bc0f`); ⚠ table offsets are **signed** (Premiere writes backward references); ⚠ **all the runs or none**, because one layer can be painted a word at a time and `AnimaticTextClip` holds one colour; ⚠ a stroke needs BOTH its colour and a width; ⚠ and a blob that does not walk gives up the paint rather than throwing, since it comes from an uploaded file. Over **6,287 style records in 120 real projects** the fills come out as a designer's palette (`#ffbc0f`, `#e14e21`, `#3b92d9`, `#4700a8`, `#99d6a6`…) and the strokes are overwhelmingly `#000000`. Rendered from the user's own file, `“Imagine you have a goal”` now draws amber with a black outline, as Premiere draws it. ⚠ **STILL MISSING: the background bar**, not located in the style table — named in the report as a gap rather than written up as unreadable. `tests/interchange_check.py` §8s — 22 checks, FIVE guards proved to fail, with the blob built by hand so the fixture cannot follow the code. Green with `interchange_check`, `effects_check`, `render_parity`, `captions_check`, `import_dedupe_check`, `media_cleanup_check`, `hidden_lane_check`, `animatic_motion_check`, `monitor_video_check`, `dialog_frame_check`, `audio_mix_check`, `frame_save_fields_check` and `npm run build`. ⚠ **Not yet seen in the running app** — needs a restart and a re-import. See the Work Log.
 
@@ -3565,7 +3573,483 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-09-02 (latest) — AND THE BACKGROUND BAR, ONE TABLE UP FROM THE COLOUR
+### 2026-09-03 (latest) — ✕ THE AI EDITOR'S HEADER BECOMES A TITLE BAR: THE ✕ AND THE DOCK SWITCH ARE ONE ROW, ONE SIZE
+
+    "chat bot panel mai x overlap ho raha hai ye right left icon se"
+    "icon aur x close buttun upper niche dikh raha hia ek jaisa rakho please align"
+
+**WHAT WAS ON SCREEN.** With the AI Editor set to *"let each person choose"* the
+header draws the two dock buttons (▥ beside the rail / ▤ right-hand side) and
+then the shared ✕. The ✕ was drawn ON TOP of them.
+
+**WHY.** `.modal-close` (soon-upgrade.css) is `position: absolute; top: .35rem;
+right: .45rem` — ONE rule for all 31 dialogs, put in the corner deliberately by
+**E65**. Absolute resolves against the nearest POSITIONED ancestor, and here
+that is `.ec-panel` itself (`position: fixed`), not `.ec-head`. So the glyph
+leaves the header's flex row and parks in the panel's own corner — exactly
+where `.ec-dock-pick`, the last item in that row, already sat.
+
+**THE FIRST FIX WAS WRONG AND IS WORTH RECORDING.** `.ec-head` got a
+`padding-right: 1.6rem` to reserve the corner, on the reasoning that E65 put the
+✕ there on purpose and the row should move instead. It cured the overlap and
+left a STEP — the ✕ a few pixels above the icons beside it — which came back
+straight away as *"upper niche dikh raha hia ek jaisa rakho"*.
+
+**THE FIX THAT LANDED.** `.ec-head .modal-close` is `position: static`, so the
+✕ rejoins the flex row and lines up with the switcher; `.ec-head-title` still
+takes the slack, so it is still hard right. Both controls now take one height
+from `--ec-ctl: 1.75rem` on `.ec-head` — the pill by `height`, the ✕ by
+`height` AND `min-width`, because the glyph is one character and E65's other
+half is that the ✕ must stay easy to hit. Same box, same top edge.
+
+**⚠ THIS DOES NOT REOPEN E65.** E65 is about DIALOGS, and every one of them has
+an empty corner for the ✕ to sit in. This panel does not — its title bar has
+its own controls, which is the whole reason the corner was contested. The
+exception is written into **RULEBOOK E101** with that boundary spelled out, and
+the CSS carries the same note so the next person to "tidy" it reads why first.
+
+**Files:** `client/src/styles/editor-chat.css` (`.ec-head`, `.ec-dock-pick`,
+`.ec-dock-btn`, new `.ec-head .modal-close`), `RULEBOOK.md` (**E101**).
+
+**Verified:** `tests/dialog_frame_check.py` green (31 dialogs — the shared rule
+is untouched, this is a scoped override) and `tests/editor_chat_render_check.py`
+green (markup unchanged). ⚠ **NOT opened in a browser** — both suites read
+SOURCE and neither measures a pixel, so the alignment itself is unproven
+(G2/G7). Needs a screenshot with the panel in BOTH docks.
+
+### 2026-09-03 — ✨ THE AI EDITOR, PHASES 3 AND 4: IT CAN CUT, IT CAN SCORE, AND IT CAN HEAR THE SILENCE
+
+    "Start Phase 3–4"
+
+**PHASE 3a — THE CUT.** Three new verbs: `split_shot`, `trim_shot`, `delete_shot`,
+with `splitFrameAt` and `deleteFrame` added to `ACTION_API` and to the editor's bag.
+
+⚠ **THEY ARE THE FIRST VERBS THAT RENUMBER THE FILM, AND THAT NEEDED A DIFFERENT
+RULE** (**E91**). Every other verb resolves `shot: 5` live at the top of its own
+step. That is wrong the moment a step can delete: *"delete shot 3, then title shot
+5"* means the shot the PERSON called 5 in the preview, and after step one that
+shot is number 4 — so the title lands on the wrong picture and **reports
+success**. Structural verbs resolve to a FRAME ID in `validate` (which runs once,
+against the document the user was shown) and `run` looks it up again, throwing
+when it has gone rather than deleting whatever now sits at that index.
+
+⚠ **AND `trim_shot` HAD A REAL BUG THAT A TEST CAUGHT BEFORE A TIMELINE DID**
+(**E92**): it read its amount through `ms()`, which floors at zero because every
+other verb takes a length — so every *"hold it a second longer"* became *"no
+amount to trim by"*. It reads `int()` now; the sign is the instruction.
+
+**PHASE 3b — SOUND.** Sound effects and a music bed, reusing the Director's own
+`sound_pass.js` end to end — cueing, the shared Freesound budget, placement, the
+ducking under speech, and one undo for the lot.
+
+⚠ **SOUND IS NOT A VERB AND CANNOT BE ONE** (**E93**): every verb is synchronous
+and a stock-library search is a round trip, so it rides beside the steps and runs
+after them — which is also the only correct order, because a cue lands on a
+moment and the steps have just finished moving the moments.
+
+⚠ **AND THAT EXPOSED A REAL BUG IN PHASE 2's OWN RULE** (**E94**): the plan
+branch was gated on `kind === "plan"`, so a model sending a music cue under
+`kind: "answer"` — which is what one does when it thinks of "add music" as
+answering rather than editing — produced prose and **no Apply button at all**.
+The file's header already said the content decides; the code now agrees with it.
+
+**PHASE 4 — DEAD AIR AND FILLER.** New `client/src/animatic/agent/speech.js`.
+
+⚠ **IT COSTS NOTHING, AND THAT IS WHY IT IS IN THE BROWSER** (**E95**). The
+editor already decodes every audio upload for its waveforms, so "where are the
+long pauses" is a question the client can answer with no upload, no ffmpeg, no
+model call and no quota. It is a TWIN of `captions.spans_from_envelope`, and all
+seven shared constants are read out of BOTH files by `editor_chat_check.py` §10 so
+the twin cannot drift. `DEAD_AIR_MS` (900ms) deliberately has NO twin:
+`MIN_SILENCE_MS` separates a pause from a consonant, which is far too fine a line
+for an edit — every sentence has 300ms of air after it.
+
+⚠ **THE FILLER HALF IS HONEST ABOUT WHAT IT CANNOT DO** (**E96**). Captions here
+carry LINE timings, not word timings, so a filler word comes off the SCREEN and
+stays in the SOUND — and the prompt is made to say so, because a user who asked to
+"remove the umms" and got captions deleted while the audio still stumbles has been
+quietly handed the wrong thing. The word list is short on purpose (only words that
+carry no meaning in any sentence; Hinglish included, per A8) and the bar is
+"mostly filler", not "contains filler".
+
+⚠ **AND A MEASUREMENT IT DOES NOT TRUST IS REPORTED, NOT USED** (**E97**) — the
+worst thing available to this feature is offering to cut four fifths of somebody's
+voiceover off a failed reading.
+
+**New**: `client/src/animatic/agent/speech.js`. **Touched**: `actions.js`,
+`chat_turn.js`, `useEditorChat.js`, `EditorChat.jsx`, `AnimaticEditor.jsx`,
+`editor-chat.css`, `editor_chat_agent.py`, `schemas.py`, `editor_chat.py`,
+`prompts.yaml`, and the two chat suites.
+
+**Green**: `editor_chat_check` now **141 checks over 10 sections**,
+`editor_chat_render_check` (42), `director_actions_check`, `workflow_mount_check`,
+`npm run build`, and **87 of the 90 non-browser suites** — the same three that
+fail at HEAD and are not this work's.
+
+⚠ **TWO HARNESS LESSONS, BOTH PAID FOR** (**E98**, **E99**): a JS harness written
+as a Python `%`-format template breaks the moment the JavaScript contains a
+modulo or a percent sign in a comment, with an error that names neither; and
+anchoring an insert on "the next section heading" landed two blocks of assertions
+in `prompt_checks()`, where `data` does not exist.
+
+⚠ **STILL NOT OPENED IN A BROWSER** (G7) — unchanged from phases 1–2, and now
+with more to check: the cut verbs move real clips and the sound pass writes two
+new lanes. ⚠ **WHAT IS NOW KNOWN FROM A BROWSER**: `editor_director_check.py`
+runs the whole editor with the chat hook mounted and is **fully green**, with no
+console error and all 18 `ACTION_API` names present — so the wiring holds against
+a real React tree. What is still unseen is the PANEL: layout, CSS and a click.
+
+⚠ **AND ITS ONE RED LINE IS FIXED** (**E100**). It was not this work's — the
+transition-variety change made the 4th treated cut a `slide`, and that suite
+matched on `"dissolve" or "dip"`, so a flat board read `[2, 4, 6]`: a red line
+about the RHYTHM caused by a change to the KIND. It asserts the property in its
+own check name now (`r[2] != "—"`, i.e. a transition arrived at all). The kind was
+already pinned where it belongs, against the planner directly, in
+`director_guardrails_check.py`. **Whole suite green.**
+
+### 2026-09-03 — ✨ THE AI EDITOR: A CHAT THAT ASKS BEFORE IT ACTS (PHASES 1–2 + THE ADMIN TAB)
+
+    "how can we give a chatbot in our video editor to make all the functionalities
+     handle of video editor through that chatbot ... and if it unsure about
+     anything give us the options and ask if not these then what"
+    "tu dono kar do mai admin panel se change kar lunga tum chat bot ka admin
+     panel ke v bana dena ek section"
+    "chat boat light mode ke upwr rakhna okay"
+
+**Researched first, then built.** Descript’s Underlord, Premiere’s AI Assistant
+(public beta, June 2026), CapCut’s AI Edit Pilot, VEED’s agent, ChatCut and
+Runway’s MCP server were all read up before a line was written. **Every one of
+them guesses and acts; not one of them asks.** That gap is the product, and it is
+what E86 is about.
+
+⚠ **THE HARD HALF WAS ALREADY BUILT AND WAS NOT REBUILT.** The 🎬 Director had
+the 26-verb registry, the capability manifest derived from the renderer tables,
+the validator that drops instead of throwing, and a snapshot/revert. The chat
+runs **the same `ACTIONS` through the same `directorApi` bag and the same
+`readDirectorCtx`**, so the one-transition-per-cut rule, the effects cap and the
+shot numbering are obeyed for free (**E87**). What was NOT reused is
+`useDirectorRun` itself — a four-phase machine for a popup opened once and
+answered once, where a conversation has no phases.
+
+**What a turn is.** One reply is `answer` │ `ask` │ `plan`, and the CONTENT decides
+which — a reply labelled `plan` whose every step was dropped is an answer, because
+an Apply button over zero edits is the worst lie a panel can tell. **Nothing is
+applied on arrival**; a plan is a table with a count and an Apply button, and Undo
+sits on the bubble that did it (one snapshot per apply, only the newest — putting
+the film back past plan B to undo plan A is a button that undoes more than it says).
+
+**The ask, which is the point.** 2–4 real options, each with a half-line saying what
+it would MEAN for this film, `allow_other` hard-coded true, and an answered
+question stops being clickable. Three triggers — unclear target, spend, deletion —
+and a fourth rule that matters as much: **when NOT to ask**.
+
+**Where it opens.** ✨ **AI Editor sits directly above the Light-mode switch**, as
+asked, in `.sb-footer` rather than the workflow list — it opens a panel over the
+page you are on rather than navigating. **Both docks are built** (right-hand
+column, or sliding out of the rail) and the admin panel chooses, including "let
+each person choose". One component, one class on the root; no second render path.
+
+**The admin tab (✨ AI Editor, between Pricing and Sales) shows three things and
+owns one** (**E88**): on/off is `features.py`’s `cap.editor-chat`, the monthly
+message count is that tier’s `limits["chat_turns"]` written through
+`billing.save_tier` — so it lands on the pricing card too — and only the behaviour
+is `chat_settings.py`. Seeded 20 / 500 / 2000 / unlimited. ⚠ A `turn_limits` map in
+the chat’s own store would have been fewer lines and a number the pricing page did
+not know about.
+
+⚠ **IT CANNOT SPEND.** `POST /editor-chat/{id}/turn` is one text call behind
+`require_feature` AND `require_quota`, both checked BEFORE the model call so a
+customer over their limit is never billed for the refusal; the counter increments
+only on success. A paid render still goes through the priced confirm ✨ Animate
+uses. `allow_paid_passes` defaults **off**.
+
+**New**: `client/src/animatic/agent/chat_turn.js`, `useEditorChat.js`,
+`components/EditorChat.jsx`, `styles/editor-chat.css`, `admin/AdminChat.jsx`,
+`server/editor_chat.py`, `server/chat_settings.py`, `editor_chat_agent.py`,
+`tests/editor_chat_check.py`. **Touched**: Sidebar, App, StoryboardToAnimatics,
+AnimaticEditor, api.js, entitlements.js, index.css, admin.css, main.py, admin.py,
+schemas.py, features.py, billing.py, usage.py, events.py, config.py, prompts.yaml.
+
+**Green**: `editor_chat_check` (62 checks), **`editor_chat_render_check` (33)**,
+`director_actions_check`, `director_contract_check`, `capability_check`,
+`billing_check`, `features_check`, `workflow_mount_check`, `npm run build`, and
+**86 of the 89 non-browser suites** (the three that fail, fail at HEAD too:
+`effects_parity` needs a native GL module nobody installs, `offer_visibility` and
+`shot_density` are older and unrelated — verified in a clean worktree, not assumed).
+
+⚠ **`editor_chat_render_check.py` IS NEW AND IT EARNED ITS PLACE ON ITS FIRST RUN**
+(**E90**). `EditorChat` returns `null` while shut, and every browser suite leaves
+it shut — so its whole markup was code no test had run, behind a green build. It
+bundles the real component with esbuild and renders it with `react-dom/server`
+against a stub shaped like the hook's return. It immediately caught the composer
+promising *"nothing changes until you press Apply"* on **every** turn, including
+an empty chat with no Apply button on screen. Reworded.
+⚠ **`capability_check` and `billing_check` had to be MENDED, not just re-run** —
+three assertions hard-coded "six capabilities" and "12 features in the free tier",
+so a seventh capability broke tests that were correct about nothing (**E89**).
+They count the catalogue now.
+
+⚠ **THE PANEL HAS STILL NEVER BEEN OPENED IN A REAL BROWSER** (G7). What IS
+known: `workflow_mount_check` is green with the shell, rail and App changes in;
+`editor_director_check` mounts `AnimaticEditor` with the chat hook in it and
+reports **no console error** and all 18 `ACTION_API` names present; and the render
+check above proves the markup executes. What is NOT known is layout, CSS and a
+click — the dock beside the timeline, and Apply actually moving a clip.
+⚠ **AND `editor_director_check.py` FAILS ON ONE LINE THAT IS
+NOT THIS WORK’S** — see the entry below it: the transition-variety change makes
+the 4th treated cut a `slide`, and that suite still counts only `dissolve`/`dip`,
+so a flat board reads `[2,4,6]` where it asserts `[2,4,6,8]`. Diagnosed, left
+alone, and reported — it belongs to the change that caused it.
+
+### 2026-09-03 — THE FREE DOOR SCORES THE FILM, AND ELEVEN CUTS ARE NOT ONE DISSOLVE
+
+    "dekho jab mai bas transition, effects, sound effects and Backgound music
+     add karwaya to ismai kai sara bug mil
+     1 Sound and bg music nhi aaya timeline pe
+     2 jab ye transition aur effetc aay to logo bara ho gaya program screen mai
+     3 mai dekha hi transition bas dissilove hi lagaya gay transition alag alag
+       use hona chaiye video editor ke hisab se soch kar"
+
+Three reports off one 🎬 run on a 27-shot imported cut. **Two are fixed here; the
+third is written up as OPEN with the evidence, because it is not what it looks
+like.**
+
+**1 · Both sound boxes were switches that could not do anything.** The analyse
+call answered **403 PERMISSION_DENIED** (a Google Cloud permission on
+`project-cf56be07…`, not this repo), so the run fell back to "Just the rhythm" —
+and phases D and E read their cues off that reading and nothing else. Sound
+effects and Background music were ticked, and the panel printed "the reading
+writes them" under a box the user had just switched on.
+
+⚠ **THE LINE IS STORY vs RHYTHM, AND `sound_pass.js` ALREADY DRAWS IT — IT WAS
+JUST DRAWN TOO WIDE.** "Which moment is a door closing" is a story question and
+arithmetic still must not answer it; that refusal stands. But a MUSIC BED is not
+an event in the film, it is a property of the whole of it, and the one thing a
+timeline knows without being told — how fast it cuts — is the same evidence an
+editor uses to pick one. New `houseMusicCue`: three bands off the median hold
+(≤2.5s upbeat, ≤5s calm cinematic, otherwise slow ambient), **instrumental every
+time** because a vocal fights a voiceover phase B may add after the cue was
+written, and null on an empty timeline rather than an empty query.
+
+⚠ **AND A WHOOSH UNDER A TRANSITION IS A DECISION ABOUT THE TRANSITION, NOT ABOUT
+THE STORY.** New `houseSfxCues` lays **one** recording on the cuts THE PLAN
+ALREADY TREATED — never on an ordinary cut, which is still refused for exactly
+the reason `sfxCues`' note gives. One recording rather than one per cut, because
+eleven different whooshes is eleven searches out of a shared budget and eleven
+different noises in one film. Each lands **half the transition early**, because a
+transition is boundary-local and a sound started ON the cut arrives halfway
+through the gesture it is sounding.
+
+⚠ **BOTH ARE FALLBACKS AND BOTH RUN ON EVERY DOOR.** A reading that cued its own
+music or effects wins — it read the film, these counted its cuts — and the
+fallback fires on the AI door too, which is where it was reported (a failed model
+call, not the free planner). ⚠ **AND THE EFFECTS ARE READ OFF THE PLAN**, so
+un-ticking Transitions has to take them away with it: `recost` re-reads the cues.
+⚠ **THE SCORING PASS FALLS BACK THE SAME WAY**, or a run that promised whooshes
+on screen would lay down nothing — it re-reads them against the finished film,
+since the steps re-time shots.
+
+**2 · Eleven treated cuts, one gesture.** `house_style.js` placed only `dissolve`
+and `dip`, and the note over it argued for that: "a treatment nobody chose is the
+first thing the user deletes". ⚠ **THAT IS RIGHT ABOUT VARIETY FOR ITS OWN SAKE
+AND WRONG ABOUT WHAT A CUT LOOKS LIKE** — and the answer already existed one
+section down in the same file. `stillMove` had exactly this problem with camera
+moves (a four-way rotation put a pan on every other shot) and was replaced with a
+WEIGHTED pattern: one house gesture carrying most of the film, the others on a
+counter. Transitions now do the same:
+
+    treated cut   1    2    3    4      5    6     7    8      9    10
+    treatment     dis  dis  dis  slide  dis  wipe  dis  slide  dis  dis
+
+⚠ **THE DIP STILL OUTRANKS THE PATTERN** on a hold ≥ 2.2× the median — a decision
+about the FILM beats a pattern about the cuts. ⚠ **THE COUNTER INDEXES THE
+TREATED CUTS IN FILM ORDER**, not the raw cut number: indexed by cut number, "every
+4th" lands on every other treated cut on an alternating plan and on none of them
+on an emphasis plan. ⚠ **THE TWO NEAREST WIPES ARE NEVER THE SAME GESTURE TWICE** —
+the second is `diagonal`, travelling the other way, which is the rule the pans
+already keep. ⚠ **AND A MOVING EDGE IS QUICKER THAN A DISSOLVE** (×0.6, floored at
+300ms): a cross-fade is a soft join, an edge the eye follows for 1.4s stops being
+punctuation. ⚠ **EVERY KIND IS CHECKED AGAINST `caps` FIRST** and falls back
+towards the dissolve, so a build that renders fewer treatments cannot make this
+planner propose a step `validatePlan` would then drop — the preview must be the
+film that gets made.
+
+**3 · The logo in the Program monitor — OPEN, and NOT the run's doing.** Measured
+off the two screenshots at the same 0:04: the shot picture is ≈**1.15×**, which is
+the Ken Burns move working correctly, while the logo overlay is ≈**2.5×** and
+cropped at the left. Checked rather than assumed:
+
+* the Director has **no overlay verb at all** — `ACTIONS` in `actions.js` has
+  none, so no plan can patch an overlay;
+* `sceneAt` resolves an overlay from its **own** keyframes only, and
+  `overlayRect` sizes it from its **own** box in frame units — neither reads the
+  frame's transform;
+* the largest transform any step can write is **±17%** (`ZOOM_TO` 0.10 /
+  `PAN_SCALE` 0.12, × the 1.4 `amount` cap). 250% is not reachable.
+
+So it is left in RULEBOOK's **Still open** list with the measurements and the two
+questions a reproduction needs to answer (does *Revert it all* put it back; is it
+big everywhere or only across a transition) rather than guess-fixed in the
+renderer.
+
+**Files:** `client/src/animatic/agent/house_style.js` (`treatmentFor` takes the
+treated-cut index and returns `params`; new `SLIDE_EVERY` / `WIPE_EVERY` /
+`quickly` / `TREATMENT_WHY`), `client/src/animatic/agent/sound_pass.js` (new
+`houseMusicCue`, `houseSfxCues`, `HOUSE_SFX_QUERY`; the two "nothing was cued"
+reasons re-worded to what they now mean),
+`client/src/animatic/agent/useDirectorRun.js` (`loadCues` takes the plan and falls
+back; `planRef`; the rules door, the AI door, `recost` and the scoring pass all
+hand it over), `tests/director_guardrails_check.py` (+11 checks on the pattern),
+`tests/director_sound_check.py` (+15 checks on the house cues).
+
+**Verified:** `director_guardrails_check`, `director_sound_check`,
+`director_determinism_check`, `director_plan_check`, `director_actions_check`,
+`director_house_veo_check`, `director_contract_check`, `director_language_check`,
+`director_chunk_check`, `director_resume_check`, `director_take_row_check`,
+`director_voice_order_check`, `sound_licence_check`, `transition_check`,
+`render_parity` — all green — and `npm run build`.
+⚠ **Not yet seen in the running app**, and the sound half cannot be: it needs a
+Freesound key on the server and a live run. Report 2 is unreproduced.
+
+New **RULEBOOK E84, E85**, and one new row in **Still open**.
+
+### 2026-09-02 — A TIMELINE OPENS AT ONE HEIGHT AGAIN
+
+    "mai ek chiz notice kar raha hun kuchh time se jab mai editor open karta hun
+     to layer chota bara kyun rahta hai jab user layer ka size ghiza hi nhi first
+     time mai ek look rahna chahiye ye nhi ki chohota bara layer ... jab mai
+     import kiya to aise aaya ... keep one size layer first time and when user
+     chnage size any layer to waise hi rakho jaise user rakah hai"
+
+Two screenshots of a freshly imported project: thirteen rows, six of them visibly
+taller than the other seven, with nothing dragged.
+
+**What it was.** Row heights (the per-row seam added earlier this cycle) were
+stored in `localStorage` as a **flat `{ laneKey: rem }` record with no project in
+it**. The reasoning written into `row_heights.js` was that "I like my Text row
+tall" is a preference about how you read a timeline rather than a property of one
+edit — which reads well and is wrong, because **a lane key is not unique to a
+project**:
+
+* the structural rows are `text:`, `shape:`, `image:`, `frames:0`, `audio:` in
+  every project there has ever been; and
+* an IMPORTED project is worse — `interchange.py` names its lanes
+  `_import_text_0`, `_import_shape_0`, … **deterministically**, so every import
+  mints the same ids as the last one.
+
+So one drag — and the seam is a 9px strip under every gutter row, exactly where a
+row-restack drag starts, so it is easy to nudge by accident — was enough to make
+**every project opened afterwards, and every fresh import, come up with some rows
+tall and some short**, with no gesture of the user's behind it. The screenshots
+are that record, not a layout bug: both columns are tall together, which is the
+signature of the inline `--tl-track-h` that `laneStyle` writes and could not be
+produced by any stylesheet rule.
+
+**The fix.** `row_heights.js` now stores `{ [projectId]: { at, rows } }` under a
+new key `cas_animatic_rows2`, and **deletes the old flat record on sight** —
+there is no honest way to decide which project its heights belonged to, and
+leaving it would leave the bug in place for anyone who already has one. A project
+nobody has dragged a row in has **no** record, so every row takes the vertical
+zoom's height: one look, first time, as asked. Drag a seam and that row's height
+is remembered for **that** project and survives a reload, as before.
+
+⚠ **THE PROJECT IS PART OF THE STATE, NOT JUST PART OF THE WRITE.** `laneH` is
+`{ id, rows }` in `Timeline.jsx` now. With the id only on the write, switching
+projects left the 250 ms debounced save about to write the OLD project's rows
+under the NEW project's id — the same class of bug one level down. The switch is
+handled by adjusting state during render (React's own documented pattern) so the
+first paint after a switch is already right rather than one frame stale.
+
+⚠ **AND THE STORE IS CAPPED AT 24 PROJECTS**, newest first. A row height is a
+convenience; an unbounded record would grow one entry per project opened for the
+life of the browser profile. Resetting every row in a project (double-click each
+seam) deletes that project's entry rather than storing `{}` — what the user sees
+and what storage says should agree.
+
+**Files:** `client/src/animatic/row_heights.js` (rewritten: `getRowHeights(id)`,
+`saveRowHeights(id, rows)`, legacy key removed, cap),
+`client/src/components/Timeline.jsx` (new `projectId` prop, `laneH` =
+`{ id, rows }`, `heightOf`, `laneStyle`, the seam's two writers),
+`client/src/components/AnimaticEditor.jsx` (passes `projectId={animaticId}`),
+`tests/editor_row_height_check.py` (reads the new key; two new checks — the
+record is under **this** project's id and nowhere else, and the flat record is
+gone).
+
+**Verified:** the storage module driven directly under Node against a stub
+`localStorage` — a legacy record present at start gives a fresh project `{}` and
+is removed; a save under one project leaves another project bare; clamping and
+2-dp rounding hold; an empty save deletes the entry; a save with no id is a
+no-op; 30 projects saved leaves 24. All three changed files parse clean.
+⚠ **The Playwright suite was NOT run** (`tests/editor_row_height_check.py` needs a
+live Vite + Chromium and is run on request) — its two new checks are unproven.
+
+New **RULEBOOK E83**.
+
+### 2026-09-02 — #3F3F3F, AND THE 533 SHAPES IT TURNED UP ON THE WAY
+
+    "oye v same tarike se colour daalta hun primeir pro mai jaise text ka dalta
+     hun chcek karo mil jayega same colour picker se hi koi v colou choose ka ke
+     set kar do ohi patti ka colou rahta hai"
+
+— with a photograph of Premiere's Color Picker open on the Background swatch,
+reading **#3F3F3F**. The previous entry had called that colour "measured rather
+than read" and put #3e3e3e in. The user was right to push.
+
+**1 · Where #3F3F3F actually lives.** Searching both projects for the bytes
+`3f 3f 3f` finds them twice each — and **not in any caption**. They are inside a
+**shape's `Appearance` blob**, in a second colour table beside the fill. So
+#3F3F3F is **Premiere's own default swatch grey**, and that is exactly why no
+caption carries it: a FlatBuffer does not write a field equal to its default.
+Three independent confirmations now agree: the picker (#3F3F3F), the export of
+the caption whose opacity is 100 (#3e3e3e — one level, which is h.264), and
+**679 of 974** shape blobs. It is pinned in the tests as ground truth, not as a
+preference.
+
+**2 · And that search turned over something much bigger.** `Appearance` carries
+the same `44 33 22 11` header as a caption's `Source Text` — it is the same
+FlatBuffer. E76 pinned the shape fill by DIFFERENCE at absolute offsets and
+guarded it with a length check of **exactly 404 bytes**. That was right, and it
+worked, on the **441** blobs that are that length. **533 of the 974 in the corpus
+are not** — they are 648, 532, 656, 424, 412 bytes — and every one of those was
+refused and arrived as an **invisible placeholder**. Walking the structure
+instead reads all 974: `root → field 0` is the appearance table, **field 0 of
+that is the FILL**, field 5 is its outline.
+
+⚠ **THE UPGRADE IS ZERO-REGRESSION BY MEASUREMENT, NOT BY ARGUMENT.** Both
+readers were run over all 974 blobs: 441 answered by both, **agreeing on every
+single one**; 533 answered only by the new reader; none lost. The fills that come
+back are a designer's palette — `#78adcb`, `#7a51d1`, `#2d81ec`, `#a955d1`,
+`#fe8d7e`, `#3ea162` — not noise.
+
+⚠ **FIELD 0 IS THE FILL, FIELD 5 IS THE OUTLINE**, and reading 5 by mistake
+paints 679 of the corpus grey. Pinned with a fixture that gives the two different
+colours, so the wrong field cannot pass.
+
+⚠ **A TABLE'S OWN DECLARED LENGTH HAS TO BE BOUNDS-CHECKED, NOT JUST ITS
+VTABLE.** Found while break-testing: a blob cut off inside a colour table still
+has a valid vtable, and because an absent channel is 255, a red truncated after
+one byte came back **WHITE** rather than refused. `_Fb` now checks both.
+
+**Re-checked on the user's own two projects** after the change: the white
+background card, the 10% black card, the faded-out end card (still invisible,
+still black on screen) and both caption styles all read exactly as before.
+
+**Files:** `interchange.py` — `prproj_shape_fill` rewritten as a walk,
+`_Fb.__init__` gains the table-length guard, `PRPROJ_BACKDROP_COLOR` becomes
+`#3f3f3f` with the three-way evidence written down.
+
+**Tests:** `tests/interchange_check.py` §8q's `_appearance` fixture is now a real
+FlatBuffer built by hand — vtables, offsets, and a channel equal to 255
+deliberately NOT written — rather than bytes laid out at 0x170, which no longer
+tests anything the reader does. Its guards changed with it: wrong magic, any
+truncation, a root offset off the end, the outline read instead of the fill, and
+a missing channel defaulted to 0. §8s pins the bar colour. Three more guards
+broken on purpose and proved to fail. Green with all 13 suites and
+`npm run build`.
+
+⚠ **Not yet seen in the running app** — needs a server restart and a re-import.
+
+### 2026-09-02 — AND THE BACKGROUND BAR, ONE TABLE UP FROM THE COLOUR
 
     "fix karo isko v please tum kar sakte ho aur agar mere wale mai bacgound
      text mai nhi hai to o v bana dena mai chat hun log baad mai munnuly change
@@ -11205,10 +11689,19 @@ forget. `data-lane` and every class stay exactly where they were, which is what
 ⚠ **AND IT IS REMEMBERED, BECAUSE THE PANES ARE** (`row_heights.js`). Stored in
 REM rather than px — the opposite of `pane_layout.js`, on purpose: a pane is
 dragged against the window, a timeline row is one of a stack that scales with the
-browser's font size. Keyed by LANE KEY and NOT per project, so "I like my Text
-row tall" follows you from film to film, which is what it is: a preference about
-reading a timeline. Not in the document, so not in the undo stack and not an
+browser's font size. Not in the document, so not in the undo stack and not an
 autosave.
+⚠ **AND IT IS KEYED BY THE PROJECT — WHICH IT WAS NOT AT FIRST, AND THAT WAS A
+BUG YOU COULD SEE ON THE FIRST SCREEN.** The record was originally a flat
+`{ laneKey: rem }` so that "I like my Text row tall" would follow you from film
+to film. A lane key is not unique to a project: the structural rows are `text:`,
+`shape:`, `image:`, `frames:0`, `audio:` in every project, and `interchange.py`
+names an imported project's lanes `_import_text_0`, `_import_shape_0`, …
+deterministically, so every import produces the same ids as the last one. One
+accidental nudge of a seam therefore made every project opened afterwards — and
+every fresh import — come up with some rows tall and some short. Now
+`{ [projectId]: { at, rows } }` under `cas_animatic_rows2`, the flat record is
+deleted on sight, and the store is capped at 24 projects. See **RULEBOOK E83**.
 
 **THE DIAMONDS ARE A THIRD BIGGER, AND THEY FOLLOW THE ROW.** `--tl-key-size` /
 `--tl-key-row` / `--tl-key-top` were fixed rem; they are fractions of
@@ -25674,6 +26167,129 @@ still occasionally be safety-filtered.
 ---
 
 ## 🎯 Current State / Next Steps
+
+### 🟡 NEWEST: ✨ AI EDITOR PHASE 3–4 — AB CUT, MUSIC AUR KHAALI JAGAH BHI (2026-09-03)
+
+    "Start Phase 3–4"
+
+**1 · Ab chat cut bhi kar sakta hai.** Teen naye kaam: shot ko do tukdon mein
+kaatna, shot chhota/bada karna, aur shot hatana.
+
+⚠ Isme ek badi cheez sambhalni padi: agar shot 3 delete ho gaya to shot 5 ab shot
+4 ban jaata hai. Purana tareeka use galat shot par laga deta — aur *"ho gaya"* bhi
+bol deta. Ab har cut wala kaam shot ka **pakka id** yaad rakhta hai, number nahi.
+
+**2 · Music aur sound effects.** Chat ab keh sakta hai *"shot 4 par ghanti, aur
+poori film ke neeche halka sitar"*. Wahi Freesound system use hota hai jo
+🎬 Make Video ka hai — wahi budget, wahi lanes, aur **ek hi Undo** sab ke liye.
+
+**3 · Khaali jagah (dead air) ab dikhti hai — aur wo bilkul free hai.** Editor
+pehle se har audio ka waveform banata hai; usi se pata chal jaata hai ki kahan
+2 second koi bol hi nahi raha. Koi extra kharcha nahi — na AI call, na quota.
+
+**4 · Filler ("umm", "matlab") — aur yahan hum saaf-saaf sach bolte hain.** Hum
+filler wali **caption screen se hata sakte hain, par awaaz se nahi**. Awaaz se
+hatane ke liye har shabd ka exact time chahiye, jo abhi is app mein banta nahi.
+Chat ab khud ye baat bol kar batata hai — warna user samajhta ki umm hat gaya,
+aur awaaz mein wo abhi bhi hota.
+
+**5 · Do bug test ne pakde, user ne nahi:** (a) *"ek second lamba karo"* kaam hi
+nahi karta tha — negative number 0 ban jaata tha; (b) sirf music maangne par
+**Apply ka button aata hi nahi tha** — chat bata deta tha ki kya hoga, par karne
+ka koi raasta nahi deta tha.
+
+**6 · Wo purana toota hua test theek kar diya.** Jo `editor_director_check` ki
+ek line fail thi — wo mere kaam ki nahi thi, transition-variety wale change ki
+thi. Test poochta tha *"har doosre shot par transition aaya?"* par ginta sirf
+`dissolve`/`dip` ko tha; naya code chautha transition `slide` bana deta hai, to
+ginti kam aa jaati thi. Ab wo **transition hai ya nahi** — yahi dekhta hai.
+`slide`/`wipe` ka pattern pehle se `director_guardrails_check` mein test hota
+hai, wahi uski sahi jagah hai. **Ab poora suite green hai.**
+
+⚠ **BROWSER SE JO PATA CHALA**: `editor_director_check` asli browser mein poora
+editor chalata hai — chat ka hook mount hota hai, **koi console error nahi**, aur
+saare 18 `ACTION_API` naam maujood hain. Matlab wiring pakki hai.
+
+⚠ **PAR PANEL AB BHI NAHI KHOLA GAYA** (G7). 141 checks green, build green, mount
+check green, browser suite green — par **panel ka layout, CSS aur ek asli click**
+abhi dekhe nahi gaye. **Agla kaam yahi hai.**
+
+### 🟡 NEWEST: ✨ AI EDITOR — EDITOR KE ANDAR CHAT, JO PEHLE POOCHTA HAI (2026-09-03)
+
+    "how can we give a chatbot in our video editor ... and if it unsure about
+     anything give us the options and ask if not these then what"
+    "tu dono kar do mai admin panel se change kar lunga tum chat bot ka admin
+     panel ke v bana dena ek section"
+    "chat boat light mode ke upwr rakhna okay"
+
+**1 · Aadha kaam pehle se bana tha, wahi use kiya.** 🎬 Make Video ke andar 26
+verbs, capability list, validator aur revert pehle se the. Chat **wahi 26 verbs**
+chalata hai — naya registry nahi banaya. Isliye transition/effect ke saare purane
+niyam apne aap lagu hote hain.
+
+**2 · Chat teen mein se ek jawab deta hai.** *Baat* (kuch nahi badalta) ·
+**⭐ Sawal + options** (2–4 choice, har ek ke neeche ek line ki wajah, aur hamesha
+"in mein se nahi? type kar do") · *Plan* (table + Apply button). **Apply dabane
+tak timeline par kuch nahi hota**, aur Apply ke baad usi bubble par Undo aata hai.
+
+**3 · Sawal kab poochega:** target saaf na ho · paisa lagne wala ho · kuch mitne
+wala ho. Aur — utna hi zaroori — **saaf baat par sawal NAHI poochega**.
+
+**4 · Button wahin hai jahan aapne kaha** — ✨ AI Editor, **Light mode ke theek
+upar**. **Dono dock bane hain** (right side, ya rail se slide) aur admin panel se
+choose hota hai, plus "har user khud chun le" wala teesra option.
+
+**5 · Admin panel mein naya tab: ✨ AI Editor** (Pricing aur Sales ke beech). Usme
+on/off, per-tier message limit (20 / 500 / 2000 / unlimited — badal sakte hain),
+dono dock, safety rails, aur cost wale numbers. ⚠ Limit tier ke apne `limits`
+mein jaati hai, isliye **pricing card par bhi wahi number dikhega**.
+
+**6 · Paisa:** chat khud kabhi kharch nahi kar sakta. Ek message = ek text call.
+Veo/voiceover/images ab bhi usi priced confirm se hi chalte hain.
+
+**7 · Kitna check hua:** 86/89 non-browser suites green (3 jo fail hain wo HEAD
+par bhi fail hain — mere kaam ki nahi), `workflow_mount_check` green, aur ek naya
+`editor_chat_render_check` jo panel ko sach mein render karke dekhta hai. Usne
+pehli hi baar ek asli bug pakda: composer har message par likh raha tha *"nothing
+changes until you press Apply"* — chahe Apply button screen par ho hi na. Theek
+kar diya.
+
+⚠ **PHIR BHI ASLI BROWSER MEIN PANEL KHOLA NAHI GAYA** (G7). Editor mount hota
+hai, koi console error nahi, markup render hota hai — par **layout, CSS aur ek
+asli click** abhi dekhe nahi gaye. **Agla kaam: browser mein chat khol kar ek
+message bhejna aur Apply dabana.**
+
+⚠ **`editor_director_check.py` ki ek line fail hai — wo is kaam ki nahi hai.**
+Transition-variety wale change (usi din ka, neeche Work Log mein) ne 4th treated
+cut ko `slide` bana diya, aur wo purana test sirf `dissolve`/`dip` ginta hai —
+isliye flat board par `[2,4,6]` aata hai jahan `[2,4,6,8]` expect hai. Diagnose
+karke chhod diya gaya, kyunki wo change abhi kisi aur ke haath mein hai. **Ek line
+ka fix hai, bolenge to kar denge.**
+
+### 🟡 NEWEST: PATTI KA RANG #3F3F3F, AUR 533 SHAPES WAPAS (2026-09-02)
+
+    "same colour picker se hi koi v colour choose kar ke set kar do, ohi patti ka
+     colour rahta hai"
+
+⚠ **RESTART THE SERVER, THEN IMPORT THE `.prproj` AGAIN.**
+
+**1 · Aap sahi the.** Patti ka rang **#3F3F3F** hai — aapke picker jaisa hi. Wo
+caption mein likha nahi hota kyunki wo Premiere ka apna default grey hai, aur
+Premiere default cheezein file mein likhta hi nahi. Wahi rang shape ke andar
+likha hua mil gaya, to ab ye andaaza nahi — pukka hai.
+
+**2 · Aur usko dhoondhte hue ek badi cheez mili.** Shape ka rang padhne wala
+purana tarika sirf ek khaas naap ki file padh paata tha. Aapke projects ki
+**974 shapes mein se 533 wo padh hi nahi paata tha** — wo saari chup-chaap
+invisible aa rahi thin. Ab poori 974 padhi jaati hain.
+
+Ye badla hua nahi, sirf bada hua hai: jo 441 pehle sahi aati thin, wo **bilkul
+waisi hi** aati hain (ek bhi farak nahi), aur 533 nayi upar se.
+
+What to check: **ab pehle se zyada shapes dikhengi.** Agar koi shot kisi anjaan
+rectangle se dhaka mile to turant bataiye — ye ek hi tarika hai jisme ye ulta
+pad sakta hai.
+
 
 ### 🟡 NEWEST: CAPTIONS ARRIVE FULLY PAINTED — BAR AND ALL (2026-09-02)
 

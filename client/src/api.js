@@ -324,6 +324,11 @@ const REQUEST_TIMEOUT_MS = 120000;
 // server is still correctly serving — and the paid call it is in the middle of
 // is billed either way.
 const PLAN_TIMEOUT_MS = 300000;
+// ✨ ONE CHAT TURN. ⚠ DELIBERATELY MUCH SHORTER THAN THE DIRECTOR'S FIVE
+// MINUTES: a plan is two calls over a whole board and people expect to wait for
+// it, while a chat message that has not answered inside a minute and a half
+// reads as broken however healthy the call is. Mirrors `API_CHAT_TURN_TIMEOUT_S`.
+const CHAT_TURN_TIMEOUT_MS = 90000;
 
 async function fetchWithRetry(url, options, attempts = 3, delayMs = 700, timeoutMs = REQUEST_TIMEOUT_MS) {
   for (let i = 1; ; i++) {
@@ -701,6 +706,21 @@ export function publicBranding() {
 export function absoluteUrl(path) {
   if (!path) return "";
   return /^https?:/i.test(path) ? path : `${BASE}${path}`;
+}
+// ✨ The AI Editor chat's settings. ⚠ THREE OWNERS BEHIND ONE SCREEN — the
+// feature gate lives in the Features tab's registry, the per-tier turn allowance
+// in that tier's `limits`, and only the BEHAVIOUR is this store's. The routes
+// write through the real owners; see the block above them in `server/admin.py`.
+export function adminGetChat() {
+  return request("/admin/chat");
+}
+export function adminSaveChat(fields) {
+  return request("/admin/chat", { method: "PATCH", body: fields });
+}
+// `{tier_id: turns | null}` — ⚠ `null` IS UNLIMITED, NOT ZERO. Zero is a real and
+// different answer: a tier that may not use the chat at all.
+export function adminSaveChatLimits(limits) {
+  return request("/admin/chat/limits", { method: "PATCH", body: { limits } });
 }
 export function adminGetBranding() {
   return request("/admin/branding");
@@ -2133,6 +2153,42 @@ export function directorPlan(id, { board, capabilities, include, language = "", 
     method: "POST",
     body: { board, capabilities, include, language, brief },
     timeoutMs: PLAN_TIMEOUT_MS,
+  });
+}
+
+// --- ✨ The AI Editor chat ---------------------------------------------------
+// ⚠ THE SAME VERB REGISTRY AS THE DIRECTOR, REACHED BY CONVERSATION. What comes
+// back is a turn, not an edit: `normaliseTurn` reads it, `validatePlan` checks
+// any plan on it against this project, and nothing moves until Apply. See
+// `animatic/agent/chat_turn.js` and `server/editor_chat.py`.
+
+// Free, no model call. Whether the chat is on for this account, where the panel
+// opens, and how much of the monthly allowance is left. The editor asks once.
+export function editorChatConfig() {
+  return request(`/editor-chat/config`);
+}
+
+// SPENDS TEXT QUOTA — ONE call per message, and nothing on the timeline moves.
+//
+// ⚠ THE BOARD AND THE VOCABULARY RIDE ON EVERY TURN, for exactly the reasons
+// `directorPlan` above states: the document on screen is ahead of the last
+// autosave, and the manifest is derived from the renderer's own tables. Re-sent
+// each turn rather than remembered, because the film changes between messages —
+// that is the whole point of a conversation inside an editor.
+//
+// ⚠ THE TRANSCRIPT IS THE BROWSER'S. The route is stateless (see
+// `server/script_chat.py` for the same decision), so the whole conversation goes
+// up every turn. `wireMessages` trims it before it gets here.
+export function editorChatTurn(id, { messages, board, capabilities, language = "" } = {}) {
+  return request(`/editor-chat/${id}/turn`, {
+    method: "POST",
+    body: {
+      messages: (messages || []).map((m) => ({ role: m.role, text: m.text })),
+      board,
+      capabilities,
+      language,
+    },
+    timeoutMs: CHAT_TURN_TIMEOUT_MS,
   });
 }
 

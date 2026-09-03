@@ -177,6 +177,10 @@ import useCapability from "../useCapability.js";
 // 🎬 Make Video — the auto-editor. Everything it can do lives in `agent/`, and
 // none of it touches state directly: see `agent/actions.js`.
 import useDirectorRun from "../animatic/agent/useDirectorRun.js";
+// ✨ The AI Editor chat. ⚠ THE SAME REGISTRY, TALKED TO — it runs `ACTIONS`
+// through the same `directorApi` bag built below, so nothing about the fence,
+// the caps or the undo behaviour is written twice. See useEditorChat.js.
+import useEditorChat from "../animatic/agent/useEditorChat.js";
 // ⚠ ONE ARITHMETIC FOR THE 🖼 PRICE, shared with the Director's own preview so
 // the 🖼 dialog and the 🎬 tick box can never quote one pass at two numbers.
 import { poseTally } from "../animatic/agent/poses_pass.js";
@@ -205,6 +209,7 @@ import ProjectFileModal from "./ProjectFileModal.jsx";
 import ProjectImportModal from "./ProjectImportModal.jsx";
 import MediaBin from "./MediaBin.jsx";
 import DirectorPanel from "./DirectorPanel.jsx";
+import EditorChat from "./EditorChat.jsx";
 import ProgramCanvas from "./ProgramCanvas.jsx";
 import ShapeGallery, {
   DEFAULT_SHAPE_COLOR,
@@ -796,6 +801,17 @@ export default function AnimaticEditor({
   onBack,
   onDeleted,
   onMakeFinalVideo,
+  // ✨ THE AI EDITOR PANEL, OPENED FROM THE RAIL. ⚠ THE BUTTON IS THE SHELL'S AND
+  // THE PANEL IS THIS COMPONENT'S, and the split is forced: the rail is drawn on
+  // every screen, while the read-model, the action bag and the snapshot the chat
+  // edits through only exist in here. So the shell owns one boolean and this owns
+  // everything the chat actually does.
+  //
+  // ⚠ THESE ARE NOT ACCOUNT PROPS. The note below still holds — the ⚙ menu is
+  // project settings and takes nothing from the shell. This pair is a panel the
+  // shell opens over the editor, which is a different thing entirely.
+  chatOpen = false,
+  onCloseChat,
   // ⚠ NO ACCOUNT PROPS. The ⚙ menu carried Your account / Pricing / Help / Log
   // out for a day and they were taken back out — that is the SIDEBAR's menu's
   // job. This one is project settings, so it needs nothing from the shell.
@@ -6973,6 +6989,13 @@ export default function AnimaticEditor({
     // what it is. No action in the registry reads either.
     title,
     aspectRatio: settings.aspect_ratio,
+    // ⚠ FOR THE BRIEF TOO, AND IT IS FREE. Every audio upload is decoded once
+    // for the waveforms and the beat markers; `speech.js` reads that same
+    // envelope to find the dead air, so "where are the long pauses" costs no
+    // upload, no ffmpeg, no model call and no quota. The Director ignores this
+    // field — one read-model, two callers, and a field neither has to know the
+    // other uses.
+    audioAnalyses,
   };
   // ⚠ A TAKE IS NOT A SHOT, AND THIS IS THE ONE PLACE THAT IS DECIDED.
   //
@@ -7043,6 +7066,14 @@ export default function AnimaticEditor({
     patchTrack,
     addCrossfade,
     laneSiblings,
+    // ⚠ THE TWO THAT CHANGE THE SHAPE OF THE FILM, and the only two in this bag
+    // that do. `splitFrameAt` takes an ABSOLUTE time and the id of the clip to cut,
+    // which is the form the razor already uses — the verb works out the absolute
+    // time from the live layout so no shot-relative number ever crosses the line.
+    // Both refuse politely (a notice, no throw) on a locked row, which is why the
+    // verbs check the id is still there rather than trusting the call to report.
+    splitFrameAt,
+    deleteFrame,
   };
   // ⚠ KEYED OFF `ACTION_API`, NOT OFF THE OBJECT ABOVE. Building it from its own
   // keys would make the bag whatever the object happens to hold, so a function
@@ -7217,6 +7248,32 @@ export default function AnimaticEditor({
     // See the header of `poses_pass.js`.
     readPoses: directorReadPoses,
     blockPoses: directorBlockPoses,
+  });
+
+  // ✨ THE AI EDITOR CHAT — the same four things the Director runs on.
+  //
+  // ⚠ IT IS HANDED THE IDENTICAL BAG, NOT A SECOND ONE. `directorApi` is keyed
+  // off `ACTION_API` and `readDirectorCtx` filters the Veo takes out of the shot
+  // row; a chat given anything else would count shots differently from the popup
+  // and the two would disagree about which cut "3" is. One source, two callers.
+  //
+  // ⚠ AND `applySnapshot` IS Ctrl+Z's OWN FUNCTION. Undo after an applied plan
+  // is one snapshot restored, never N steps walked backwards — see the header of
+  // useEditorChat.js for why the second one could never have worked.
+  const chat = useEditorChat({
+    animaticId,
+    readCtx: readDirectorCtx,
+    api: directorApi,
+    applySnapshot,
+    docRef: directorDocRef,
+    onNotice: setNotice,
+    language: settings.language || "",
+    // ⚠ THE SAME TWO THUNKS THE DIRECTOR'S PHASES D AND E USE, not copies. The
+    // chat's sound is the Director's sound pass with the cues coming from a
+    // sentence instead of from an analyse call — same budget, same lanes, same
+    // ducking under speech, same single undo.
+    buildSoundtrack: directorSoundtrack,
+    placeSoundtrack: directorPlaceSound,
   });
 
   // Which languages have a description written for them, and which backend is
@@ -11434,6 +11491,13 @@ export default function AnimaticEditor({
           <Timeline
             onDropAsset={dropAsset}
             onManageEffects={manageEffects}
+            /* WHICH PROJECT THIS IS. The timeline itself needs no id — every
+               gesture on it is reported back here — with one exception: the
+               heights you drag a row's seam to are remembered per project
+               (`row_heights.js`), because a lane key is not unique to a project
+               and a record without this put one project's row heights on every
+               other project's rows. */
+            projectId={animaticId}
             addTools={
               <>
                 {/* ⚠ SPENDS NOTHING, AND SAYS SO. FIRST IN THE ROW now, ahead
@@ -13410,6 +13474,20 @@ export default function AnimaticEditor({
           }}
         />
       )}
+
+      {/* ✨ The AI Editor chat. ⚠ A PANEL, NOT A MODAL — no overlay, no backdrop,
+          and the timeline stays live behind it. That is the whole reason it is
+          docked rather than dialogued: people type a message, watch the film,
+          and type another one. `EditorChat` returns null when it is shut, so
+          there is no mounted-but-hidden panel holding a stale conversation. */}
+      <EditorChat
+        open={chatOpen}
+        onClose={onCloseChat}
+        chat={chat}
+        readCtx={readDirectorCtx}
+        dock={chat.config?.dock || "right"}
+        greeting={chat.config?.greeting || ""}
+      />
 
       {/* --- Captions / voiceover: the panel, then the price --------------- */}
       {/* ⚠ TWO STEPS, exactly as ✨ Animate. This panel spends nothing — it

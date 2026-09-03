@@ -90,6 +90,11 @@ TYPE_ADMIN_OFFER_CHANGED = "admin.offer_changed"
 # "the logo changed and nobody knows who did it" is exactly the question an
 # activity feed exists to answer.
 TYPE_ADMIN_BRANDING_CHANGED = "admin.branding_changed"
+# ⚠ ONE TYPE FOR THE WHOLE CHAT TAB, including the per-tier turn limits it
+# edits. Those go through `billing.save_tier` and so ALSO raise a tier-changed
+# event — two records for one click is correct here: an operator auditing
+# pricing must see a limit change in the pricing trail, not only in the chat one.
+TYPE_ADMIN_CHAT_CHANGED = "admin.chat_changed"
 TYPE_SUBSCRIPTION_STARTED = "subscription.started"
 TYPE_SUBSCRIPTION_CANCELLED = "subscription.cancelled"
 
@@ -112,6 +117,7 @@ KNOWN_TYPES = (
     TYPE_ADMIN_USER_TIER_CHANGED,
     TYPE_ADMIN_OFFER_CHANGED,
     TYPE_ADMIN_BRANDING_CHANGED,
+    TYPE_ADMIN_CHAT_CHANGED,
     TYPE_SUBSCRIPTION_STARTED,
     TYPE_SUBSCRIPTION_CANCELLED,
 )

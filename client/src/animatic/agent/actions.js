@@ -98,6 +98,13 @@ export const ACTION_API = [
   "patchTrack",
   "addCrossfade",
   "laneSiblings",
+  // ⚠ THE TWO THAT CHANGE HOW MANY SHOTS THERE ARE. Every other name in this
+  // list edits a clip in place; these two make the film a different length and
+  // renumber everything after the point they touch. That is why the verbs built
+  // on them address a shot BY ID rather than by number — see the long note over
+  // the cut section in `ACTIONS`.
+  "splitFrameAt",
+  "deleteFrame",
 ];
 
 // ---------------------------------------------------------------------- args
@@ -471,6 +478,134 @@ export const ACTIONS = {
     },
     describe: (args) => `Every shot holds ${(args.ms / 1000).toFixed(1)}s`,
     run: ({ api, args }) => api.setAllDurations(args.ms),
+  },
+
+  // ---------------------------------------------------------------- the cut
+  //
+  // ---------------------------------------------------------------------------
+  // ⚠ THESE THREE RENUMBER THE FILM, AND THAT IS WHY THEY WORK BY ID.
+  // ---------------------------------------------------------------------------
+  // Every other verb here resolves `shot: 5` against the LIVE read-model at the
+  // top of its own step (`shotIndex`), which is right while the film keeps its
+  // shape: shot 5 is shot 5 whatever has been done to shot 2's transitions.
+  //
+  // It is WRONG the moment a step can delete or split. A plan that says "delete
+  // shot 3, then put a title on shot 5" means the shot the PERSON called 5 when
+  // they read the preview — and after step one that shot is number 4. Resolved
+  // live, step two would land on the wrong picture, report success, and the fault
+  // would be visible only to somebody who already knew what the film should be.
+  //
+  // So a structural verb resolves the number to a FRAME ID in `validate`, which
+  // runs ONCE against the document the user was shown, and carries that id in its
+  // arguments. Deleting a shot does not change any other frame's id, so every
+  // later step still means what the preview said it meant.
+  //
+  // ⚠ AND `run` LOOKS THE ID UP AGAIN AND MAY NOT FIND IT. Between the preview
+  // and Apply the user can edit by hand, and between two steps an earlier step
+  // can have removed the same clip. A missing id THROWS, the runner logs that one
+  // step as failed and carries on — the same trade the whole registry makes, and
+  // far better than deleting whatever now happens to sit at that index.
+  split_shot: {
+    verb: "split_shot",
+    label: "Cut a shot in two",
+    needs: ["splitFrameAt"],
+    args: ["shot", "at_ms"],
+    validate: (args, caps, ctx) => {
+      const i = shotIndex(args.shot, ctx);
+      if (i < 0) return fail(noShot(args.shot, ctx));
+      const frame = (ctx.frames || [])[i];
+      // ⚠ `at_ms` IS MEASURED FROM THE START OF THE SHOT, NOT OF THE FILM. A
+      // planner handed a shot list has that shot's own length in front of it and
+      // does not reliably know where the shot BEGINS — asking for an absolute time
+      // asks it to derive a number, and it derives it wrong on any film whose
+      // shots are not all one length. The absolute position is computed at run
+      // time off the live layout, which is the only moment it is knowable.
+      const at = ms(args.at_ms);
+      if (at === undefined) return fail("no cut point given");
+      const held = Math.max(0, Number(frame.duration_ms) || 0);
+      // Both halves must clear the editor's own minimum, or `splitFrameAt`
+      // refuses with a notice and the step silently does nothing.
+      if (held < HOUSE_CAPS.MIN_CLIP_MS * 2) {
+        return fail(`shot ${i + 1} is too short to cut in two`);
+      }
+      const point = clamp(at, HOUSE_CAPS.MIN_CLIP_MS, held - HOUSE_CAPS.MIN_CLIP_MS);
+      return ok({ shot: i + 1, at_ms: point, frame_id: frame.id });
+    },
+    describe: (args, ctx) => {
+      const label = ((ctx.frames || [])[args.shot - 1] || {}).label || "";
+      const at = (args.at_ms / 1000).toFixed(1);
+      return `Cut shot ${args.shot}${label ? ` — ${label}` : ""} at ${at}s`;
+    },
+    run: ({ api, args, ctx }) => {
+      const i = (ctx.frames || []).findIndex((f) => f.id === args.frame_id);
+      if (i < 0) throw new Error("that shot is no longer on the timeline");
+      // ⚠ THE ABSOLUTE TIME IS READ NOW, NOT AT VALIDATE TIME. `starts` moves
+      // whenever anything before this shot is re-timed, and an earlier step in
+      // this very plan may have done exactly that.
+      const start = (ctx.starts || [])[i] ?? 0;
+      api.splitFrameAt(start + args.at_ms, args.frame_id);
+    },
+  },
+
+  trim_shot: {
+    verb: "trim_shot",
+    label: "Trim a shot",
+    needs: ["patchFrame"],
+    args: ["shot", "by_ms"],
+    validate: (args, caps, ctx) => {
+      const i = shotIndex(args.shot, ctx);
+      if (i < 0) return fail(noShot(args.shot, ctx));
+      // ⚠ RELATIVE, AND THAT IS THE WHOLE REASON IT EXISTS BESIDE
+      // `set_shot_duration`. "Take a second off shot 3" and "make shot 3 one
+      // second long" are different films, and a model given only the absolute
+      // verb answers the second when it was asked the first — which on a
+      // six-second shot is a five-second mistake. A negative amount lengthens;
+      // the sign is the instruction.
+      //
+      // ⚠ `int`, NOT `ms`, AND THAT IS THE WHOLE POINT. `ms()` is "a time", so it
+      // floors at zero — every other verb here takes a position or a length and a
+      // negative one is meaningless. This one takes a DIFFERENCE, where the sign
+      // IS the instruction, and reading it through `ms()` silently turned every
+      // "hold it a second longer" into "no amount to trim by". Caught by
+      // `tests/editor_chat_check.py` §4 before it ever reached a timeline.
+      const by = int(args.by_ms);
+      if (by === undefined || by === 0) return fail("no amount to trim by");
+      const held = Math.max(0, Number((ctx.frames || [])[i].duration_ms) || 0);
+      const next = clamp(held - by, HOUSE_CAPS.MIN_CLIP_MS, 600000);
+      if (next === held) return fail(`shot ${i + 1} cannot be trimmed any further`);
+      return ok({ shot: i + 1, by_ms: by, ms: next });
+    },
+    describe: (args) =>
+      args.by_ms > 0
+        ? `Trim ${(args.by_ms / 1000).toFixed(1)}s off shot ${args.shot}`
+        : `Hold shot ${args.shot} ${(-args.by_ms / 1000).toFixed(1)}s longer`,
+    run: ({ api, args, ctx }) =>
+      api.patchFrame(ctx.frames[args.shot - 1].id, { duration_ms: args.ms }),
+  },
+
+  delete_shot: {
+    verb: "delete_shot",
+    label: "Remove a shot",
+    needs: ["deleteFrame"],
+    args: ["shot"],
+    validate: (args, caps, ctx) => {
+      const i = shotIndex(args.shot, ctx);
+      if (i < 0) return fail(noShot(args.shot, ctx));
+      // ⚠ A FILM CANNOT BE EDITED DOWN TO NOTHING. One shot is the floor: an
+      // empty timeline has no read-model, so the next turn would be answering
+      // questions about a film that no longer exists.
+      if ((ctx.frames || []).length <= 1) return fail("this is the only shot left");
+      return ok({ shot: i + 1, frame_id: ctx.frames[i].id });
+    },
+    describe: (args, ctx) => {
+      const label = ((ctx.frames || [])[args.shot - 1] || {}).label || "";
+      return `Remove shot ${args.shot}${label ? ` — ${label}` : ""}`;
+    },
+    run: ({ api, args, ctx }) => {
+      const here = (ctx.frames || []).some((f) => f.id === args.frame_id);
+      if (!here) throw new Error("that shot is no longer on the timeline");
+      api.deleteFrame(args.frame_id);
+    },
   },
 
   // ------------------------------------------------------------ the picture

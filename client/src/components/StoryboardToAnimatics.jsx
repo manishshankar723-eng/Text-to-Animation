@@ -7,7 +7,15 @@ import { useEffect, useState } from "react";
 import AnimaticEditor from "./AnimaticEditor.jsx";
 import AnimaticLibrary from "./AnimaticLibrary.jsx";
 
-export default function StoryboardToAnimatics({ openId, onOpened }) {
+export default function StoryboardToAnimatics({
+  openId,
+  onOpened,
+  // ✨ Straight through to the editor. This wrapper owns none of it — the rail
+  // holds the button and the editor holds everything the chat needs to act, and
+  // this is only the branch between the library and the editor.
+  chatOpen = false,
+  onCloseChat,
+}) {
   const [current, setCurrent] = useState(openId || null);
 
   // The board's "Make animatic" button navigates here with an id already
@@ -24,6 +32,8 @@ export default function StoryboardToAnimatics({ openId, onOpened }) {
         animaticId={current}
         onBack={() => setCurrent(null)}
         onDeleted={() => setCurrent(null)}
+        chatOpen={chatOpen}
+        onCloseChat={onCloseChat}
       />
     );
   }

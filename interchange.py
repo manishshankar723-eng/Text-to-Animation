@@ -2580,26 +2580,22 @@ _PRPROJ_BG_PAD = 20
 _PRPROJ_BG_RADIUS = 34
 PRPROJ_BACKDROP_OPACITY = 0.75
 
-# ⚠ **THE ONE VALUE HERE THAT IS MEASURED RATHER THAN READ — AND IT IS MEASURED
-# AT FULL OPACITY, WHICH IS WHY IT IS A NUMBER AND NOT A GUESS.** The bar's
-# colour has not been found in the file: every caption in the corpus that HAS a
-# background has the same bar, so there is nothing to difference against, and
-# the one document field that does hold an explicit colour (`#ff3c08`, 765
-# records) belongs to captions whose background is OFF — so it is something else.
-#
-# What this is instead: one of the two photographed captions carries `f19 = 100`,
-# so its bar is drawn at FULL opacity and the export shows the stored colour with
-# no compositing in the way. It is a flat **#3e3e3e over 116,915 pixels**.
-#
-# ⚠ AND THE OTHER CAPTION CHECKS IT. That one is at the 0.75 default over a
-# (207, 206, 209) frame and measures (124, 124, 124); #3e3e3e at 75% composited
-# in LINEAR light predicts 121.3 — three levels, which is h.264. (In sRGB it
-# would predict 98, so this is also the second time Premiere has been caught
-# compositing in linear light; the first was a 10% black card reading 244 where
-# sRGB says 229. This app composites in sRGB, so an imported bar over a bright
-# shot comes out slightly darker than Premiere's — a whole-app difference, not
-# this one's, and it is one control away from being changed either way.)
-PRPROJ_BACKDROP_COLOR = "#3e3e3e"
+# ⚠ **THE ONE VALUE HERE THAT IS NOT READ OUT OF THE CAPTION — AND IT IS A
+# NUMBER, NOT A GUESS, FROM THREE INDEPENDENT DIRECTIONS.**
+#   1. The user opened Premiere's own Color Picker on the Background swatch and
+#      photographed it: **#3F3F3F** (R63 G63 B63).
+#   2. The caption whose `f19 = 100` draws its bar at FULL opacity, so its export
+#      shows the stored colour with nothing composited over it: a flat #3e3e3e
+#      over 116,915 pixels — one level off, which is h.264.
+#   3. It is WRITTEN, in the same projects, inside the second colour table of a
+#      shape's `Appearance` blob (679 of 974 of them read #3f3f3f). So this is
+#      Premiere's own default swatch grey, which is why no caption carries it:
+#      a FlatBuffer does not write a field equal to its default.
+# Point 3 is also why there was nothing to difference against — every caption in
+# this corpus is at the default. A caption that was painted some other colour
+# would presumably write it, and finding one is the next step (see the note in
+# `_prproj_text_style`); until then the report says which part was matched.
+PRPROJ_BACKDROP_COLOR = "#3f3f3f"
 
 # ⚠ **THE TWO APPS DO NOT PAD THE SAME BOX, AND COPYING THE NUMBER ACROSS MAKES
 # THE BAR HALF AGAIN TOO TALL.** Premiere pads the INK; `draw_texts` pads the
@@ -2640,6 +2636,14 @@ class _Fb:
         vlen = struct.unpack_from("<H", data, self._vt)[0]
         if vlen < 4 or vlen > _PRPROJ_FB_MAX_VTABLE or self._vt + vlen > len(data):
             raise ValueError("vtable length")
+        # ⚠ THE TABLE'S OWN LENGTH HAS TO FIT TOO, AND IT IS NOT THE SAME CHECK.
+        # A blob cut off inside a colour table still has a valid vtable, so
+        # without this the reader answers a colour built out of channels that
+        # are not there — and because an absent channel is 255, a red truncated
+        # after one byte comes back WHITE rather than refused.
+        tlen = struct.unpack_from("<H", data, self._vt + 2)[0]
+        if pos + tlen > len(data):
+            raise ValueError("table length")
         self._n = (vlen - 4) // 2
 
     def _off(self, field: int) -> int:
@@ -3128,19 +3132,42 @@ def _prproj_blob(blobs: dict, param) -> bytes:
 def prproj_shape_fill(blob: bytes) -> str:
     """A shape's `Appearance` blob → its fill as `#rrggbb`, or '' if unsure.
 
-    See the section header for what "sure" means here and what it was measured
-    on. The length AND both constant runs have to match, or this is not the
-    record it was measured on and nothing is returned.
+    ⚠ **THIS IS THE SAME FLATBUFFER THE CAPTIONS ARE WRITTEN IN, AND WALKING IT
+    INSTEAD OF COUNTING BYTES INTO IT READS 55% MORE SHAPES.** E76 pinned the
+    fill by DIFFERENCE at fixed offsets, which was right and worked — on the 441
+    blobs that happen to be exactly 404 bytes. **533 of the 974 in the corpus are
+    not**, and every one of those was refused and arrived as an invisible
+    placeholder. `Appearance` has the same `44 33 22 11` header as `Source Text`;
+    `root → field 0` is the appearance table, and **field 0 of that is the FILL**
+    (field 5 is its outline — 679 of them read `#3f3f3f`, which is Premiere's own
+    default swatch grey and the same value the caption bar turned out to be).
+
+    ⚠ **THE UPGRADE IS ZERO-REGRESSION BY MEASUREMENT, NOT BY ARGUMENT.** Both
+    readers were run over all 974 blobs: on the 441 the old one accepted they
+    agree on every single one, and the 533 it refused are exactly the ones it
+    disagrees on. The fills that come back are a designer's palette — `#78adcb`,
+    `#7a51d1`, `#2d81ec`, `#a955d1`, `#fe8d7e` — not noise.
+
+    ⚠ **AND `''` IS STILL THE ANSWER TO ANY DOUBT.** A shape drawn from a misread
+    blob is a full-frame rectangle in a colour nobody chose, over somebody's film
+    (E45, E76). The walk is bounds-checked at every step and every failure falls
+    through to the invisible placeholder this always made.
     """
-    if len(blob or b"") != _PRPROJ_APPEARANCE_BYTES:
+    data = bytes(blob or b"")
+    if len(data) < _PRPROJ_ARB_HEADER + 8:
         return ""
-    for at, want in (_PRPROJ_FILL_BEFORE, _PRPROJ_FILL_AFTER):
-        if blob[at:at + len(want)] != want:
+    at = _PRPROJ_ARB_MAGIC_AT
+    if data[at:at + len(_PRPROJ_ARB_MAGIC)] != _PRPROJ_ARB_MAGIC:
+        return ""
+    try:
+        base = _PRPROJ_ARB_HEADER
+        root = _Fb(data, base + struct.unpack_from("<I", data, base)[0])
+        appearance = root.table(0)
+        if appearance is None:
             return ""
-    if blob[_PRPROJ_FILL_AT] != 0:
+        return _prproj_fb_colour(appearance, 0)
+    except (ValueError, struct.error, IndexError):
         return ""
-    red, green, blue = blob[_PRPROJ_FILL_AT + 1:_PRPROJ_FILL_AT + 4]
-    return f"#{red:02x}{green:02x}{blue:02x}"
 
 
 def prproj_shape_rect(blob: bytes) -> tuple | None:

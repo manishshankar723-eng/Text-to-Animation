@@ -55,7 +55,12 @@ _lock = threading.Lock()
 # The counters this module keeps. ⚠ THE NAMES MATCH THE TIER'S `limits` KEYS
 # EXACTLY, because the pricing card quotes those keys and enforcement that used
 # different names would describe a different product from the one being sold.
-COUNTERS = ("projects", "image_generations")
+
+# ⚠ `chat_turns` IS A COUNTER, NOT A CAP: it accumulates over the billing period
+# like projects do, because what is being sold is "N messages a month". A cap
+# would be "N messages per project", which is not a limit anybody asked for and
+# would reset every time somebody opened a new film.
+COUNTERS = ("projects", "image_generations", "chat_turns")
 
 # Per-request caps — checked against one request, never accumulated. Same rule
 # about the names.

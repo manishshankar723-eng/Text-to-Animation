@@ -80,7 +80,58 @@ const LONG_SHOT = 1.5;
 const SCENE_BREAK = 2.2;
 
 /**
- * WHAT A TREATED CUT LOOKS LIKE, from the hold in front of it.
+ * HOW OFTEN A TREATED CUT IS SOMETHING OTHER THAN A DISSOLVE.
+ *
+ * ⚠ THIS FILE USED TO PLACE `dissolve` AND `dip` AND NOTHING ELSE, and the note
+ * here argued for it: "a treatment nobody chose is the first thing the user
+ * deletes". That argument is right about VARIETY FOR ITS OWN SAKE and wrong
+ * about what an editor's timeline actually looks like — reported off a 27-shot
+ * cut where all eleven treated cuts came out as the same dissolve: "mai dekha
+ * hi transition bas dissolve hi lagaya gaya, transition alag alag use hona
+ * chahiye video editor ke hisab se soch kar".
+ *
+ * So the answer is the same shape as `stillMove`'s one section down — the rule
+ * that replaced a four-way rotation of camera moves with a WEIGHTED pattern —
+ * and for the same reason. A cut that is different every time reads as a tour of
+ * the library; a cut that is never different reads as a preset. What an editor
+ * does is keep one gesture as the house one and spend the others rarely:
+ *
+ *     treated cut   1    2    3    4      5    6     7    8      9    10
+ *     treatment     dis  dis  dis  slide  dis  wipe  dis  slide  dis  dis
+ *
+ *   · A DISSOLVE is the default and carries most of the film. It is the cut that
+ *     says "a moment passed" and does not draw attention to itself.
+ *   · A DIP still overrides everything on a hold long enough to read as the end
+ *     of a scene — that is a decision about the FILM, and it outranks a pattern
+ *     about the cuts.
+ *   · A SLIDE every `SLIDE_EVERY` treated cuts: one shot shoulders the next out
+ *     of frame, which is what an editor reaches for between two shots of equal
+ *     weight that are not a scene change.
+ *   · A WIPE every `WIPE_EVERY`, and no oftener, because it is the most graphic
+ *     gesture here. The direction ALTERNATES between them and the second one is
+ *     an angled edge (`diagonal`), so the two nearest wipes in a film are never
+ *     the same gesture twice — the rule the pans already keep.
+ *
+ * Indexed by the treated cut's POSITION, so it stays deterministic; see the file
+ * header.
+ */
+const SLIDE_EVERY = 4;
+const WIPE_EVERY = 6;
+
+/**
+ * A MOVING EDGE IS QUICKER THAN A DISSOLVE, and it has to be. A cross-fade is
+ * read as a soft join and can take a beat over it; an edge travelling across the
+ * frame is a gesture the eye follows, and one held for 1.4s stops being
+ * punctuation and becomes an event of its own. Same 100ms quantisation as the
+ * dissolve length, and floored so it stays visible.
+ */
+function quickly(ms) {
+  return Math.max(300, Math.round((ms * 0.6) / 100) * 100);
+}
+
+/**
+ * WHAT A TREATED CUT LOOKS LIKE, from the hold in front of it AND its position
+ * in the run of treated cuts.
  *
  * ⚠ THE LENGTH USED TO SATURATE, AND THAT IS WHY EVERY DISSOLVE WAS 1.2s. It was
  * `hold × 0.25` clamped to 400–1200, so anything held past 4.8s hit the ceiling
@@ -91,20 +142,57 @@ const SCENE_BREAK = 2.2;
  * quantised to 100ms so the number reads as a decision rather than as
  * arithmetic showing through.
  *
- * ⚠ AND THE KIND IS ONLY EVER `dissolve` OR `dip`. The build renders a dozen —
- * irises, clocks, blinds, checkerboards — and not one of them belongs in a plan
- * written by arithmetic: the same argument the header makes about titles, which
- * is that a treatment nobody chose is the first thing the user deletes. Variety
- * here means the right transition for the pause, not a tour of the library.
+ * ⚠ EVERY KIND IS CHECKED AGAINST THE CAPS BEFORE IT IS ASKED FOR, and falls
+ * back towards the dissolve when the build does not render it. The caps table is
+ * derived from `TRANSITIONS` every time it is asked for (see `capabilities.js`),
+ * so a treatment removed from the renderer must not be able to make this planner
+ * propose a step the validator then drops — the preview would list a film that
+ * cannot be made, which is the one thing the cap note over `housePlan` says must
+ * never happen.
+ *
+ * @param ratio how long the outgoing shot held, over the median
+ * @param caps  the capability manifest
+ * @param at    this cut's index among the TREATED cuts, 0-based
  */
-function treatmentFor(ratio, caps) {
+function treatmentFor(ratio, caps, at = 0) {
   const kinds = new Set(
     ((caps && caps.transitions) || []).map((t) => (typeof t === "string" ? t : t.id))
   );
-  const kind = ratio >= SCENE_BREAK && kinds.has("dip") ? "dip" : "dissolve";
   const ms = Math.min(1400, Math.max(400, Math.round((300 + 400 * ratio) / 100) * 100));
-  return { kind, ms };
+  const dissolve = { kind: "dissolve", ms, params: {} };
+  // A hold long enough to read as the end of a scene goes out through black
+  // whatever the pattern says. See `SCENE_BREAK`.
+  if (ratio >= SCENE_BREAK && kinds.has("dip")) return { kind: "dip", ms, params: {} };
+
+  const n = at + 1;
+  // ⚠ THE WIPE IS TESTED FIRST, so a cut that is both (12, 24, …) wipes rather
+  // than slides — the rarer gesture wins the collision, exactly as the pan does
+  // in `stillMove`, or the wipes thin out to nothing on a long film for no
+  // reason the user could ever see.
+  if (n % WIPE_EVERY === 0) {
+    const second = (n / WIPE_EVERY) % 2 === 0;
+    const kind = second && kinds.has("diagonal") ? "diagonal" : "wipe";
+    if (kinds.has(kind)) {
+      return { kind, ms: quickly(ms), params: { direction: second ? "left" : "right" } };
+    }
+  }
+  if (n % SLIDE_EVERY === 0 && kinds.has("slide")) {
+    return {
+      kind: "slide",
+      ms: quickly(ms),
+      params: { direction: (n / SLIDE_EVERY) % 2 ? "left" : "right" },
+    };
+  }
+  return dissolve;
 }
+
+/** What the note says a treatment was chosen FOR. Read by a person, not by code. */
+const TREATMENT_WHY = {
+  dip: " — long enough to read as the end of a scene",
+  slide: " — the next shot pushes it out of frame",
+  wipe: " — an edge travels across",
+  diagonal: " — an angled edge, the other way from the last one",
+};
 
 /**
  * WHICH SHOTS MOVE.
@@ -474,17 +562,22 @@ export function housePlan(ctx, options = {}) {
     }
     taken
       .sort((a, b) => a.cut - b.cut)
-      .forEach(({ cut, before }) => {
-        // A longer hold gets a longer transition, and a hold long enough to be a
-        // scene break gets a different KIND of one. See `treatmentFor`.
+      // ⚠ `at` IS THE POSITION AMONG THE TREATED CUTS, NOT AMONG ALL OF THEM,
+      // and it is counted after the sort so it runs in FILM order. Indexing the
+      // pattern by the raw cut number would put a slide wherever the arithmetic
+      // of "every 4th cut" happened to coincide with a treated one — which on an
+      // alternating plan is every other treated cut, and on an emphasis plan is
+      // none of them.
+      .forEach(({ cut, before }, at) => {
+        // A longer hold gets a longer transition, a hold long enough to be a
+        // scene break gets a different KIND of one, and the ordinary cuts follow
+        // the house pattern. See `treatmentFor`.
         const ratio = before / median;
-        const { kind, ms } = treatmentFor(ratio, ctx && ctx.caps);
+        const { kind, ms, params } = treatmentFor(ratio, ctx && ctx.caps, at);
         steps.push({
           verb: "add_transition",
-          args: { cut, kind, ms },
-          note:
-            `shot ${cut} holds ${(before / 1000).toFixed(1)}s` +
-            (kind === "dip" ? " — long enough to read as the end of a scene" : ""),
+          args: { cut, kind, ms, ...(Object.keys(params || {}).length ? { params } : {}) },
+          note: `shot ${cut} holds ${(before / 1000).toFixed(1)}s${TREATMENT_WHY[kind] || ""}`,
         });
       });
   }

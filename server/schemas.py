@@ -3618,3 +3618,131 @@ class SoundImportResponse(BaseModel):
     license_label: str = ""
     needs_credit: bool = False
     page_url: str = ""
+
+
+# ===========================================================================
+# The ✨ AI Editor chat  (server/editor_chat.py)
+# ===========================================================================
+# ⚠ THE TRANSCRIPT AND THE BOARD BOTH RIDE ON EVERY TURN, and neither is
+# stored. Same statelessness as `/script-chat`, and here the reason is stronger:
+# the thing being discussed is the TIMELINE, which the editor autosaves anyway.
+# A remembered conversation plus a re-sent document is two sources of truth about
+# one film, and the remembered one is always the stale one.
+
+
+class EditorChatMessage(BaseModel):
+    """One turn of the editor chat.
+
+    Same `role` vocabulary as `ScriptChatMessage` — "user" / "agent", ours rather
+    than any SDK's — so a transcript is readable on the wire and in the browser's
+    storage. Deliberately NOT reusing that class: it caps text at 8000 for a
+    script conversation, and a reply here is capped much shorter because the panel
+    it is drawn in is a narrow rail.
+    """
+
+    role: str = Field("user", pattern="^(user|agent)$")
+    text: str = Field(..., min_length=1, max_length=4000)
+
+
+class EditorChatOption(BaseModel):
+    """One answer offered by an `ask`.
+
+    `note` is the half-line under the chip saying what this choice would MEAN.
+    It is what turns three nouns into a decision somebody can actually make.
+    """
+
+    id: str = ""
+    label: str = ""
+    note: str = ""
+
+
+class EditorChatAsk(BaseModel):
+    """⭐ THE QUESTION, WITH OPTIONS — the reply kind this whole feature exists for.
+
+    ⚠ `allow_other` IS ALWAYS TRUE AND IS NOT READ OFF THE MODEL. "If not these
+    then what" is the point; a closed list of options is a form, and this is a
+    conversation. It is on the wire so the panel has one place to read it from
+    rather than hard-coding the affordance.
+
+    `reason` is which of the three triggers fired — target / spend / destructive.
+    Advisory, and worth having: it is the only way to see whether the rails are
+    firing where they were meant to.
+    """
+
+    question: str = ""
+    reason: str = ""
+    options: list[EditorChatOption] = Field(default_factory=list)
+    allow_other: bool = True
+
+
+class EditorChatRequest(BaseModel):
+    """Body for POST /editor-chat/{job_id}/turn.
+
+    ⚠ THE BOARD COMES FROM THE BROWSER, NOT FROM THE STORE, exactly as it does
+    for `POST /director/{id}/plan`, and for the same reason: the editor autosaves,
+    so the saved project is behind whatever the user has just done. A reply
+    written against the store would describe a film one edit stale.
+    """
+
+    messages: list[EditorChatMessage] = Field(..., min_length=1, max_length=60)
+    # The read-model, from `boardFrom(ctx)` in the browser.
+    board: dict = Field(default_factory=dict)
+    # The capability manifest, from `capabilities()`. ⚠ SENT RATHER THAN BUILT
+    # HERE: the truth about what this build can render lives in the renderer
+    # tables the client reads, and a server-side copy would be a second opinion.
+    capabilities: dict = Field(default_factory=dict)
+    language: str = ""
+
+
+class EditorChatResponse(BaseModel):
+    """One turn back.
+
+    ⚠ `kind` IS A HINT, NOT A CONTRACT. The client re-derives it from what is
+    actually present (`normaliseTurn` in `chat_turn.js`) because a reply labelled
+    `plan` whose every step was dropped is not a plan, and drawing an Apply button
+    over zero edits is the worst lie a panel can tell.
+
+    ⚠ `plan` IS THE SAME SHAPE THE DIRECTOR RETURNS and goes through the same
+    `validatePlan` → `useDirectorRun` path on the other side. Nothing here has
+    edited anything: a plan is a proposal until the user presses Apply.
+    """
+
+    kind: str = "answer"
+    reply: str = ""
+    ask: EditorChatAsk | None = None
+    plan: dict | None = None
+    # ⚠ SOUND RIDES BESIDE THE PLAN, NOT INSIDE IT, because it is not a verb:
+    # every verb in the registry is synchronous and finding a sound is a round
+    # trip to a stock library. The client runs the existing sound pass AFTER the
+    # steps, for the same reason the Director's phases D and E come last — a cue
+    # lands on a moment, and the steps have just finished moving the moments.
+    # `{sfx: [{shot, query}], music: {query, mood} | null}` or null.
+    sound: dict | None = None
+    # Steps the server could not read, so the panel can say "2 steps couldn't be
+    # used" rather than quietly showing a shorter plan. The client adds its own.
+    dropped: list[dict] = Field(default_factory=list)
+    provider: str = ""
+    model: str = ""
+    # `(used, limit)` for this account's `chat_turns` after this turn. `limit` is
+    # None for unlimited. Sent so the panel can warn BEFORE the refusal rather
+    # than after it — a quota you discover by being blocked is a bad surprise.
+    turns_used: int = 0
+    turns_limit: int | None = None
+
+
+class EditorChatConfig(BaseModel):
+    """GET /editor-chat/config — what the editor needs before it draws the panel.
+
+    ⚠ IT IS NOT THE ADMIN PAYLOAD. An ordinary user is told where the panel opens
+    and what to greet them with; they are not told which model is wired up or
+    what the operator's spend rails are set to. `chat_settings.admin_payload()` is
+    the other half and lives behind `require_admin`.
+    """
+
+    enabled: bool = True
+    dock: str = "right"
+    greeting: str = ""
+    max_turns_per_session: int = 0
+    transcript_keep: int = 20
+    turns_used: int = 0
+    turns_limit: int | None = None

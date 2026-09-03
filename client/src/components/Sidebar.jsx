@@ -148,6 +148,13 @@ export default function Sidebar({
   onAddAccount,
   collapsed = false,
   onToggleCollapse,
+  // ✨ THE AI EDITOR CHAT. ⚠ A TOOL, NOT A WORKFLOW — which is why it is down
+  // in the footer rather than in the list above: it does not navigate anywhere,
+  // it opens a panel OVER whatever is already on screen. `onOpenChat` is absent
+  // for an account the feature is off for, and then the row never renders — the
+  // same rule the admin row in the account menu follows.
+  onOpenChat,
+  chatOpen = false,
   // ⚠ THE SAME RAIL, DRAWN FOR SOMEBODY WITH NO ACCOUNT. The public Explore
   // page used to carry a hand-built copy of this component — close, and
   // therefore wrong: it had no brand mark, no app name and no collapse toggle,
@@ -362,8 +369,35 @@ export default function Sidebar({
         ))}
       </nav>
 
-      {/* Theme switch + profile chip + Upgrade CTA */}
+      {/* ✨ AI Editor + theme switch + profile chip + Upgrade CTA */}
       <div className="sb-footer">
+        {/* ⚠ DIRECTLY ABOVE THE THEME SWITCH, WHICH IS WHERE IT WAS ASKED TO GO:
+            *"chat bot light mode ke upar rakhna okay"*.
+
+            ⚠ AND IT IS IN THE FOOTER RATHER THAN THE WORKFLOW LIST ON PURPOSE.
+            Every row in `.sb-nav` NAVIGATES — it swaps the page. This one opens a
+            panel over the page you are already on, and putting it among the
+            workflows would have promised a screen that does not exist. Its
+            neighbours down here are the other things that act on the app rather
+            than move you through it.
+
+            ⚠ IT IS NOT DRAWN AT ALL WITHOUT `onOpenChat`. The shell withholds the
+            handler when the feature is off for this account, so there is no
+            disabled row to explain — same rule as the admin row in AccountMenu. */}
+        {!publicMode && onOpenChat && (
+          <button
+            type="button"
+            className={`sb-chat ${chatOpen ? "active" : ""}`}
+            onClick={onOpenChat}
+            title="AI Editor — tell it what to change"
+            aria-label="AI Editor"
+            aria-pressed={chatOpen}
+          >
+            <span className="sb-ico" aria-hidden="true">✨</span>
+            <span className="sb-chat-label">AI Editor</span>
+          </button>
+        )}
+
         {/* Sits above the account button so it's reachable from every screen.
             Flipping it re-skins the whole app (see theme.js). */}
         <button

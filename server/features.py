@@ -112,6 +112,11 @@ _CAPABILITIES = [
     ("tts-voiceover", "Voiceover (text to speech)", "🗣️", "Reads a board's dialogue aloud."),
     ("captions", "Automatic captions", "💬", "Transcribes an audio track into caption clips."),
     ("director", "🎬 Make Video (the auto-editor)", "🎬", "Two text calls that write an edit plan."),
+    # ⚠ ITS OWN CAPABILITY, NOT PART OF `director`. They share the verb registry
+    # and nothing else: the Director is one popup that spends two text calls on a
+    # whole board, this is a conversation that spends one per message. An operator
+    # turning off a chat that bills per sentence must not also lose the auto-editor.
+    ("editor-chat", "✨ AI Editor (the chat)", "✨", "One text call per message typed into the editor's chat."),
     ("3d-meshy", "3D models (Meshy / Tripo)", "🧊", "Third-party 3D generation from a character's views."),
 ]
 

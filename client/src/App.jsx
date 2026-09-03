@@ -20,6 +20,10 @@ import Profile from "./components/Profile.jsx";
 import PlanAndScript from "./components/PlanAndScript.jsx";
 import ScriptToStoryboard from "./components/ScriptToStoryboard.jsx";
 import StoryboardToAnimatics from "./components/StoryboardToAnimatics.jsx";
+// ✨ Whether this account has the AI Editor chat. Read HERE rather than in the
+// rail because the rail is also drawn for a signed-OUT visitor (`publicMode`),
+// and a capability read has nothing to answer with there. See entitlements.js.
+import useCapability from "./useCapability.js";
 import AnimaticsToVideo from "./components/AnimaticsToVideo.jsx";
 import CreateAnimaticImage from "./components/CreateAnimaticImage.jsx";
 import PublicStoryboard from "./components/PublicStoryboard.jsx";
@@ -614,6 +618,18 @@ export default function App() {
     setSelectedId(jobId);
   }
 
+  // ✨ THE AI EDITOR PANEL. ⚠ THE STATE IS HERE AND THE PANEL IS NOT — it is
+  // drawn by `AnimaticEditor`, which is the only thing that holds the read-model,
+  // the action bag and the snapshot the chat needs. What the shell owns is the
+  // BUTTON, because the button lives in the rail and the rail is the shell's.
+  //
+  // ⚠ DECLARED UP HERE, WITH THE OTHER HOOKS, AND NOT BESIDE THE JSX THAT USES
+  // IT. There are two early returns further down — the shared-storyboard view
+  // and the logged-out screens — and a hook after either of them is a hook that
+  // does not run on every render, which is the one rule React does not forgive.
+  const [chatOpen, setChatOpen] = useState(false);
+  const chatCap = useCapability("editor-chat");
+
   // ---- Shared storyboard (public, works with or without a session) ----
   if (shareToken) {
     return (
@@ -838,6 +854,8 @@ export default function App() {
       <StoryboardToAnimatics
         openId={pendingAnimaticId}
         onOpened={() => setPendingAnimaticId(null)}
+        chatOpen={chatOpen}
+        onCloseChat={() => setChatOpen(false)}
       />
     );
   } else if (page === "animatics-to-video") {
@@ -908,6 +926,27 @@ export default function App() {
         onAddAccount={() => setAddAccountOpen(true)}
         collapsed={navCollapsed}
         onToggleCollapse={() => setNavCollapsed((c) => !c)}
+        /* ✨ Omitted when the account does not have the capability, and the rail
+           draws no row at all rather than a greyed-out one — the same rule the
+           Admin entry follows two props up.
+
+           ⚠ IT NAVIGATES WHEN IT HAS TO. The chat edits a timeline, so it needs
+           one open; pressed from Home it takes you to the Video Editor AND opens
+           the panel, rather than opening a panel over a page with no film in it.
+           Pressed while already there it is an ordinary toggle. */
+        onOpenChat={
+          chatCap.on
+            ? () => {
+                if (page !== "storyboard-to-animatics") {
+                  setNav("storyboard-to-animatics");
+                  setChatOpen(true);
+                  return;
+                }
+                setChatOpen((open) => !open);
+              }
+            : undefined
+        }
+        chatOpen={chatOpen && page === "storyboard-to-animatics"}
       />
       {/* Keyed by nav + reset counter: clicking the current workflow again
           changes the key, React remounts it, and it opens on its first page. */}

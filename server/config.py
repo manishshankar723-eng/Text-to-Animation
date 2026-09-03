@@ -286,6 +286,26 @@ BRANDING_CACHE_TTL_S = float(os.environ.get("API_BRANDING_CACHE_TTL_S", "60"))
 # readable by a logged-OUT visitor looking at the landing page.
 BRANDING_DIR = os.environ.get("API_BRANDING_DIR", os.path.join(UPLOAD_DIR, "_branding"))
 
+# --- The AI Editor chat (✨) ------------------------------------------------
+# HOW THE EDITOR'S CHAT BEHAVES, owned by the admin panel's Chat tab. ⚠ ONE ROW,
+# like branding: there is one chat feature being configured. ⚠ AND IT IS ONLY
+# BEHAVIOUR — whether the chat is ON lives in `features.py` (`cap.editor-chat`)
+# and how many messages a tier gets lives in that tier's `limits["chat_turns"]`.
+# Three questions, three owners; see the docstring of `server/chat_settings.py`.
+CHAT_SETTINGS_COLLECTION = os.environ.get("API_CHAT_SETTINGS_COLLECTION", "chat_settings")
+LOCAL_CHAT_SETTINGS_PATH = os.environ.get(
+    "API_LOCAL_CHAT_SETTINGS_PATH", ".local_chat_settings.json"
+)
+# Read once per chat turn and written about as often as an operator changes their
+# mind, so it is cached like branding rather than like a job record.
+CHAT_SETTINGS_CACHE_TTL_S = float(os.environ.get("API_CHAT_SETTINGS_CACHE_TTL_S", "60"))
+# How long the browser waits for one chat turn. ⚠ SHORTER THAN THE DIRECTOR'S
+# FIVE MINUTES ON PURPOSE: a plan is two calls over a whole board and people
+# expect to wait for it, while a chat message that has not answered in a minute
+# reads as broken however healthy the call is. See `PLAN_TIMEOUT_MS` in api.js.
+CHAT_TURN_TIMEOUT_S = float(os.environ.get("API_CHAT_TURN_TIMEOUT_S", "90"))
+
+
 # --- Explore banners ----------------------------------------------------------
 # THE BILLBOARDS ON THE EXPLORE PAGE, owned by the admin panel rather than
 # generated from the workflow list. ⚠ A LIST, unlike branding's single row —

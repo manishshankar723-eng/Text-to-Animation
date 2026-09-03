@@ -67,6 +67,7 @@ from . import (
     banners,
     billing,
     branding,
+    chat_settings,
     config,
     events,
     features,
@@ -2037,3 +2038,152 @@ def meta(admin: CurrentUser = Depends(require_admin)) -> dict:
         "roles": list(users.ROLES),
         "max_page": config.ADMIN_MAX_PAGE,
     }
+
+
+# ===========================================================================
+# The ✨ AI Editor chat  (/admin/chat)
+# ===========================================================================
+# ⚠ **THREE OWNERS BEHIND ONE SCREEN, AND THE SCREEN DOES NOT OWN ANY OF THEM.**
+# An operator thinks "the chat settings" is one page, so it is drawn as one page
+# — but what it edits lives in three stores that each already had a reason to
+# exist, and the Chat tab writes THROUGH them rather than keeping copies:
+#
+#     is it on, and for whom?      →  features.py, `cap.editor-chat`
+#                                     (edited on the Features tab too; same row)
+#     how many turns does a
+#     tier get per month?          →  billing.py, that tier's `limits.chat_turns`
+#                                     (edited on the Pricing tab too; same field)
+#     how does it behave?          →  chat_settings.py
+#
+# The second one is the one that would have been easiest to get wrong. A
+# `turn_limits` map in `chat_settings` would have been fewer lines and would have
+# been a number the pricing page did not know about — and the first customer to
+# hit it would have been reading a limit nobody advertised. See the rule at the
+# top of `server/usage.py`.
+class ChatSettingsBody(BaseModel):
+    """How the chat behaves. Every field optional — a PATCH sends what changed.
+
+    ⚠ NO VALIDATION HERE BEYOND TYPES. `chat_settings.clean()` clamps the numbers
+    and checks the dock against its own list, because those bounds are the store's
+    and a second copy in this file would be a second opinion about what is legal.
+    """
+
+    dock: str | None = None
+    model: str | None = Field(None, max_length=120)
+    planner_model: str | None = Field(None, max_length=120)
+    transcript_keep: int | None = None
+    max_turns_per_session: int | None = None
+    shot_detail_limit: int | None = None
+    ask_on_spend: bool | None = None
+    ask_on_destructive: bool | None = None
+    allow_paid_passes: bool | None = None
+    greeting: str | None = Field(None, max_length=240)
+
+
+class ChatLimitsBody(BaseModel):
+    """`{tier_id: turns or null}` — the monthly message count each tier gets.
+
+    ⚠ `null` IS UNLIMITED, NOT ZERO, which is `usage.limit_of`'s rule for every
+    counter in the app. Zero is a real and different answer: a tier that may not
+    use the chat at all.
+    """
+
+    limits: dict[str, int | None] = Field(default_factory=dict)
+
+
+def _chat_row() -> dict:
+    """Everything the Chat tab draws, read from the three real owners."""
+    feature_key = "cap.editor-chat"
+    feature = (features.all_features() or {}).get(feature_key) or {}
+    tiers = billing.all_tiers(fresh=True) or {}
+    return {
+        **chat_settings.admin_payload(),
+        # ⚠ THE FEATURE ROW IS SHOWN, NOT EDITED HERE. The Chat tab draws its
+        # status and links across; the Features tab is where it is changed. Two
+        # editors for one row is how two screens end up disagreeing about which
+        # one saved last.
+        "feature": {
+            "key": feature_key,
+            "label": feature.get("label") or "AI Editor (the chat)",
+            "status": feature.get("status") or "live",
+            "rollout": feature.get("rollout") or {},
+            "min_tier": feature.get("min_tier"),
+        },
+        # The turn allowance per tier, in ladder order so the screen reads like
+        # the pricing page does.
+        "tiers": [
+            {
+                "id": t.get("id"),
+                "name": t.get("name") or t.get("id"),
+                "rank": t.get("rank") or 0,
+                "archived": bool(t.get("archived")),
+                "turns": (t.get("limits") or {}).get("chat_turns"),
+            }
+            for t in sorted(tiers.values(), key=lambda r: r.get("rank") or 0)
+        ],
+    }
+
+
+@router.get("/chat")
+def get_chat(admin: CurrentUser = Depends(require_admin)) -> dict:
+    """How the AI Editor chat is configured, from all three owners."""
+    return _chat_row()
+
+
+@router.patch("/chat")
+def update_chat(
+    body: ChatSettingsBody, request: Request, admin: CurrentUser = Depends(require_admin)
+) -> dict:
+    """Change how the chat behaves. Lands on the next turn — no redeploy."""
+    fields = body.model_dump(exclude_unset=True)
+    if not fields:
+        raise HTTPException(status_code=400, detail="Nothing to change.")
+    chat_settings.save_settings(fields, actor=admin.email)
+    events.record(
+        events.TYPE_ADMIN_CHAT_CHANGED,
+        actor=admin.email,
+        action="settings",
+        fields=sorted(fields),
+        **events.request_context(request),
+    )
+    return _chat_row()
+
+
+@router.patch("/chat/limits")
+def update_chat_limits(
+    body: ChatLimitsBody, request: Request, admin: CurrentUser = Depends(require_admin)
+) -> dict:
+    """Set each tier's monthly message allowance.
+
+    ⚠ **IT WRITES THE TIER, NOT A CHAT-LOCAL TABLE.** `billing.save_tier` is the
+    one door onto a tier's `limits`, so this change shows up on the Pricing tab,
+    in `/billing/tiers`, on the pricing card and in `usage.check` — all at once,
+    because there is only one number. A tier id that does not exist is IGNORED
+    rather than refused: the screen may be a moment behind an archive, and losing
+    the other four edits over it would be the worse answer.
+    """
+    known = billing.all_tiers(fresh=True) or {}
+    touched = []
+    for tier_id, value in (body.limits or {}).items():
+        tier = known.get(tier_id)
+        if not tier:
+            logger.warning("[admin] chat limit for unknown tier %r — ignored.", tier_id)
+            continue
+        limits = dict(tier.get("limits") or {})
+        # ⚠ `None` STAYS `None`. Coercing it to 0 would turn "unlimited" into
+        # "banned" — the single most expensive typo available on this screen.
+        limits["chat_turns"] = None if value is None else max(0, int(value))
+        if (tier.get("limits") or {}).get("chat_turns") == limits["chat_turns"]:
+            continue
+        billing.save_tier(tier_id, {"limits": limits}, actor=admin.email)
+        touched.append(tier_id)
+
+    if touched:
+        events.record(
+            events.TYPE_ADMIN_CHAT_CHANGED,
+            actor=admin.email,
+            action="limits",
+            tiers=touched,
+            **events.request_context(request),
+        )
+    return _chat_row()

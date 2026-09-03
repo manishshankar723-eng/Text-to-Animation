@@ -115,6 +115,13 @@ const GOOD = {
   select_shot: { shot: 2 },
   set_shot_duration: { shot: 2, ms: 3000 },
   set_all_durations: { ms: 2500 },
+  // ⚠ THE THREE THAT CHANGE THE SHAPE OF THE FILM. `at_ms` and `by_ms` are both
+  // measured from the SHOT, not from the film — see the cut section in actions.js.
+  // The fixture's shot 3 is the long one, so both halves of a split clear the
+  // minimum and there is room to trim without hitting the floor.
+  split_shot: { shot: 3, at_ms: 2000 },
+  trim_shot: { shot: 3, by_ms: 1000 },
+  delete_shot: { shot: 4 },
   set_shot_transform: { shot: 1, scale: 1.2, x: 0.5, y: 0.5, opacity: 1 },
   push_in: { shot: 2, from: 1, to: 1.1, ease: "ease-in-out" },
   add_shot_motion: { shot: 2, kind: "pan_left", amount: 1, ease: "ease-in-out" },

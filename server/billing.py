@@ -94,6 +94,7 @@ _CATALOG = [
             {"text": "No commercial use", "ok": False},
         ],
         "limits": {"projects": 2, "shots_per_project": 9, "image_generations": 50,
+                   "chat_turns": 20,
                    "watermark": True, "commercial_use": False},
     },
     {
@@ -114,6 +115,7 @@ _CATALOG = [
             {"text": "Export to various formats", "ok": True},
         ],
         "limits": {"projects": 5, "story_pages": 10, "image_generations": None,
+                   "chat_turns": 500,
                    "watermark": False, "commercial_use": True},
     },
     {
@@ -134,6 +136,7 @@ _CATALOG = [
             {"text": "Export to various formats", "ok": True},
         ],
         "limits": {"projects": None, "story_pages": 30, "image_generations": None,
+                   "chat_turns": 2000,
                    "watermark": False, "commercial_use": True},
     },
     {
@@ -154,6 +157,7 @@ _CATALOG = [
             {"text": "Export to various formats", "ok": True},
         ],
         "limits": {"projects": None, "story_pages": None, "image_generations": None,
+                   "chat_turns": None,
                    "watermark": False, "commercial_use": True},
     },
 ]
