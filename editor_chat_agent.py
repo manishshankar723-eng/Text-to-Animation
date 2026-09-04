@@ -879,6 +879,43 @@ def _read_turn(raw: dict, vocabulary: dict, shot_count: int = 0, blind: bool = T
     if isinstance(plan_row, dict):
         steps, dropped = fold_steps(plan_row.get("steps"), vocabulary)
 
+    # ⚠ A NOTE IS NOT AN EDIT, AND A PLAN OF NOTHING BUT NOTES IS NOT A PLAN.
+    # `note` is `run: () => {}` in the verb registry — it moves nothing, by
+    # design, so that a real plan can explain itself at the top of the preview.
+    # A turn whose ONLY steps are notes, with no `sound` beside them, would
+    # change nothing at all, and calling that a plan puts an **Apply 0 edits**
+    # button under a sentence claiming the work is already done.
+    #
+    # ⚠ SEEN LIVE, 2026-09-05, WITH A SCREENSHOT. *"add music and sound effects
+    # in this storyboard story wise"* on a fourteen-shot board came back as ONE
+    # note — "Adding background music and sound effects to enhance the
+    # storyboard's narrative" — no `sound`, under the reply *"I've added a
+    # cinematic, storytelling music bed and placed sound effects on key shots"*.
+    # Nothing was added. The panel drew "0 edits · Apply 0 edits · Nothing has
+    # changed yet", which is the panel being honest about a turn that was not.
+    #
+    # ⚠ THE CLIENT DECIDES THIS AGAIN AND MUST. `chat_turn.js` states this very
+    # rule in its own header — *"drawing an Apply button over zero edits is the
+    # worst kind of lie a panel can tell"* — and then tested `steps.length`,
+    # which a note passes. Same split as `_coerce_ask` / `normaliseAsk`: this
+    # side decides whether there is a plan AT ALL (so `kind` and the log are
+    # honest), that side decides what can be DRAWN. Neither may assume the other.
+    #
+    # ⚠ AND THE NOTES GO IN `dropped`, NOT QUIETLY. What the model wrote is the
+    # only evidence the user has that it misunderstood the job, and a turn that
+    # silently becomes a chat bubble reads as the model choosing to answer.
+    edits = [s for s in steps if (s.get("verb") or "") != "note"]
+    if steps and not edits and not sound:
+        dropped.append({
+            "index": 0,
+            "verb": "note",
+            "why": (
+                f"the plan was {len(steps)} note(s) and nothing else — no edit and "
+                "no sound in it, so there was nothing to apply"
+            ),
+        })
+        steps = []
+
     # ⚠ SOUND ALONE IS STILL A PLAN. "Put some music under it" is a request that
     # produces no steps at all — every edit it makes is a clip the sound pass lays
     # down — and reading that as an `answer` would draw a chat bubble where an

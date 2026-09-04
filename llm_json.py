@@ -259,16 +259,40 @@ DEFAULT_BUDGET_SECONDS = 135
 # ⚠ AND THE CHAT'S OWN, BECAUSE 135 IS LONGER THAN THE BROWSER WILL WAIT FOR ONE.
 # The rule above — "2 × the budget has to stay inside the browser's patience" —
 # was written for the Director, whose tab waits 300s (`PLAN_TIMEOUT_MS`). The ✨
-# AI Editor's tab waits NINETY (`CHAT_TURN_TIMEOUT_MS`, mirroring
+# AI Editor's tab waits far less (`CHAT_TURN_TIMEOUT_MS`, mirroring
 # `API_CHAT_TURN_TIMEOUT_S`), because a chat message that has not answered in a
-# minute and a half reads as broken. Sharing the Director's 135 meant every chat
-# turn slower than 90s died the same way: the browser aborted a call the server
-# was still correctly serving, the turn was billed and counted, and what the user
-# saw was "The server didn't respond within 90s. It may be stuck (a database it
-# needs can do this)" — a true sentence about the wrong component, and reported
-# with a screenshot of exactly that over three identical unanswered messages.
+# couple of minutes reads as broken. Sharing the Director's 135 meant every chat
+# turn slower than the tab died the same way: the browser aborted a call the
+# server was still correctly serving, the turn was billed and counted, and what
+# the user saw was "The server didn't respond within 90s. It may be stuck (a
+# database it needs can do this)" — a true sentence about the wrong component,
+# and reported with a screenshot of exactly that over three identical unanswered
+# messages.
 #
-# ⚠ IT MUST STAY COMFORTABLY UNDER THE BROWSER'S. The twenty seconds of headroom
+# ⚠ AND THEN 70 TURNED OUT TO BE TOO SMALL FOR THE WORK PEOPLE ACTUALLY ASK FOR.
+# Reported live with a screenshot: *"add music and sound effects in this
+# storyboard story wise"* on a FOURTEEN-shot board came back as "The read
+# operation timed out … 70s is all one call gets (CHAT_BUDGET_SECONDS)". Nothing
+# was broken — that turn is simply the expensive shape of turn, three ways at
+# once, and the numbers for all three are measured rather than guessed:
+#
+#   • a LOOK is 27–35s (2026-09-04, `gemini-3.5-flash`, Developer API)
+#   • a REPAIR is a SECOND paid call inside the SAME attempt — so one attempt
+#     can be two of those back to back before a single retry is considered
+#   • a sound plan that names every shot on a long board is a long ANSWER, and
+#     output length is what a text model is slowest at
+#
+# Two slowest-measured calls do not fit inside 70s. They fit inside 120.
+#
+# ⚠ AND 120 IS AS FAR AS THIS NUMBER CAN GO ALONE. `budget_seconds` returns the
+# SMALLER of this and `DIRECTOR_BUDGET_SECONDS` (135), so a ceiling raised above
+# 135 quietly stops being the chat's number at all — the resolver would hand back
+# the Director's, under the Director's name, and the sentence the user reads
+# would send them to the wrong line of the `.env`. Past 120 the honest moves are
+# to raise the Director's budget too, or to set `CHAT_BUDGET_SECONDS`, which
+# overrides both. `tests/director_timeout_check.py` pins this.
+#
+# ⚠ IT MUST STAY COMFORTABLY UNDER THE BROWSER'S. The thirty seconds of headroom
 # is not slack — it is the prompt build, a look's pictures coming up the wire,
 # and the response going back down. Raise this and you must raise BOTH
 # `CHAT_TURN_TIMEOUT_MS` and `API_CHAT_TURN_TIMEOUT_S`, in that order, or the tab
@@ -276,7 +300,12 @@ DEFAULT_BUDGET_SECONDS = 135
 #
 # ⚠ ONE CALL, NOT TWO. A chat turn is a single `complete_json`; the Director's
 # route makes two, which is the other half of why its budget is the bigger one.
-CAPABILITY_BUDGET_SECONDS = {"chat": 70.0}
+# ⚠ A LOOK IS THE EXCEPTION AND IT IS TWO HTTP TURNS, NOT TWO CALLS IN ONE: the
+# model asks to see, the browser sends the same message back with pictures, and
+# each of those turns gets its OWN 120s. The budget is per call, so a look that
+# answers is up to two full budgets of the user's patience — which is why the
+# panel counts the seconds out loud and offers Stop.
+CAPABILITY_BUDGET_SECONDS = {"chat": 120.0}
 
 # No attempt is worth starting with less than this left on the clock: the answer
 # could not arrive in time, and asking for it costs money on a paid endpoint.
@@ -1106,6 +1135,46 @@ def _adapter(capability: str = ""):
 
 
 # ---------------------------------------------------------------------------
+# THE STOPWATCH — what the log has to say for a slow call to be diagnosable
+# ---------------------------------------------------------------------------
+# ⚠ THIS EXISTS BECAUSE "IT TOOK 90 SECONDS" WAS NOT A FINDING, IT WAS A
+# COMPLAINT. The ✨ chat was reported as hanging on `Thinking…`; the budgets were
+# made honest (`CAPABILITY_BUDGET_SECONDS`) and the tab was given a counter, and
+# the actual QUESTION — was that ONE slow call, or three attempts, or a model
+# that answered fast and a repair that did not? — stayed open, because this
+# module logged the START of an attempt and nothing else. A successful 65s turn
+# produced exactly one line and no duration anywhere in it.
+#
+# ⚠ SO EVERY MODEL CALL IS TIMED AND EVERY TIMING IS LOGGED, SUCCESS INCLUDED.
+# A failure that is only diagnosable when it fails is not diagnosable: the turns
+# people actually complain about SUCCEED, slowly. The lines are cheap (one
+# `monotonic()` per call) and they are the difference between reading a log and
+# guessing at one.
+#
+# ⚠ AND THE SIZES GO OUT WITH THE FIRST ATTEMPT, so "is the prompt the suspect?"
+# is answered by the log rather than by measuring it by hand once and writing the
+# number in a markdown file, where it goes stale the next time a rail is added.
+def _kb(chars: int) -> str:
+    """A size a person can compare at a glance, not a digit count."""
+    return f"{chars / 1024:.1f}KB"
+
+
+def _shape(request: JsonRequest) -> str:
+    """What is actually being sent, in one clause of a log line."""
+    schema_chars = len(json.dumps(request.schema, ensure_ascii=False))
+    pictures = sum(len(bytes(r.get("data") or b"")) for r in request.images if isinstance(r, dict))
+    out = (
+        f"system={_kb(len(request.system or ''))}, "
+        f"prompt={_kb(len(request.prompt or ''))}, "
+        f"schema={_kb(schema_chars)}"
+    )
+    # ⚠ NAMED ONLY WHEN THERE ARE SOME. `images=0` on every Director line is
+    # noise; `images=5 (612.0KB)` on the one line that has them is the finding —
+    # see E112, where pictures plus a long system instruction hung the call.
+    return out if not request.images else f"{out}, images={len(request.images)} ({_kb(pictures)})"
+
+
+# ---------------------------------------------------------------------------
 # THE ONE METHOD
 # ---------------------------------------------------------------------------
 def complete_json(request: JsonRequest) -> dict:
@@ -1146,17 +1215,45 @@ def complete_json(request: JsonRequest) -> dict:
 
 def _attempts(adapter, request, sent, last_reason, repaired, budget, budget_env) -> dict:
     """The retry loop. Split out only so the clock above is set and reset once."""
+    # ⚠ ATTEMPTS AND MODEL CALLS ARE NOT THE SAME NUMBER, and the gap between
+    # them is a whole class of slowness: a repair is a SECOND paid call inside
+    # ONE attempt, so "attempt 1/3" can still be two round trips and twice the
+    # wall clock. Counted separately so the closing line cannot hide it.
+    calls = 0
+    # ⚠ SET BY THE HANDLERS, READ ONCE AT THE END. "We stopped because the clock
+    # said the next attempt could not finish" and "we used all three attempts"
+    # are different endings and must not share a sentence — see `_with_clock`.
+    out_of_time = False
     for attempt in range(1, MAX_RETRIES + 1):
+        started = time.monotonic()
         try:
             logger.info(
-                "[llm_json] %s (provider=%s, model=%s, schema=%s, attempt %d/%d, fp=%s)…",
+                "[llm_json] %s (provider=%s, model=%s, schema=%s, attempt %d/%d, fp=%s, %s)…",
                 request.purpose,
                 resolve_provider(capability=request.capability),
                 model_id(capability=request.capability),
                 schema_mode(capability=request.capability),
-                attempt, MAX_RETRIES, sent.fingerprint()[:8],
+                attempt, MAX_RETRIES, sent.fingerprint()[:8], _shape(sent),
             )
+            # ⚠ RESET, AND NOT A TIDINESS ONE. The line above calls `model_id()`,
+            # which IMPORTS `script_breakdown` the first time it runs — a full
+            # second on a cold worker, charged to the model in the first draft of
+            # this stopwatch. A timing line that is wrong on the first call of a
+            # process is worse than none: the first call is the one people
+            # screenshot. The assignment at the top of the loop is what the
+            # failure handlers read; this one is what the MODEL is measured by.
+            started = time.monotonic()
             payload = adapter(sent)
+            calls += 1
+            # ⚠ LOGGED BEFORE THE ANSWER IS JUDGED, on purpose. "The model took
+            # 63s" and "the model's answer was rubbish" are two different
+            # findings with two different fixes, and a line that only appears
+            # once the JSON parses cannot tell them apart.
+            logger.info(
+                "[llm_json] %s attempt %d/%d: the model answered in %.1fs (%s).",
+                request.purpose, attempt, MAX_RETRIES,
+                time.monotonic() - started, _kb(len(payload or "")),
+            )
             if not (payload or "").strip():
                 # ⚠ NOTHING IS NOT REPAIRABLE. An empty answer is a safety block
                 # or a dead endpoint, and quoting nothing back at a model is a
@@ -1175,7 +1272,17 @@ def _attempts(adapter, request, sent, last_reason, repaired, budget, budget_env)
                     "[llm_json] The %s answer could not be read — %s. Asking it to "
                     "mend its own answer, once.", request.purpose, why,
                 )
+                mend_started = time.monotonic()
                 mended = adapter(_repair_request(sent, payload, why))
+                calls += 1
+                # ⚠ THE REPAIR IS TIMED SEPARATELY BECAUSE IT IS THE HIDDEN
+                # DOUBLE. Without this line a turn that took 60s reads as one
+                # slow call when it was two ordinary ones, and the fix for those
+                # two things is not the same fix.
+                logger.info(
+                    "[llm_json] the %s repair call took %.1fs.",
+                    request.purpose, time.monotonic() - mend_started,
+                )
                 parsed, why = _read_json(mended)
                 if parsed is not None:
                     logger.info("[llm_json] The repair worked; the %s call stands.", request.purpose)
@@ -1188,31 +1295,116 @@ def _attempts(adapter, request, sent, last_reason, repaired, budget, budget_env)
                 logger.warning("[llm_json] %s Retrying…", last_reason)
                 raise _Retry(last_reason)
 
+            # ⚠ THE ONLY LINE THAT ANSWERS "WHY WAS THAT SLOW?" ON A TURN THAT
+            # WORKED. `budget - _time_left()` is the whole call including every
+            # retry and every backoff nap, so it is the number the user actually
+            # sat through — and printing it beside the attempt and call counts is
+            # what separates "one slow model call" from "three of them".
+            logger.info(
+                "[llm_json] %s DONE in %.1fs — %d attempt(s), %d model call(s), "
+                "of a %.0fs budget (%s).",
+                request.purpose, budget - _time_left(), attempt, calls,
+                budget, budget_env or "DIRECTOR_BUDGET_SECONDS",
+            )
             return parsed
 
         except _Retry:
-            if attempt < MAX_RETRIES and _worth_retrying(attempt, request, budget):
+            spent = time.monotonic() - started
+            logger.warning(
+                "[llm_json] %s attempt %d/%d gave up after %.1fs.",
+                request.purpose, attempt, MAX_RETRIES, spent,
+            )
+            again = attempt < MAX_RETRIES and _worth_retrying(attempt, request, budget, spent)
+            if again:
                 time.sleep(INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1)))
                 continue
-            raise LLMJsonError(_with_clock(last_reason, budget, budget_env))
+            # ⚠ `_worth_retrying` says no for ONE reason: the clock. Reaching the
+            # last attempt is a different ending and must not borrow its sentence.
+            out_of_time = attempt < MAX_RETRIES
+            raise LLMJsonError(_with_clock(last_reason, budget, budget_env, out_of_time))
         except LLMJsonError:
             raise
         except Exception as e:  # noqa: BLE001 — surface a clear reason
             error = str(e)
-            if "429" in error or "RESOURCE_EXHAUSTED" in error:
-                last_reason = "Rate limited / quota exhausted on the text API (HTTP 429)."
-            else:
-                last_reason = f"Text API error during {request.purpose}: {error}"
-                logger.error("[llm_json] %s", last_reason)
-            if attempt < MAX_RETRIES and _worth_retrying(attempt, request, budget):
+            # ⚠ HOW LONG IT TOOK TO FAIL IS THE DIAGNOSIS, NOT A DETAIL. A 429
+            # that comes back in 0.4s is a quota wall; the SAME sentence after
+            # 60s is the SDK having retried it for us, and the fix for the second
+            # one is not "raise the budget". E112's hang read as a plain
+            # `DEADLINE_EXCEEDED` too — it was 149 SECONDS that made it a finding.
+            logger.warning(
+                "[llm_json] %s attempt %d/%d FAILED after %.1fs.",
+                request.purpose, attempt, MAX_RETRIES, time.monotonic() - started,
+            )
+            last_reason = _explain(error, request.purpose)
+            logger.error("[llm_json] %s (raw: %s)", last_reason, error[:400])
+            spent = time.monotonic() - started
+            again = attempt < MAX_RETRIES and _worth_retrying(attempt, request, budget, spent)
+            if again:
                 time.sleep(INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1)))
                 continue
+            out_of_time = attempt < MAX_RETRIES
             break
 
-    raise LLMJsonError(_with_clock(last_reason, budget, budget_env))
+    raise LLMJsonError(_with_clock(last_reason, budget, budget_env, out_of_time))
 
 
-def _worth_retrying(attempt: int, request: JsonRequest, budget: float) -> bool:
+# ⚠ WHAT THE PROVIDER SAID, IN A SENTENCE THE USER IS ALLOWED TO SEE. Everything
+# raised here is one HTTP hop from a person reading it in the ✨ chat panel, and
+# the generic branch used to interpolate the SDK's exception whole — so a busy
+# model printed this, verbatim, into the conversation:
+#
+#   Text API error during editor chat: 503 UNAVAILABLE. {'error': {'code': 503,
+#   'message': 'This model is currently experiencing high demand. …'}}
+#
+# A Python dict in a chat bubble is not an error message, it is a leak. ⚠ AND THE
+# DISTINCTION IT DESTROYS IS THE ONE THAT MATTERS: "the model is busy, try again
+# in a minute" and "your key is out of quota" need two different things from the
+# reader, and both of them arrived as the same wall of braces. Seen live on
+# 2026-09-04 — three consecutive 503s on `gemini-3.5-flash`.
+#
+# ⚠ THE RAW TEXT IS NOT THROWN AWAY, IT IS MOVED TO THE LOG. Whoever is debugging
+# still needs the status code and the provider's own words; the person waiting on
+# a reply does not.
+_FAULTS = (
+    (("429", "RESOURCE_EXHAUSTED"),
+     "The text API is rate limited or out of quota (HTTP 429). On a free key this "
+     "is usually the daily or per-minute cap — wait a minute, or use a paid key."),
+    (("503", "UNAVAILABLE", "high demand", "overloaded"),
+     "The model is busy right now (HTTP 503) — the provider calls these spikes "
+     "temporary. Nothing is wrong with the film or the key; try again in a minute."),
+    (("504", "DEADLINE_EXCEEDED"),
+     "The model took longer than it is allowed and the call was cut off (HTTP 504)."),
+    (("403", "PERMISSION_DENIED", "API key not valid", "API_KEY_INVALID"),
+     "The text API refused the credentials (HTTP 403) — check the key for this "
+     "capability, and that the API is enabled for the project."),
+    (("404", "NOT_FOUND"),
+     "The provider does not know that model id (HTTP 404) — check the model name "
+     "for this capability."),
+    (("500", "INTERNAL"),
+     "The provider had an internal error (HTTP 500). This is their fault, not the "
+     "request's; try again."),
+)
+
+
+def _explain(error: str, purpose: str) -> str:
+    """One sentence a person can act on, for a transport error nobody chose."""
+    for needles, sentence in _FAULTS:
+        if any(n in error for n in needles):
+            return sentence
+    # ⚠ THE FALLBACK IS TRIMMED, NOT RAW. An unrecognised fault still must not
+    # paste a stack or a dict into the panel; one clipped line is enough to tell
+    # a person to go and look at the log, which is where the whole thing is.
+    return f"The {purpose} call failed: {_clip_reason(error)}"
+
+
+def _clip_reason(error: str) -> str:
+    """The first line of an exception, short enough for a chat bubble."""
+    first = (error or "").strip().splitlines()[0] if (error or "").strip() else ""
+    return (first[:157] + "…") if len(first) > 158 else (first or "no reason given")
+
+
+def _worth_retrying(attempt: int, request: JsonRequest, budget: float,
+                    last_seconds: float = 0.0) -> bool:
     """Is there time left for the backoff AND an attempt that could finish?
 
     ⚠ A RETRY THAT CANNOT ARRIVE IN TIME IS A PAID CALL FOR NOTHING. Sleeping
@@ -1221,24 +1413,44 @@ def _worth_retrying(attempt: int, request: JsonRequest, budget: float) -> bool:
     loop stops early and says the budget ran out — which is the difference
     between "the model is slow" and "something is stuck", the two things the user
     is actually trying to tell apart.
+
+    ⚠ AND WHAT THE NEXT ATTEMPT WILL NEED IS WHAT THE LAST ONE TOOK, not a flat
+    fifteen seconds. `MIN_ATTEMPT_SECONDS` was the only estimate available until
+    the attempts were timed, and it is wildly optimistic for the calls that
+    actually run out of budget: a ✨ chat LOOK measured **34.6s** live on
+    2026-09-04 (five stills) against **2.6s** for the same turn with no pictures.
+    Retrying that with 31s left is not a gamble, it is a purchase of a call that
+    WILL be cut off — the request is identical, so the honest prior for how long
+    it takes is how long it just took. ⚠ A FAST FAILURE IS UNAFFECTED, which is
+    the point of the floor: a 503 that came back in 2s still gets its retries.
     """
     backoff = INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1))
-    if _time_left() - backoff >= MIN_ATTEMPT_SECONDS:
+    need = max(MIN_ATTEMPT_SECONDS, last_seconds)
+    if _time_left() - backoff >= need:
         return True
     logger.warning(
-        "[llm_json] %s: %.0fs budget spent after %d attempt(s) — not trying again.",
-        request.purpose, budget, attempt,
+        "[llm_json] %s: not trying again — %.0fs of the %.0fs budget is gone, and "
+        "the last attempt needed %.1fs (+%.0fs backoff) with %.1fs left.",
+        request.purpose, budget - _time_left(), budget, need, backoff, _time_left(),
     )
     return False
 
 
-def _with_clock(reason: str, budget: float, budget_env: str = "DIRECTOR_BUDGET_SECONDS") -> str:
+def _with_clock(reason: str, budget: float, budget_env: str = "DIRECTOR_BUDGET_SECONDS",
+                out_of_time: bool = False) -> str:
     """The reason, plus the clock when the clock is why we stopped.
 
     The panel prints this verbatim under "The AI pass didn't run", so it has to
     say which of the two things happened in words a person can act on.
+
+    ⚠ `out_of_time` EXISTS BECAUSE THE CLOCK CAN STOP US WITH TIME ON IT. Since
+    `_worth_retrying` estimates the next attempt from the LAST one's measured
+    duration, a call can be abandoned with 31 seconds left because the attempt
+    that just failed needed 35 — and the old test here (`_time_left()` under the
+    floor) would have called that a plain failure and said nothing about the
+    budget at all. The caller knows which ending it had; it says so.
     """
-    if _time_left() > MIN_ATTEMPT_SECONDS:
+    if not out_of_time and _time_left() > MIN_ATTEMPT_SECONDS:
         return reason
     return (
         f"{reason} It ran out of time — {budget:.0f}s is all one call gets "

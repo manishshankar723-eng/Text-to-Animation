@@ -40,6 +40,7 @@ this app; shared route helpers live in `common.py`, which is where
 
 import base64
 import logging
+import time
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -143,6 +144,14 @@ def turn(
     from editor_chat_agent import CAPABILITY, EditorChatError, chat
     from llm_json import model_id, resolve_provider
 
+    # ⚠ THE TAB'S CLOCK STARTS HERE, NOT AT THE MODEL CALL. `llm_json` times its
+    # own attempts, but the user is waiting for the WHOLE route — the ownership
+    # lookup, decoding a look's pictures, building the digest, and the reply
+    # going back down the wire. When those two numbers are close the model is the
+    # story; when they are not, this app is, and until now nothing measured the
+    # difference. See RULEBOOK F7/F8.
+    turn_started = time.monotonic()
+
     _owned_animatic(job_id, current)
 
     messages = [{"role": m.role, "text": m.text} for m in body.messages]
@@ -186,10 +195,16 @@ def turn(
             pictures=tuple(pictures),
         )
     except EditorChatError as e:
-        logger.warning("[editor-chat %s] turn failed: %s", job_id, e)
+        logger.warning(
+            "[editor-chat %s] turn failed after %.1fs: %s",
+            job_id, time.monotonic() - turn_started, e,
+        )
         raise HTTPException(status_code=502, detail=str(e)) from None
     except Exception as e:  # noqa: BLE001 — report clearly, never a bare 500
-        logger.exception("[editor-chat %s] unexpected error", job_id)
+        logger.exception(
+            "[editor-chat %s] unexpected error after %.1fs",
+            job_id, time.monotonic() - turn_started,
+        )
         raise HTTPException(status_code=502, detail=f"AI Editor error: {e}") from None
 
     # ⚠ AFTER THE CALL, AND ONLY ON SUCCESS. See the module docstring.
@@ -228,9 +243,14 @@ def turn(
         )
 
     steps = len(((result.get("plan") or {}).get("steps")) or [])
+    # ⚠ `looking=N` IS ON THIS LINE FOR A REASON. A turn that carries pictures is
+    # a different animal — E112 — and a log where the slow turns and the seeing
+    # turns cannot be told apart makes that correlation invisible.
     logger.info(
-        "[editor-chat %s] %s — %d message(s) in, %d step(s), %d dropped. %s",
-        job_id, result.get("kind"), len(messages), steps, len(result.get("dropped") or []),
+        "[editor-chat %s] %s in %.1fs — %d message(s) in, %d step(s), %d dropped, "
+        "looking=%d. %s",
+        job_id, result.get("kind"), time.monotonic() - turn_started,
+        len(messages), steps, len(result.get("dropped") or []), len(pictures),
         f"{used}/{limit} turns" if limit is not None else f"{used} turns (unlimited)",
     )
 

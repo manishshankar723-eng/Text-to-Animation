@@ -308,7 +308,13 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-09-04 — **THE DURATION HINT WAS PROMISING A RIPPLE THE BOX HAS NOT DONE SINCE CLIPS GOT TRACKS.** Found while repairing the browser suite, put to the user as "tooltip badlein ya behaviour" — *"okay option A kar do achhe se"*. ⚠ **THE BOX WAS RIGHT.** Typing 5s into the middle of three 2s clips makes the film **0:07, not 0:09**: a clip sits at its own `start_ms` on a numbered track, so it grows and nothing else budges — exactly what the timeline's DEFAULT trim (V) does, *"the only one that never touches a clip you were not pointing at"*. Making the box ripple would have made it the one control in the editor that behaves unlike the default tool. So the sentence changed, and it now NAMES the Ripple tool (B) rather than promising behaviour: somebody who wants the old effect knows it is one keypress away. ⚠ **THE SAME STALE CLAIM HAD SPREAD TO TWO MORE FILES** — `chat_turn.js` and `useEditorChat.js` both justified "sound runs after the steps" with *"`set_shot_duration` moves every moment after it"*, and the chat's verb calls the very same `patchFrame`. The ordering rule survives (an inserted shot ripples its row; re-timing moves that shot's own end); the reason was corrected in both. ⚠ **THE VEO / GENERATED-SHOT PATH IS UNTOUCHED AND WAS PROVED SO BEFORE ANYTHING CHANGED** — it still carries captions, text, shapes, images and the voiceover along with the pictures (`renderShifts` + `RIPPLED_LISTS`), which is what the user actually asked about; `tests/timeline_ripple_check.py` and `tests/veo_ripple_check.py` were run green to answer that question. New **RULEBOOK E121**, and the tooltip is pinned by `tests/e2e_animatic.py` §7 (**ALL PASSED**). See the Work Log.
+**Last updated:** 2026-09-05 — **ONE STROKE WAS NOT ENOUGH: THE BOXES INSIDE THE CHAT PANEL HAD NO EDGE EITHER.** *"under wale panel v thora highlight karo, thora merge ho raha hai — jab text likhne jata hun tab aata hai wo thik hai, magar panel se v thora highlight karo"*. Yesterday's `--ec-stroke` fixed the panel's OUTER edge and stopped there. ⚠ **THE INNER BOXES LOST BOTH OF THEIR SIGNALS AT ONCE** — the log and the composer wear `--border` from `storyboard.css`, and **E115** had already taken their fill away entirely (that is what stops the alpha stacking three deep), so on a see-through panel there was nothing whatsoever marking where the conversation ended and the typing box began. New **`--ec-stroke-in`**, derived the same way and applied to the log, the composer and both chrome dividers. ⚠ **IT IS DELIBERATELY WEAKER THAN THE OUTER ONE, AND THAT ORDERING IS THE RULE**: three edges of the same weight is a grid, not a window — the outer stroke has to stay the strongest line on screen or it stops reading as the panel's boundary. Both tokens lift together when the panel goes see-through, and stay a step apart. ⚠ **THE FOCUS STATE IS UNTOUCHED** — `.sc-composer:focus-within` is one specificity step above this, so clicking into the box still paints the gold exactly as before; that half was already right and the fix is only about finding the box BEFORE focusing it. **RULEBOOK E116 extended** (outer AND inner). Chat + admin suites green, `npm run build` green. ⚠ **NOT SEEN ON A SCREEN BY ME** — the two ratios (82/18 normally, 62/38 when see-through) are the numbers to tell me to move. See the Work Log.
+
+**Previously:** 2026-09-04 — **ANSWERED, LIVE: THE ✨ CHAT'S SLOWNESS WAS NEVER THE PLAIN TURN.** *"okay start open issue and fix it … mai ek api key update kiya hun … magar dhiyan se ye wala key gree tril hai"* — a trial key arrived, so the question the stopwatch was built for got asked. **Six calls, spent deliberately**, `gemini-3.5-flash` on the Developer API, same board and same turn seconds apart: **text 2.6s / 5.2s / 4.2s**, **a LOOK (5 stills) 34.6s**, **12 stills 27.1s**, and **three consecutive 503s** in between. ⚠ **A text turn is ~5 seconds and was never the complaint; a LOOK is ~10× that** — and a look meeting one transient fault is 35 + backoff + 35, which is where the 90s reports landed, on the day the look feature shipped. ⚠ **NOT PROVEN** that this is what the original reporter hit — nobody replayed their session. ⚠ **AND `MAX_LOOK_SHOTS = 12` IS NOT THE BUG: twelve stills were FASTER than five**, so the picture COUNT does not drive the cost; left alone deliberately. **Two real faults it did prove, both fixed:** (1) **a retry was being bought that could not land** — `_worth_retrying` asked only "is 15s left?", so a 35s look that failed with 31s on the clock paid for a call guaranteed to be cut off; the estimate is now what the last attempt actually took, and `_with_clock` learned the ending where the clock stops a call that still has time on it (**F10**); (2) **a busy model printed a Python dict into the chat panel** — `{'error': {'code': 503, …}}`, seen live three times, because only 429 had ever been given a sentence; faults are now classified and the raw text moved to the log (**F11**). Also corrected as stale: E112's "7.5s" for a look — the mechanism is confirmed live (`system=0.3KB, prompt=18.1KB, images=5`) but it answers in **34.6s**. The prompt is confirmed innocent, re-measured: 9.9/5.9/5.3KB, ~5.9k tokens; new number nobody had — the reply schema is **13 levels deep**. 50 checks in `tests/director_timeout_check.py`, 20 suites green. ⚠ **Not committed.** See the Work Log.
+
+**Previously:** 2026-09-04 — **THE STOPWATCH: A SLOW MODEL CALL CAN NOW BE READ OFF THE LOG.** *"okay start number 3"* — the open question of WHY a ✨ chat turn took 90s+ was parked on "needs a live run with the backend log open", and reading the code first found that such a run **could not have answered it**: `llm_json` logged the START of an attempt and no elapsed time anywhere, so a turn that succeeded slowly — the case people complain about — produced one line with no duration in it, and a repair (a second paid call *inside* attempt 1) was invisible. ⚠ **NO CAUSE IS CLAIMED AND NONE WAS FOUND — this makes the next live run conclusive, it does not make the chat faster.** Every model call is now timed on success as well as failure: `attempt N/3: the model answered in X.Xs`, `repair call took X.Xs`, `attempt N/3 FAILED after X.Xs`, and a closing `DONE in X.Xs — N attempt(s), N model call(s)`; the first attempt line carries `system=/prompt=/schema=` sizes and `images=N` only when there are pictures (E112). `server/editor_chat.py` times the WHOLE route beside the model's own number, so "the model is slow" and "this app is slow" stop looking identical. ⚠ **ONE REAL BUG CAUGHT BY RUNNING IT**: a fake 2.0s call reported **3.1s**, because building the log line calls `model_id()`, which **imports `script_breakdown` on a cold worker** — a second charged to the model on the first call of a process, which is the one people screenshot. What the review DID establish, without a model: the chat is ONE call per turn, it runs **`gemini-3.5-flash` on the Developer API**, and ⚠ **the thinking/output numbers it inherits were measured on `gemini-2.5-flash` on Vertex** — a different model on a different endpoint, never timed. New **RULEBOOK F9**; `tests/director_timeout_check.py` gains 16 checks and 13 suites are green. ⚠ **STILL BLOCKED ON A PAID KEY** — the free tier's 20/day is spent, and being near that wall is itself a candidate cause. See the Work Log.
+
+**Previously:** 2026-09-04 — **THE DURATION HINT WAS PROMISING A RIPPLE THE BOX HAS NOT DONE SINCE CLIPS GOT TRACKS.** Found while repairing the browser suite, put to the user as "tooltip badlein ya behaviour" — *"okay option A kar do achhe se"*. ⚠ **THE BOX WAS RIGHT.** Typing 5s into the middle of three 2s clips makes the film **0:07, not 0:09**: a clip sits at its own `start_ms` on a numbered track, so it grows and nothing else budges — exactly what the timeline's DEFAULT trim (V) does, *"the only one that never touches a clip you were not pointing at"*. Making the box ripple would have made it the one control in the editor that behaves unlike the default tool. So the sentence changed, and it now NAMES the Ripple tool (B) rather than promising behaviour: somebody who wants the old effect knows it is one keypress away. ⚠ **THE SAME STALE CLAIM HAD SPREAD TO TWO MORE FILES** — `chat_turn.js` and `useEditorChat.js` both justified "sound runs after the steps" with *"`set_shot_duration` moves every moment after it"*, and the chat's verb calls the very same `patchFrame`. The ordering rule survives (an inserted shot ripples its row; re-timing moves that shot's own end); the reason was corrected in both. ⚠ **THE VEO / GENERATED-SHOT PATH IS UNTOUCHED AND WAS PROVED SO BEFORE ANYTHING CHANGED** — it still carries captions, text, shapes, images and the voiceover along with the pictures (`renderShifts` + `RIPPLED_LISTS`), which is what the user actually asked about; `tests/timeline_ripple_check.py` and `tests/veo_ripple_check.py` were run green to answer that question. New **RULEBOOK E121**, and the tooltip is pinned by `tests/e2e_animatic.py` §7 (**ALL PASSED**). See the Work Log.
 
 **Previously:** 2026-09-04 — **`tests/e2e_animatic.py` IS GREEN END TO END FOR THE FIRST TIME — 118 CHECKS, TWICE IN A ROW.** It had been stale since the NLE timeline replaced the frame strip, and a stale suite is worse than no suite: it dies in the middle, so nobody runs it, so nothing after the crash is covered at all. ⚠ **WHAT WAS STALE**: the workflow's rename, the library's one section, the ← button (an arrow with its name on the tooltip — 30s of timeout per run), Delete moving into the ⚙ menu, the Add control taking video, `.fs-card` now meaning a MEDIA BIN card, `.fs-dur-input` belonging to a strip that is not rendered at all, and the monitor being a **WebGL canvas** whose `<img>`s are hidden texture sources. ⚠ **AND THREE CHECKS WERE ASKING FOR THE OLD BEHAVIOUR, NOT A NEW BUG**: the Media pane's ＋ puts stills on the IMAGES lane now (a picture goes into the cut through a picture row's own ＋ — new §6b); lengthening a clip does NOT move the ones after it (clips are placed by `start_ms` on a track, so the film ends at 0:07, not 0:09); and `.an-vol` is a slider LOOK the audio pane draws five of. ⚠ **THE SUITE THEN FOUND TWO REAL FAULTS.** (1) The Properties pane fired two requests per selection that could only 400 for an upload or a colour card — the panes are no longer mounted for a clip that names no board (`isBoardShot`), and `get_frame_sequence` now answers **200 with a reason** like its sibling `get_frame_panel` already did. (2) The suite was spending a `projects` quota slot per run under a FIXED test address, into the repo's own `.local_usage.json` — so the third run of any month met **402 Payment Required** and read as a broken editor. Fresh account per run, and every local store now has a temp path in the documented command. ⚠ **AND §4c's "dead space under the timeline" WAS MEASURING FURNITURE** — the status strip is permanent (E109), so the workspace ends there, not at the timeline: 14px top and 14px bottom. New **RULEBOOK E120, G18**. See the Work Log.
 
@@ -3645,7 +3651,356 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-09-04 (latest) — THE HINT PROMISED A RIPPLE; THE BOX HAD NOT DONE ONE FOR MONTHS
+### 2026-09-05 (latest) — THE CLOCK WAS FIXED AND THE TURN STILL DID NOTHING
+
+    "see" / "see image also"
+
+Two screenshots, sent straight after the budget went 70 → 120s. **The timeout is
+gone — the turn came back.** What came back is the finding:
+
+    THEM: add music and sound effects in this storyboard story wise
+    IT:   I've added a cinematic, storytelling music bed and placed sound
+          effects on key shots to bring the storyboard to life.
+
+    0 edits   [Notes 1]
+    · Adding background music and sound effects to enhance the storyboard's
+      narrative.
+    [ Apply 0 edits ]   Nothing has changed yet
+
+The full-editor shot confirms it: the **Audio row is empty**, 0:28 of film,
+nothing moved. The reply is in the **past tense** and describes work that does
+not exist.
+
+**WHAT THE TURN ACTUALLY CONTAINED.** One `note` step, and **no `sound`** — which
+is the whole feature: sound is not a verb (finding one means searching a stock
+library), so it rides beside the steps in its own field. `note` is a real verb
+whose `run` is `() => {}`: it exists so a plan can explain itself at the top of
+the preview. So every check in the path passed, nothing was malformed, nothing
+was dropped — and the plan would have moved nothing at all.
+
+⚠ **THE RULE WAS ALREADY WRITTEN. THE TEST WAS ONE WORD SHORT.** `chat_turn.js`
+says it in its own header, in these words:
+
+    A reply labelled `plan` whose every step was dropped is not a plan — it is
+    an answer with an apology attached, and drawing an Apply button over zero
+    edits is the worst kind of lie a panel can tell.
+
+Then it tested `(plan.steps || []).length`, **which a note passes**. Two files
+away, `EditorChat.jsx` already knew better — its own label counts
+`verb !== "note"`, which is why the button could read **"Apply 0 edits"** and
+mean it. **A rule stated in a docstring is not a rule the code obeys.**
+
+**FIXED ON BOTH SIDES, INDEPENDENTLY.** `_read_turn` (`editor_chat_agent.py`) and
+`readTurn` (`chat_turn.js`) now test for a step that DOES something — same split
+as `_coerce_ask` / `normaliseAsk`: the server decides whether there is a plan at
+all (so `kind` and the log are honest), the client decides what can be drawn, and
+neither may assume the other did it. ⚠ **And the discarded notes go into
+`dropped`, not into silence** — what the model wrote is the user's only evidence
+that it misunderstood the job, and a turn that quietly becomes a chat bubble
+reads as the model *choosing* to answer.
+
+**THE PROMPT HALF, WHICH IS THE WEAKER HALF AND IS ONLY GUZARISH.** The system
+prompt **already** forbids exactly this sentence — *"NOTHING HAS HAPPENED YET
+when you send this … say 'I'll put a dissolve on every scene change', never 'I've
+added dissolves'"* — and the model wrote "I've added" anyway. More prompt words
+are not a fix, so only two things changed there, both of them rules that were
+genuinely wrong:
+
+1. ⚠ **E106, APPLIED TO SOUND, WHERE IT HAD NEVER REACHED.** The SOUND section
+   said *"SPARINGLY, **AND NEVER ONE PER SHOT**"* — a house default written as a
+   law, and **"story wise" is precisely the ask it refuses**. E106 is the rule
+   that a cap is a default for when nobody said and never an answer to somebody
+   who did; `HOUSE_CAPS` learned it in code, this prose never did. It now lifts
+   when the words are there ("every shot", "each one", "story wise", "sab par").
+   ⚠ **This is a CANDIDATE for why the model produced nothing, not a finding** —
+   a model told "never one per shot" and asked for one per shot has been handed a
+   contradiction, and narrating is one way out of it. Nobody has replayed the
+   turn.
+2. **"A note is not a sound, and a note is not an edit."** Named, with what to do
+   instead: the music goes in `sound`, or say so in `reply` and send no steps.
+
+**Files:** `editor_chat_agent.py`, `client/src/animatic/agent/chat_turn.js`,
+`prompts.yaml`, `tests/editor_chat_check.py`.
+
+**Verified:** `tests/editor_chat_check.py` green with **8 new checks** — and the
+checks were **proven to have teeth**: reverted to the old behaviour on both sides,
+4 of them FAIL, and the failure output reproduces the live turn exactly
+(`kind: 'plan'`, one note, `sound: None`, under "I've added a cinematic,
+storytelling music bed"). Also green: `editor_chat_doors`, `editor_chat_render`,
+`chat_layers`, `chat_provider`, `director_timeout` (75), `director_contract`,
+`director_determinism`, `director_language`, `director_sound`; `npm run build`.
+⚠ **Not committed — the user is doing that.**
+
+New **RULEBOOK E122**.
+
+### 2026-09-05 — 70 SECONDS WAS THE RIGHT ORDER AND THE WRONG NUMBER
+
+    "kya error hai mai chat ko bola sound effects and music lago to ye eror aaay"
+
+Screenshot of the ✨ panel, one bubble and one red box under it:
+
+    add music and sound effects in this storyboard story wise
+
+    The editor chat call failed: The read operation timed out It ran out of time
+    — 70s is all one call gets (CHAT_BUDGET_SECONDS). A model this slow needs a
+    bigger budget, or a smaller board.
+
+**THE SENTENCE WAS CORRECT, WHICH IS THE POINT.** F7 built that message and F9
+built the clock behind it, and between them they did exactly their job: the
+server stopped first, named the var that set the clock, and did not blame a
+database. Nothing was stuck, the key was fine, the board was fine.
+
+**THE BUDGET WAS SIZED AGAINST THE TAB AND NEVER AGAINST THE WORK.** F7's whole
+question was *which of the two clocks stops first*, and 70 < 90 answered it. What
+nobody checked is whether 70s is enough to do anything. Three costs stack on the
+turn in that screenshot, and every number here is measured or read out of the
+code, not guessed:
+
+- a **LOOK** is **27–35s** (2026-09-04, `gemini-3.5-flash`, Developer API);
+- a **REPAIR** — asking the model to mend unreadable JSON — is a **second paid
+  call inside the SAME attempt**, before a single retry is considered;
+- and *"story wise"* on a **fourteen-shot** board is a per-shot sound plan, which
+  is a long **answer**, and output length is what a text model is slowest at.
+
+⚠ **35 × 2 = 70 EXACTLY.** The old budget left *not one second* for the mend.
+
+**WHAT CHANGED — THE PAIR MOVED TOGETHER, WHICH IS THE RULE F7 WROTE.**
+
+| | was | now | where |
+|---|---|---|---|
+| server, one call | 70s | **120s** | `CAPABILITY_BUDGET_SECONDS["chat"]`, `llm_json.py` |
+| tab's patience | 90s | **150s** | `CHAT_TURN_TIMEOUT_MS`, `client/src/api.js` |
+| its mirror | 90s | **150s** | `API_CHAT_TURN_TIMEOUT_S`, `server/config.py` |
+
+⚠ **AND 120 IS THE CEILING'S OWN CEILING, WHICH IS A TRAP AND IS NOW PINNED.**
+`budget_seconds` returns the **smaller** of the chat's cap and
+`DIRECTOR_BUDGET_SECONDS` (**135**). Push the cap past 135 and it silently stops
+being the chat's number at all — the turn takes the Director's, **under the
+Director's name**, so the sentence the user reads would send them to a line of
+the `.env` that changes nothing for them. Past 120 the honest moves are to raise
+the Director's too, or set `CHAT_BUDGET_SECONDS`, which overrides both.
+
+⚠ **NEITHER `CHAT_BUDGET_SECONDS` NOR `API_CHAT_TURN_TIMEOUT_S` HAD EVER BEEN
+WRITTEN DOWN IN `.env.example`** — the two knobs the error message tells you to
+reach for. Both are documented there now, with the order and the trap.
+
+**TWO SHAPES OF TURN, AND THE TEST CHECKS BOTH — they fail in opposite
+directions.** A budget too small kills the **slow** turn (this bug); a budget
+spent on one hopeless attempt starves the **fast** turn's retries (F10, where a
+2s 503 must still be tried again). `tests/director_timeout_check.py` gains nine
+checks that measure the budget against **work** rather than against itself: the
+slowest measured call plus its repair must fit; the SDK's http timeout must
+really be the whole budget and not a lower ceiling; a fast failure must still
+afford its retries and a slow one with 10s left must still be refused; the tab
+must outlast the whole thing; and the Director-ceiling trap above is proved by
+raising the cap over 135 and reading back whose name comes out. **75 checks,
+green.**
+
+⚠ **NOT LIVE-TESTED BY ME — THE USER IS DOING THAT** (*"test mai karunga tum
+kaam kar pura sahi se"*). What is proven here is arithmetic and code paths; what
+is NOT proven is that the same fourteen-shot sound turn now completes inside
+120s. If it still times out, the log line from F9 is the whole answer —
+`DONE in X.Xs — N attempt(s), N model call(s)` — and the next move is
+`CHAT_BUDGET_SECONDS` with the tab's two raised to match, not another guess.
+
+⚠ **AND A LOOK IS TWO HTTP TURNS, SO IT GETS TWO FULL BUDGETS.** The user's
+patience is the sum of them, which is what F8's seconds counter and Stop button
+are for. Nothing about that changed; it is worth saying because 120 reads like
+the ceiling on a wait and it is the ceiling on a **call**.
+
+**Files:** `llm_json.py`, `client/src/api.js`, `server/config.py`, `.env.example`,
+`tests/director_timeout_check.py`, `RULEBOOK.md`.
+
+**Verified:** `tests/director_timeout_check.py` **75 checks, all passed**;
+`editor_chat_check`, `editor_chat_doors_check`, `editor_chat_render_check`,
+`chat_provider_check`, `chat_layers_check`, `director_contract_check` green;
+`npm run build` green. ⚠ **Not committed — the user is doing that.**
+
+New **RULEBOOK F12**; **F7** amended to say its three values moved (the ORDER is
+the rule there, not the numbers).
+
+### 2026-09-05 — ONE STROKE WAS NOT ENOUGH: THE BOXES INSIDE HAD NO EDGE EITHER
+
+    "under wale panel v thora highligh karo thora marge ho raha hai jab text
+     likhne jata hun tab aat hai o thik hia magar pahnel se v thora hight karo"
+
+Two screenshots of the floating chat over the editor: the outer window now has a
+clear edge (yesterday's `--ec-stroke`), and **inside it the log and the composer
+are invisible boxes** — no line between the conversation and the place you type.
+The second shot is the composer focused, gold border on, which the user calls out
+as already correct.
+
+**THE INNER BOXES HAD LOST BOTH OF THEIR SIGNALS, ONE PER DAY.**
+
+They wear `--border` from `storyboard.css` — the token tuned for a card sitting
+*inside* a page, which **E116** already records as the wrong one for a panel
+lying over the editor. And the day before, **E115** took their **fill** away
+entirely: `background: transparent`, because mixing them to the same percentage
+as the panel behind them stacked the alpha three deep and made the opacity slider
+lie. That fix was right and stays. But between the two changes the log and the
+composer ended up with **no fill and a blending border**, which is nothing at all.
+
+**`--ec-stroke-in`, AND IT IS DELIBERATELY WEAKER THAN THE OUTER ONE.**
+
+Derived exactly like `--ec-stroke` — `--border` mixed towards `--text`, so it
+follows the admin's Brand colours and flips direction between the themes by
+itself — but landing **between** the outer stroke and plain `--border`.
+
+⚠ **THE ORDERING IS THE ACTUAL RULE HERE.** Three edges of the same weight is a
+grid, not a window: the outer stroke has to remain the strongest line on screen
+or it stops reading as the panel's boundary and the whole thing flattens. So the
+two tokens lift together when the panel goes see-through (where the inner border
+is the *only* separator, over a moving picture) and stay a step apart at every
+setting.
+
+The head and foot dividers moved onto the same token as well — a window whose
+rules are fainter than its panels reads as two things stacked rather than one
+panel with a title bar and a footer.
+
+⚠ **AND THE FOCUS STATE IS UNTOUCHED, ON PURPOSE.**
+`.sc-composer:focus-within` paints `--border-gold` and is one specificity step
+above `.ec-composer`, so clicking into the box still lights it exactly as it did.
+That was the half the user said was already fine — *"jab text likhne jata hun tab
+aata hai, wo thik hai"*. What was missing is that the box has to be findable
+**before** it is focused.
+
+**Files:** `client/src/styles/editor-chat.css` only — `--ec-stroke-in` on
+`.ec-panel` and its see-through override, then `.ec-log`, `.ec-composer`,
+`.ec-head`'s `border-bottom` and `.ec-foot`'s `border-top`. ⚠ `.ec-log` and
+`.ec-composer` are the same specificity as the shared `.sc-*` rules they take
+over from and win on `@import` order (`editor-chat.css` is imported after
+`storyboard.css` in `index.css`); only the colour is overridden, the box stays
+the shared chat box.
+
+**Verified:** `npm run build`, `tests/editor_chat_render_check.py`,
+`tests/editor_chat_check.py`, `tests/admin_fields_check.py` green. ⚠ **NOT SEEN
+ON A SCREEN BY ME** — the two ratios (82/18 normally, 62/38 when see-through) are
+the numbers worth telling me to move.
+
+**RULEBOOK E116 extended** to cover the inner edges as well as the outer one.
+
+### 2026-09-04 — THE ANSWER, LIVE: IT WAS NEVER THE PLAIN TURN
+
+    "okay start open issue and fix it … tum ek ek kar 4 ko dekho aur galt hai to
+     fix karu … mai ek api key update kiya hun tum ek live run check kar sakte ho
+     magar dhiyan se ye wala key gree tril hai"
+
+A fresh trial key arrived, so the question F9 was built to answer got asked.
+**Six live calls, spent deliberately**, against `gemini-3.5-flash` on the
+Developer API, the same 9-shot board and the same turn seconds apart:
+
+| what | model time |
+|---|---|
+| `models.list()` (free, proves key + model id) | 0.6s |
+| text turn | **2.6s**, 5.2s, 4.2s |
+| LOOK, 5 stills | **34.6s** |
+| LOOK, 12 stills | **27.1s** |
+| three consecutive 503s | 1.8–2.5s each |
+
+⚠ **SO THE PLAIN TURN WAS NEVER THE COMPLAINT — IT IS ~5 SECONDS.** A **look**
+is ~10× that, and a look meeting one transient fault is 35 + backoff + 35, which
+is where the 90s reports landed; the look feature shipped the same day they
+started. ⚠ **NOT PROVEN**: that this is what the original reporter hit. Nobody
+has replayed their session, and 30s is not 90s without a retry in the middle.
+
+⚠ **AND `MAX_LOOK_SHOTS = 12` IS NOT THE BUG — 12 stills were FASTER than 5.**
+The count of pictures does not drive the cost. Left alone deliberately.
+
+**Two real faults it did prove, both fixed:**
+
+**1 · A retry was being bought that could not possibly land (RULEBOOK F10).**
+`_worth_retrying` asked only "is `MIN_ATTEMPT_SECONDS` (15s) left?" — a fine
+floor and a terrible estimate. After a 35s look fails with 31s on the clock the
+old rule said "go again" and paid for a call guaranteed to be cut off. The
+estimate is now `max(floor, however long the last attempt actually took)`, which
+is only knowable because F9 timed it. ⚠ **The floor still protects fast
+failures** — a 2s 503 keeps its retries. ⚠ **And `_with_clock` had to learn a new
+ending**: it inferred "ran out of time" from `_time_left()`, which is false in
+exactly this case (31s left, stopped anyway), so the caller passes `out_of_time`
+instead of letting the sentence guess.
+
+**2 · A busy model printed a Python dict into the chat panel (RULEBOOK F11).**
+Seen live, three times: `Text API error during editor chat: 503 UNAVAILABLE.
+{'error': {'code': 503, 'message': 'This model is currently experiencing high
+demand…'}}`. Only 429 had ever been given a sentence; everything else was the
+raw exception interpolated whole. ⚠ **And the distinction that destroyed is the
+one that matters** — "the model is busy, try in a minute" and "your key is out of
+quota" need different things from the reader. Now classified (`_FAULTS` /
+`_explain`): 429, **503**, 504, 403, 404, 500, with an unrecognised fault clipped
+to one line. ⚠ **The raw text is moved, not lost** — it goes to the log as
+`raw: …`, where the person debugging needs it.
+
+**Also corrected, because it was measured and found stale:** E112's claim that
+the look fix brought the call to **7.5s**. The *mechanism* is confirmed live —
+the log shows `system=0.3KB, prompt=18.1KB, images=5`, so the rules really did
+move out of the system instruction — but it answers in **34.6s**, not 7.5s. One
+sample on one day, now four to five times bigger.
+
+⚠ **AND THE PROMPT IS CONFIRMED INNOCENT, RE-MEASURED RATHER THAN INHERITED**:
+system 9.9KB, vocabulary 5.9KB, schema 5.3KB, ~5.9k tokens — matching the old
+claim. New number nobody had: the reply schema is **13 levels deep, 79 type
+nodes**. That is the one untested suspect left if a *text* turn is ever slow.
+
+`tests/director_timeout_check.py` gains a second section (now 50 checks, no
+model, no network); 20 suites green. ⚠ **Not committed** — the user is doing that.
+
+### 2026-09-04 — THE STOPWATCH: A SLOW CALL CAN NOW BE READ OFF THE LOG
+
+    "okay start number 3"
+
+Picked off Next Steps: *why* a ✨ chat turn was taking 90s+ had been open since
+2026-09-03, and the answer was supposed to come from "a live run with the backend
+log open". **It could not have.** Reading the code first rather than running it
+found that the log physically could not answer the question:
+
+- `llm_json._attempts()` logged the **start** of an attempt and nothing else.
+  There was **no elapsed time recorded anywhere in the module** — not per
+  attempt, not per call, not on success (`grep monotonic|elapsed|perf_counter`
+  returned the deadline arithmetic and nothing more).
+- So a turn that **succeeded slowly** — which is the case people actually
+  complain about — produced one line, with no duration in it.
+- And a repair is a **second paid round trip inside attempt 1**, so "attempt 1/3"
+  could already mean two calls and twice the wall clock, with nothing saying so.
+
+⚠ **NO CAUSE IS CLAIMED AND NONE WAS FOUND.** This change does not make the chat
+faster; it makes the next live run conclusive instead of suggestive. What the
+code review DID establish, all of it checkable without a model:
+
+- the chat is **one** `complete_json` per HTTP turn (`editor_chat_agent.chat`),
+  so the 90s is not two calls hiding in the route;
+- it resolves to **`gemini-3.5-flash` on the Gemini Developer API** (`GEMINI_KEY_CHAT`
+  is present in `.env` and the key is itself the provider switch), with
+  `thinking_budget=1024` and `max_output_tokens=12288` inherited from the shared
+  `sampling()`;
+- ⚠ **and the timing table those two numbers were chosen from was measured on
+  `gemini-2.5-flash` on VERTEX** (see the header over `DEFAULT_THINKING_TOKENS`).
+  The chat runs a different model on a different endpoint, and its latency has
+  never been measured at all. That is a candidate, not a finding.
+
+**What was added.** `llm_json.py`: `_kb()` / `_shape()`, a per-attempt stopwatch,
+a separately timed repair call, an elapsed number on both failure paths, and a
+closing `DONE in X.Xs — N attempt(s), N model call(s), of a Ns budget (VAR)` on
+**success**. `server/editor_chat.py`: `turn_started`, so the whole route is timed
+beside the model's own number, plus `looking=N` on the line it already writes.
+
+⚠ **ONE REAL BUG IN THE FIRST DRAFT, CAUGHT BY ACTUALLY RUNNING IT.** A fake 2.0s
+call reported **3.1s**. The stopwatch started before the attempt log line, and
+building that line calls `model_id()`, which **imports `script_breakdown` on a
+cold worker** — a full second charged to the model, on the first call of the
+process, which is the one people screenshot. The clock now starts after the line.
+That 1.1s gap is still visible, correctly, as the difference between the model's
+number and the call's.
+
+New **RULEBOOK F9**; the "still open" row was rewritten to say the log now answers
+the question rather than that it already did. `tests/director_timeout_check.py`
+gains a 16-check section (log capture, no model, no network) — green, and so are
+`chat_layers`, `chat_provider`, `director_contract`, `director_determinism`,
+`director_language`, `editor_chat`, `editor_chat_doors`, `editor_chat_render`,
+`palette`, `frame_save_fields`, `asset_fields`, `summary_projection`,
+`transition`. ⚠ **STILL BLOCKED ON A PAID KEY** — the free tier's 20/day is
+spent, and being near that wall is itself a candidate cause worth ruling out.
+
+### 2026-09-04 — THE HINT PROMISED A RIPPLE; THE BOX HAD NOT DONE ONE FOR MONTHS
 
     "okay option A kar do achhe se"
 
@@ -27771,7 +28126,267 @@ still occasionally be safety-filtered.
 
 ## 🎯 Current State / Next Steps
 
-### 🟢 NEWEST: CHAT KA "THINKING…" AB LATAKTA NAHI (2026-09-03)
+### 🟠 NEWEST: TIMEOUT GAYA — PAR CHAT NE JHOOTH BOL DIYA (2026-09-05)
+
+    "see" / "see image also"
+
+**Pehle achhi khabar: timeout khatam.** Ghadi badhane ke baad turn poora aa gaya.
+
+**Ab jo mila.** Chat ne likha *"I've added a cinematic, storytelling music bed
+and placed sound effects on key shots"* — aur neeche **"0 edits · Apply 0 edits
+· Nothing has changed yet"**. Audio row bilkul khaali. Yaani **keh diya, kiya
+kuchh nahi**.
+
+**Analogy:** aapne darzi ko kapda diya. Usne parchi par likh kar de diya —
+*"shirt si di gayi hai"* — aur kapda waise ka waisa rakha hai. Parchi asli hai,
+shirt nahi.
+
+**Andar kya tha.** Model ne ek **`note`** bheja aur **`sound`** khaali chhod
+diya. `note` ek asli verb hai jo **kuchh nahi karta** — wo sirf isliye hai ki
+plan apni baat samjha sake. To har jaanch pass ho gayi, kuchh toota nahi, aur
+plan phir bhi kuchh nahi hilata.
+
+⚠ **Aur niyam pehle se likha hua tha — code ek shabd se chook gaya.**
+`chat_turn.js` ki apni header mein saaf likha hai: *"zero edits par Apply ka
+button dikhana is panel ka sabse bada jhooth hai."* Par jaanch thi *"steps hain
+ya nahi"* — aur note bhi to ek step hai. Do file door, `EditorChat.jsx` ko sahi
+pata tha (wo `note` ko ginti se hatata hai) — isi liye button par **"Apply 0
+edits"** likha aa raha tha. **Docstring mein likha niyam wo niyam nahi hai jo code
+maanta hai.**
+
+**Ab kya kiya.**
+
+1. **Sirf note wala plan ab plan nahi hai** — wo saada jawab ban jata hai, aur
+   Apply ka button aata hi nahi. Ye **server aur browser dono** mein alag-alag
+   lagaya (dono apna faisla khud karte hain, ek doosre par bharosa nahi).
+2. **Jo note phenke gaye, wo screen par likhe jayenge** — chup-chaap gayab nahi
+   honge. Aapko dikhna chahiye ki model ne kaam galat samjha.
+3. **Prompt mein do niyam theek kiye.** Sound wala rule kehta tha *"SPARINGLY,
+   AUR KABHI HAR SHOT PAR NAHI"* — aur aapne **"story wise"** yaani har shot
+   maanga tha. Ye wahi purani galti hai (**RULEBOOK E106**): *ghar ka default
+   tab ke liye hai jab kisi ne kuchh na kaha ho, us aadmi ka jawab nahi jisne
+   maanga hai.* Ab jab aap "har shot / story wise / sab par" bolenge, wo rule hat
+   jayega. Doosra: *"note ek sound nahi hai, aur note ek edit nahi hai."*
+
+⚠ **Jo maine PAKKA nahi kaha:** ki model ne isi wajah se kuchh nahi bheja. Ye
+sabse mazboot shak hai (usse "har shot par nahi" bola gaya tha aur aapne har shot
+maanga — wo phans gaya), par kisi ne wo turn dobara chala kar dekha nahi. Isliye
+**code wala fix PAKKA hai, prompt wala GUZARISH.**
+
+⚠ **Ab agar phir se aisa hua**, to ab jhootha Apply button nahi dikhega — saada
+jawab dikhega aur neeche wajah likhi hogi. Ye theek karne se **music apne aap nahi
+lag jayega**; ye sirf itna karta hai ki app aapse jhooth na bole.
+
+**Test.** 8 naye check jude, aur maine unke **daant check kiye** — purana code
+wapas laga kar chalaya, 4 check fail hue, aur fail hone par bilkul aapka wahi turn
+dikha. `npm run build` aur chat ke baaki 9 suite bhi green.
+
+Naya **RULEBOOK E122**. ⚠ **Commit nahi kiya — aap karenge.**
+
+---
+
+### 🟢 GHADI 70 → 120 SECOND KAR DI — TIMEOUT GAYA (2026-09-05)
+
+    "kya error hai mai chat ko bola sound effects and music lago to ye eror aaay"
+    "A karo fix usmai do test ho jayeng choita v bara v"
+    "test mai karunga tum kaam kar pura sahi se"
+
+**Kya hua tha.** Aapne chat se kaha *"add music and sound effects in this
+storyboard story wise"* — aur laal box aaya: *"70s is all one call gets"*.
+
+**Ye kharabi nahi thi, ghadi chhoti thi.** Key theek, quota theek, board theek.
+Chat ne AI se poocha, AI jawab **bana hi raha tha**, aur 70 second poore ho gaye.
+
+**Analogy:** halwai ko 14 logon ki thali ka order diya, aur rule tha *"70 second
+mein counter par aa jana chahiye"*. Halwai galat nahi tha — thali badi thi.
+
+**Kyun 70 kam pad gaya.** Us ek turn mein teen kharche ek saath aate hain, aur
+teeno ka number naapa hua hai:
+
+| Kya | Kitna time |
+|---|---|
+| Storyboard ki tasveerein dekhna (look) | **27–35 second** |
+| Jawab tuta aaye to dobara poochna (repair) | **ek aur poora call**, usi koshish ke andar |
+| 14 shot ka apna-apna sound plan likhna | lamba jawab = aur zyada time |
+
+⚠ **35 × 2 = 70 bilkul poora.** Yaani purane budget mein "dobara poochne" ke
+liye **ek second bhi** nahi bachta tha.
+
+**Ab kya kiya.** Teeno number ek saath badhaye — ek badhao to teeno badhane
+padte hain, warna wahi purani gadbad wapas aa jati hai (browser server se pehle
+haar maan leta hai, aur paisa phir bhi lag jata hai):
+
+| | pehle | ab |
+|---|---|---|
+| Server ko ek call ke liye | 70s | **120s** |
+| Browser ka intezaar | 90s | **150s** |
+| Uska server-side mirror | 90s | **150s** |
+
+⚠ **120 se upar aise hi nahi ja sakte.** Code khud chhota wala number uthata
+hai — chat ka 120 aur Director ka 135, in dono mein se jo kam ho. 135 se upar
+likh do to wo chup-chaap **Director ka** number ban jayega, aur error message
+aapko `.env` ki galat line par bhej dega. Aage badhana ho to `.env` mein
+**`CHAT_BUDGET_SECONDS`** likhiye — wo dono ko override karta hai. Ye do naam
+`.env.example` mein pehle likhe hi nahi the; ab likh diye hain.
+
+**Test: chhota bhi, bada bhi — dono.** Ye do ulti taraf tootte hain, isliye
+dono check hote hain: budget chhota ho to **bada** turn marta hai (yahi bug), aur
+budget ek bekaar koshish mein lag jaye to **chhota** turn apni retry kho deta
+hai. Naye 9 check jude — ab **75 check, sab green**. Baaki chat ke 6 suite aur
+`npm run build` bhi green.
+
+⚠ **Maine live test NAHI kiya — aap kar rahe hain.** Jo pakka hai: hisaab aur
+code ka rasta. Jo **pakka nahi**: ki wahi 14-shot wala sound message ab 120
+second ke andar poora ho hi jayega. Agar phir bhi time out ho, to backend wali
+terminal mein ek line aati hai — `DONE in X.Xs — N attempt(s), N model call(s)`
+— wahi poora jawab hai, aur agla kadam `CHAT_BUDGET_SECONDS` badhana hai, andaaza
+nahi.
+
+⚠ **Ek baat pehle se jaan lijiye:** jab chat tasveer dekhti hai, wo **do** turn
+hote hain (pehle "mujhe dikhao", phir jawab), aur **dono ko alag 120 second**
+milte hain. Isliye panel par seconds ki ginti chalti hai aur **Stop** ka button
+aata hai — wo isi liye banaya gaya tha.
+
+Naya **RULEBOOK F12**; **F7** mein likh diya ki uske teen number badal gaye.
+⚠ **Commit nahi kiya — aap karenge.**
+
+---
+
+### 🟢 JAWAB MIL GAYA — DER TEXT MEIN NAHI, **TASVEER** MEIN THI (2026-09-04)
+
+    "okay start open issue and fix it … tum ek ek kar 4 ko dekho aur galt hai to
+     fix karu … mai ek api key update kiya hun … magar dhiyan se ye wala key
+     gree tril hai"
+
+Nayi trial key aayi, to wahi sawal poocha gaya jiske liye ghadi lagayi thi.
+**Chhe live call, soch-samajh kar kharch kiye.** Ek hi board, ek hi sawal, kuchh
+second ke fark par:
+
+| Kya bheja | Model ne kitna time liya |
+|---|---|
+| Sirf text | **2.6s** · 5.2s · 4.2s |
+| **5 tasveer** ke saath (look) | **34.6s** |
+| 12 tasveer ke saath | **27.1s** |
+| Beech mein teen baar 503 "high demand" | 1.8–2.5s har ek |
+
+**Matlab kya nikla.** Saada text wala jawab **paanch second** ka hai — wo kabhi
+problem tha hi nahi. Par jab chat **tasveer dekhti hai**, wo **das guna** dheema
+ho jata hai. Aur agar us 35 second wale call ke beech ek baar server ne mana kar
+diya (jaisa aaj teen baar hua), to hisaab banta hai **35 + 4 + 35 = 74 second** —
+aur yahi wo "90 second" hai jo aapne dekha tha. ⚠ Aur **look wala feature usi din
+aaya tha jis din shikayat shuru hui**.
+
+⚠ **Jo abhi bhi PROVEN nahi hai:** ki bilkul yahi cheez us din hui thi. Kisi ne
+aapka wahi session dobara nahi chalaya. 30 second apne aap 90 nahi banta — beech
+mein ek retry chahiye.
+
+⚠ **Aur ek cheez jo maine jaan-boojh kar NAHI badli:** `MAX_LOOK_SHOTS = 12`.
+Shak tha ki 12 tasveer bahut zyada hain — **par 12 tasveer 5 se bhi tez nikli**
+(27s vs 35s). Yaani tasveeron ki *ginti* wajah nahi hai. Bina saboot ke kuchh
+badalna galat hota.
+
+**Do asli bug mile, dono theek kar diye.**
+
+**1 · Ek retry kharida ja raha tha jo poora ho hi nahi sakta tha.** Purana niyam
+tha: *"15 second bache hain? to phir se koshish karo."* Par ab pata hai ki look
+wala call **35 second** leta hai. To 31 second bachne par bhi "phir se koshish"
+matlab — **poore paise dekar ek aisa call jo beech mein hi kat jayega**. Ab
+hisaab ye hai: *"pichhli koshish ne jitna time liya, agli ko bhi utna chahiye."*
+⚠ Tez fail hone wale call par koi asar nahi — 2 second wala 503 apni retry abhi
+bhi paata hai.
+
+**2 · Server busy hone par user ko Python ka kachra dikh raha tha.** Aaj live
+teen baar ye dikha:
+
+    Text API error during editor chat: 503 UNAVAILABLE. {'error': {'code': 503,
+    'message': 'This model is currently experiencing high demand…'}}
+
+Ye seedha chat ke bubble mein jaata tha. ⚠ Aur isse **do bilkul alag cheezein ek
+jaisi dikhti thi** — *"model abhi busy hai, ek minute baad try karo"* aur *"aapki
+key ka quota khatam"*. Dono ka ilaaj alag hai. Ab har error ka apna saaf jumla
+hai (429, **503**, 504, 403, 404, 500), aur asli technical text **log mein** jaata
+hai — jahan uski zaroorat hai.
+
+**Ek purana daawa bhi theek kiya.** RULEBOOK mein likha tha ki look ka fix use
+**7.5 second** par le aaya. Fix **sach mein kaam kar raha hai** (log gawah hai:
+`system=0.3KB, prompt=18.1KB`), par time **34.6 second** hai, 7.5 nahi. Wo ek din
+ka ek sample tha.
+
+**Aur prompt bekasoor nikla** — dobara naapa: 9.9 + 5.9 + 5.3 KB, ~5.9k token.
+⚠ Ek naya number jo kisi ke paas nahi tha: schema **13 level gehra** hai. Agar
+kabhi *text* wala turn dheema mile, to ab sabse pehla shak yahi hona chahiye.
+
+**Aapke liye agla kadam:** ab jab bhi chat dheemi lage, backend ka log dekhiye —
+`looking=5` likha ho to samajh jaiye ki ye normal hai (tasveer dekh rahi hai), aur
+`looking=0` ke saath 30s+ ho to wo nayi cheez hai.
+
+Naya **RULEBOOK F10, F11**; E112 aur "still open" wali row dobara likhi gayi.
+`tests/director_timeout_check.py` ab **50 check**, 20 suites green.
+⚠ **Commit nahi kiya — aap karenge.**
+
+---
+
+### 🟠 AB GHADI LAG GAYI — PAR BIMARI ABHI BHI NAHI MILI (2026-09-04)
+
+    "okay start number 3"
+
+**Kya karna tha.** Sawal khula pada tha: chat ka ek jawab **70–90 second** kyun
+le raha tha? Purana plan tha *"ek live run karo aur backend ka log dekho"*.
+
+**Aur yahi cheez pehle galat thi.** Log kholte, aur usmein **jawab hota hi
+nahi**. Analogy: aapne dukaandar se poocha *"itni der kyun lagi?"* aur uske paas
+ghadi hi nahi hai — wo sirf itna bata sakta hai ki *"maine banana **shuru** kiya
+tha"*. Bas.
+
+Code padh kar teen cheezein nikli:
+
+- Poore `llm_json.py` mein **kahin bhi time naapa hi nahi ja raha tha** — na ek
+  koshish ka, na poori call ka.
+- Jo turn **kaamyaab** ho kar dheere aaya (aur asli shikayat wahi hai), uska log
+  mein **ek hi line** thi, bina kisi seconds ke.
+- Aur "repair" — jab model ka jawab tuta hua aata hai to **dobara** poocha jata
+  hai — wo **ek hi attempt ke andar doosri paid call** hai. Log mein `attempt
+  1/3` likha aata tha, jabki asal mein **do** call ho chuki hoti.
+
+**Ab kya laga diya.** Har model call ki ghadi. Ab log ye likhta hai:
+
+    [llm_json] editor chat (… attempt 1/3, system=10.1KB, prompt=12.3KB, images=5 (585.9KB))…
+    [llm_json] editor chat attempt 1/3: the model answered in 63.2s (4.1KB).
+    [llm_json] editor chat DONE in 64.0s — 1 attempt(s), 1 model call(s), of a 70s budget (CHAT_BUDGET_SECONDS).
+    [editor-chat abc123] plan in 64.6s — 4 message(s) in, 3 step(s), 0 dropped, looking=0. 7/50 turns
+
+Ek nazar mein pata chalta hai: **ek call slow thi, ya teen koshish hui, ya ek
+tez call + ek repair** — aur `64.0` vs `64.6` batata hai ki der **model** ki
+thi ya **hamare app** ki.
+
+⚠ **EK ASLI GALTI PAKDI GAYI, CHALA KAR.** Pehle draft mein nakli **2.0 second**
+ki call **3.1 second** dikha rahi thi. Wajah: ghadi log-line se **pehle** shuru ho
+rahi thi, aur wo line banate waqt ek Python file **pehli baar load** hoti hai —
+poora 1 second, jo model ke khaate mein chadh raha tha. Aur pehli hi call wo hoti
+hai jiska screenshot log liya karte hain. Theek kar diya.
+
+⚠ **JO ABHI BHI NAHI PATA — aur mai iska daawa nahi kar raha:**
+
+- **Bimari abhi bhi nahi mili.** Ye change chat ko **tez nahi karta**. Ye sirf
+  itna karta hai ki **agla live run ab pakka jawab dega**, andaaza nahi.
+- **Paid key ka intezaar hai.** Free Gemini tier ki **20 request/din** khatam
+  hai. ⚠ Aur dhyaan dein — *us limit ke paas hona hi* ek sambhavit wajah hai
+  (429 ke baad SDK khud dobara koshish karta hai), isliye ye run us wajah ko bhi
+  jaanch lega.
+- **Ek shak jo code padh kar mila** (proof nahi, sirf shak): chat
+  **`gemini-3.5-flash`** par Developer API se chalti hai, lekin uske
+  thinking/output ke number **`gemini-2.5-flash` par Vertex** pe naape gaye the.
+  Alag model, alag endpoint — iski speed **kabhi naapi hi nahi gayi**.
+
+**Agla kadam (jab paid key aa jaye):** ek chat message bhejein aur backend ka log
+kholein. Upar wali chaar line hi poora jawab hain — koi aur khudai nahi chahiye.
+
+Naya **RULEBOOK F9**. `tests/director_timeout_check.py` mein 16 naye check (bina
+model, bina network) — green, aur 13 suites green.
+
+---
+
+### 🟢 CHAT KA "THINKING…" AB LATAKTA NAHI (2026-09-03)
 
     "chatbot bahut time le raha hai thinking mai kay ho raha hai fix karo please"
 
@@ -29700,6 +30315,43 @@ language — do NOT copy the Drawstory reference's look/colours.
 ---
 
 **Next steps** (pick the top unchecked item when told to "start next"):
+
+- [ ] **SEND THE SOUND MESSAGE AGAIN AND SEE WHETHER `sound` ARRIVES THIS TIME
+      (2026-09-05).** ✅ **The clock half is ANSWERED** — the turn came back inside
+      120s on a fourteen-shot board, so F12 is confirmed in practice. What is NOT
+      answered is the half that replaced it: the model returned **one note and no
+      `sound`** (E122). The code fix stops the false Apply button; it cannot make
+      music appear. So: send *"add music and sound effects in this storyboard
+      story wise"* again on the same board and read what comes back.
+      ⚠ **The three readings.** *`sound` arrives with cues* — the E106-on-sound
+      prompt fix was the cause, and E122's prompt half goes PAKKA. *Still a note
+      and no sound* — the prompt was never the cause, and the next suspect is the
+      reply schema (13 levels deep, 79 type nodes) or the model simply being weak
+      at this field; try naming the field to it (*"put the cues in the sound
+      field"*) before changing anything. *A plain answer with the drop line under
+      it* — that is E122 working: the app is now honest about doing nothing, which
+      is the floor, not the goal.
+      ⚠ **And read the backend log line either way** — it names what came back:
+
+          [editor-chat] plan — reply N chars, N step(s), N dropped, …, N sfx + music
+
+- [ ] **THE CLOCK'S OWN LIVE NUMBERS ARE STILL UNREAD (2026-09-05).** The turn
+      answered, so 120s was enough — but nobody has read HOW long it took, and
+      that is one line in the backend terminal. Worth doing on the next sound
+      message, because it settles whether 120 has room or was a near miss:
+
+          [llm_json] editor chat DONE in X.Xs — N attempt(s), N model call(s), …
+          [editor-chat …] plan in X.Xs — … looking=N. n/50 turns
+
+      ⚠ **The three readings and what each one means.** *It answers under 120s*
+      — done, and F12 goes PAKKA with the real number written into it. *It still
+      times out with `looking=0`* — the LOOK was never the cost on this turn and
+      the suspect becomes the reply schema (13 levels deep, 79 type nodes, the one
+      candidate never tested). *It still times out with 2 model calls on 1
+      attempt* — that is the repair, and the fix is a smaller answer, not a
+      bigger clock. ⚠ **Only raise `CHAT_BUDGET_SECONDS` past 120 with
+      `DIRECTOR_BUDGET_SECONDS` (135) raised too, and the tab's two numbers with
+      both** — see F12 for why the cap alone does nothing.
 
 - [ ] **RUN 🎬 WITH THE ANIMATIC IMAGES BOX TICKED, IN A REAL BROWSER. IT HAS
       NEVER BEEN PRESSED.** Phase C2 (2026-08-26) is asserted end to end without a

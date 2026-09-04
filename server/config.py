@@ -301,18 +301,32 @@ LOCAL_CHAT_SETTINGS_PATH = os.environ.get(
 CHAT_SETTINGS_CACHE_TTL_S = float(os.environ.get("API_CHAT_SETTINGS_CACHE_TTL_S", "60"))
 # How long the browser waits for one chat turn. ⚠ SHORTER THAN THE DIRECTOR'S
 # FIVE MINUTES ON PURPOSE: a plan is two calls over a whole board and people
-# expect to wait for it, while a chat message that has not answered in a minute
-# reads as broken however healthy the call is. See `PLAN_TIMEOUT_MS` in api.js.
+# expect to wait for it, while a chat message that has not answered in a couple
+# of minutes reads as broken however healthy it is. See `PLAN_TIMEOUT_MS` in api.js.
 #
 # ⚠ THIS IS THE TAB'S PATIENCE, NOT THE SERVER'S WORK. The number that stops the
-# model call is `CAPABILITY_BUDGET_SECONDS["chat"]` in `llm_json.py` (70s), and
+# model call is `CAPABILITY_BUDGET_SECONDS["chat"]` in `llm_json.py` (120s), and
 # it MUST STAY THE SMALLER OF THE TWO. It did not used to: the chat shared the
 # Director's 135s budget, so any turn slower than 90s was aborted by the browser
 # while the server was still correctly serving it — billed, counted, and reported
 # to the user as "the server may be stuck (a database it needs can do this)".
-# THREE NUMBERS, ONE ORDER, and `tests/director_timeout_check.py` asserts it:
-#     llm_json 70s  <  this 90s  ==  CHAT_TURN_TIMEOUT_MS in client/src/api.js
-CHAT_TURN_TIMEOUT_S = float(os.environ.get("API_CHAT_TURN_TIMEOUT_S", "90"))
+#
+# ⚠ AND THE PAIR WENT UP TOGETHER (70/90 → 120/150) BECAUSE 70 WAS NOT ENOUGH
+# CLOCK FOR THE EXPENSIVE TURNS — a different fault from the one above, found
+# the same way: live, with a screenshot. "add music and sound effects in this
+# storyboard story wise" on a FOURTEEN-shot board died on the SERVER's budget
+# this time, not the tab's. A look at the board is 27–35s measured, a repair is
+# a second paid call inside the same attempt, and a per-shot sound plan is a
+# long answer on top of both.
+#
+# THREE NUMBERS, ONE ORDER, and `tests/director_timeout_check.py` asserts it
+# by reading each one out of its own file:
+#     llm_json 120s  <  this 150s  ==  CHAT_TURN_TIMEOUT_MS in client/src/api.js
+#
+# ⚠ RAISING THIS PAIR FURTHER IS NOT FREE: `budget_seconds` hands the chat the
+# SMALLER of its ceiling and `DIRECTOR_BUDGET_SECONDS` (135), so a server budget
+# above 135 stops being the chat's number at all. See `CAPABILITY_BUDGET_SECONDS`.
+CHAT_TURN_TIMEOUT_S = float(os.environ.get("API_CHAT_TURN_TIMEOUT_S", "150"))
 
 
 # --- Explore banners ----------------------------------------------------------

@@ -51,6 +51,17 @@
      near-black so the edge DARKENS. A hex here would have been right in one
      theme and wrong in the other, which is the same mistake the blur made. */
   --ec-stroke: color-mix(in srgb, var(--border) 65%, var(--text));
+  /* ⚠ AND THE BOXES INSIDE IT NEED THEIR OWN, WEAKER, EDGE. The log and the
+     composer wear `--border` from `storyboard.css` — and once the panel is
+     see-through they have no fill either, so there was nothing at all marking
+     where the conversation ended and the typing box began: *"under wale panel v
+     thora highlight karo, thora merge ho raha hai"*.
+     ⚠ **WEAKER THAN `--ec-stroke`, AND THAT IS THE WHOLE JOB.** Three edges of
+     the same weight is a grid, not a window. The outer stroke has to stay the
+     strongest line on screen or it stops reading as the panel's boundary, so
+     this one lands between it and plain `--border` — visible, and clearly
+     subordinate. Derived the same way, so it follows Brand and both themes. */
+  --ec-stroke-in: color-mix(in srgb, var(--border) 82%, var(--text));
   position: fixed;
   top: 0;
   bottom: 0;
@@ -230,6 +241,11 @@
    further along it. */
 .ec-panel.is-see-through {
   --ec-stroke: color-mix(in srgb, var(--border) 40%, var(--text));
+  /* ⚠ THE INNER BOXES LOSE THEIR FILL ENTIRELY WHEN THE PANEL GOES
+     SEE-THROUGH (that is what stops the alpha stacking three deep — see above),
+     so here their border is the ONLY thing that separates them, over a moving
+     picture. It lifts with the outer one and stays a step behind it. */
+  --ec-stroke-in: color-mix(in srgb, var(--border) 62%, var(--text));
 }
 
 
@@ -269,7 +285,10 @@
   align-items: center;
   gap: 0.5rem;
   padding-bottom: 0.6rem;
-  border-bottom: 1px solid var(--border);
+  /* The title bar's rule and the footer's, on the same token as the boxes — a
+     window whose divider is fainter than its panels reads as two things stacked
+     rather than one panel with a head and a foot. */
+  border-bottom: 1px solid var(--ec-stroke-in);
 }
 .ec-head-title {
   font-weight: 600;
@@ -350,6 +369,10 @@
   flex: 1;
   max-height: none;
   min-height: 0;
+  /* Later in the cascade than `.sc-chat-log`, same specificity — see the
+     `@import` order in `index.css`. Only the colour is taken over; the box is
+     still the shared chat log. */
+  border-color: var(--ec-stroke-in);
 }
 
 /* =========================================================================
@@ -611,7 +634,7 @@
   gap: 0.5rem;
   flex-wrap: wrap;
   padding-top: 0.5rem;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--ec-stroke-in);
 }
 .ec-blocked {
   border: 1px solid var(--border-gold);
@@ -623,6 +646,12 @@
 }
 .ec-composer {
   flex: 0 0 auto;
+  /* ⚠ THE RESTING STATE ONLY. `.sc-composer:focus-within` paints the gold and is
+     one specificity step above this, so clicking into the box still lights it
+     exactly as before — which was the half that was already right: *"jab text
+     likhne jata hun tab aata hai, wo thik hai"*. What was missing is that the
+     box has to be findable BEFORE it is focused. */
+  border-color: var(--ec-stroke-in);
 }
 
 /* =========================================================================

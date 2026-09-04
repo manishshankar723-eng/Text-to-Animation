@@ -165,6 +165,25 @@ out.badKind = T({ kind: "plan", reply: "Swirling.",
 // A plan whose every step died is an ANSWER, not an Apply button over nothing.
 out.deadPlan = out.badVerb.turn.kind;
 
+// -------------------------------- 3b. a plan of nothing but NOTES is not one
+// ⭐ SEEN LIVE, 2026-09-05. "add music and sound effects in this storyboard
+// story wise" came back as one note, no sound, under a reply claiming the work
+// was done — and the panel drew "0 edits · Apply 0 edits". `note` is
+// `run: () => {}`: every step here is VALID and the plan still moves nothing.
+out.noteOnly = T({ kind: "plan",
+  reply: "I've added a cinematic, storytelling music bed.",
+  plan: { steps: [{ verb: "note", args: { text: "Adding background music." } }] } });
+// The same turn with the sound it should have sent: a real plan again.
+out.noteWithSound = T({ kind: "plan", reply: "I'll put a bed under it.",
+  plan: { steps: [{ verb: "note", args: { text: "A bed under the whole film." } }] },
+  sound: { music: { query: "soft sitar", mood: "warm" } } });
+// And a note BESIDE a real edit is the reason the verb exists — it must stay.
+out.noteWithEdit = T({ kind: "plan", reply: "Softening the cuts.",
+  plan: { steps: [
+    { verb: "note", args: { text: "Reading it as three scenes." } },
+    { verb: "add_transition", args: { cut: 1, kind: "dissolve", duration_ms: 500 } },
+  ] } });
+
 // ---------------------------------------------------------- the helpers
 out.answerText = answerText(out.ask.turn.ask, out.ask.turn.ask.options[1]);
 out.wire = wireMessages(
@@ -515,6 +534,34 @@ def client_checks(data: dict) -> None:
         data["deadPlan"] == "answer",
     )
 
+    # ⭐ THE ONE THAT SHIPPED A LIE. Every step below is VALID — nothing is
+    # dropped, nothing is malformed — and the plan still changes nothing, because
+    # `note` is `run: () => {}`. The old test was `steps.length`, which a note
+    # passes, so the panel drew "0 edits · Apply 0 edits · Nothing has changed
+    # yet" under "I've added a cinematic, storytelling music bed".
+    note_only = data["noteOnly"]
+    check(
+        "⭐ A PLAN OF NOTHING BUT NOTES IS AN ANSWER — no Apply button over zero edits",
+        note_only["turn"]["kind"] == "answer", str(note_only["turn"]),
+    )
+    check(
+        "…and it says WHY on screen, rather than becoming a chat bubble quietly",
+        any("note" in (d.get("why") or "") for d in note_only["drops"]),
+        str(note_only["drops"]),
+    )
+    check(
+        "…but the same notes WITH the sound they should have carried are a plan",
+        data["noteWithSound"]["turn"]["kind"] == "plan"
+        and (data["noteWithSound"]["turn"].get("sound") or {}).get("music"),
+        str(data["noteWithSound"]["turn"]),
+    )
+    check(
+        "…and a note BESIDE a real edit survives — that is what the verb is for",
+        data["noteWithEdit"]["turn"]["kind"] == "plan"
+        and len(data["noteWithEdit"]["turn"]["plan"]["steps"]) == 2,
+        str(data["noteWithEdit"]["turn"].get("plan")),
+    )
+
     print("\n   the helpers\n")
     check(
         "a clicked option carries its question into the transcript",
@@ -773,6 +820,43 @@ def server_checks() -> None:
     check("an empty block is None, not an empty plan",
           agent._coerce_sound({"sfx": [], "music": {}}) is None)
     check("garbage is None", agent._coerce_sound(None) is None)
+
+    # ⭐ AND THE SERVER REFUSES A NOTE-ONLY PLAN TOO, INDEPENDENTLY. The client
+    # states this rule in `chat_turn.js`'s own header and still shipped it broken;
+    # `kind` and the log are decided HERE, so a turn that moves nothing must not
+    # be called a plan on this side either. Same split as `_coerce_ask` /
+    # `normaliseAsk` — neither side may assume the other did it.
+    vocab = {"verbs": [
+        {"id": "note", "args": ["text"]},
+        {"id": "add_transition", "args": ["cut", "kind", "duration_ms"]},
+    ]}
+    note_only = agent._read_turn({
+        "kind": "plan",
+        "reply": "I've added a cinematic, storytelling music bed.",
+        "plan": {"steps": [{"verb": "note", "args": {"text": "Adding music."}}]},
+    }, vocab, shot_count=4)
+    check("⭐ A NOTE-ONLY PLAN IS AN ANSWER ON THE SERVER SIDE AS WELL",
+          note_only["kind"] == "answer", str(note_only))
+    check("…and the notes are REPORTED as dropped, not swallowed",
+          any("note" in (d.get("why") or "") for d in note_only["dropped"]),
+          str(note_only["dropped"]))
+    with_sound = agent._read_turn({
+        "kind": "plan", "reply": "I'll put a bed under it.",
+        "plan": {"steps": [{"verb": "note", "args": {"text": "A bed."}}]},
+        "sound": {"music": {"query": "soft sitar"}},
+    }, vocab, shot_count=4)
+    check("…but the same notes WITH sound are still a plan",
+          with_sound["kind"] == "plan" and with_sound["sound"], str(with_sound))
+    with_edit = agent._read_turn({
+        "kind": "plan", "reply": "Softening the cuts.",
+        "plan": {"steps": [
+            {"verb": "note", "args": {"text": "Three scenes."}},
+            {"verb": "add_transition", "args": {"cut": 1, "kind": "dissolve"}},
+        ]},
+    }, vocab, shot_count=4)
+    check("…and a note beside a real edit is kept, both of them",
+          with_edit["kind"] == "plan" and len(with_edit["plan"]["steps"]) == 2,
+          str(with_edit.get("plan")))
     check("the reply schema offers a sound block",
           "sound" in agent.reply_schema({"verbs": []})["properties"])
 

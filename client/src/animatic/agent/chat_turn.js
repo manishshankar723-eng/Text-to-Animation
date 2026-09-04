@@ -467,7 +467,23 @@ function readTurn(raw, caps, ctx) {
             : `${d?.verb ? `${d.verb}: ` : ""}${d?.why || "dropped"}`,
       });
     }
-    if ((plan && (plan.steps || []).length) || sound) {
+    // ⚠ A NOTE IS NOT AN EDIT, so a plan of nothing but notes is not a plan.
+    // The header of this file already says an Apply button over zero edits is
+    // the worst lie this panel can tell — and this test counted STEPS, which a
+    // `note` passes. `note` is `run: () => {}` in the registry: it moves
+    // nothing, by design, so that a real plan can explain itself.
+    //
+    // ⚠ SEEN LIVE, 2026-09-05. "add music and sound effects in this storyboard
+    // story wise" came back as ONE note and no sound, under the reply "I've
+    // added a cinematic, storytelling music bed and placed sound effects on key
+    // shots" — and the panel drew "0 edits · Apply 0 edits · Nothing has changed
+    // yet". `EditorChat.jsx` already knew the difference (it counts
+    // `verb !== "note"` for the button's own label); this line did not.
+    //
+    // ⚠ THE SERVER DOES THIS TOO and neither side may assume the other did —
+    // same split as `_coerce_ask` / `normaliseAsk`.
+    const edits = (plan?.steps || []).filter((s) => s && s.verb !== "note");
+    if (edits.length || sound) {
       return {
         turn: {
           kind: "plan",
@@ -487,7 +503,17 @@ function readTurn(raw, caps, ctx) {
     }
     // Every step went. Fall through: whatever prose came with it is the honest
     // answer, and the drops explain themselves underneath.
-    drops.push({ what: "plan", why: "No usable edits were left in the plan." });
+    // ⚠ TWO DIFFERENT FAILURES, TWO DIFFERENT SENTENCES. "every step was
+    // refused by this project" and "the model wrote prose where an edit
+    // belonged" need different things from the reader — the first is worth
+    // rephrasing, the second is worth asking again for the actual edit.
+    drops.push({
+      what: "plan",
+      why: (plan?.steps || []).length
+        ? "The plan was nothing but notes — no edit and no sound in it, so " +
+          "there was nothing to apply."
+        : "No usable edits were left in the plan.",
+    });
     return {
       turn: {
         kind: "answer",

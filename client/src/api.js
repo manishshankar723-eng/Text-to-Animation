@@ -326,17 +326,28 @@ const REQUEST_TIMEOUT_MS = 120000;
 const PLAN_TIMEOUT_MS = 300000;
 // ✨ ONE CHAT TURN. ⚠ DELIBERATELY MUCH SHORTER THAN THE DIRECTOR'S FIVE
 // MINUTES: a plan is two calls over a whole board and people expect to wait for
-// it, while a chat message that has not answered inside a minute and a half
+// it, while a chat message that has not answered inside a couple of minutes
 // reads as broken however healthy the call is. Mirrors `API_CHAT_TURN_TIMEOUT_S`.
 //
 // ⚠ AND THE SERVER NOW GIVES UP FIRST, which it did not used to. The chat call
 // shared the Director's 135s budget while this line said 90, so a turn that was
 // slower than 90s ALWAYS died here — the tab aborted a request the server was
 // still correctly serving, the turn was billed and counted, and the user was
-// told a database might be stuck. The model call stops at 70s
+// told a database might be stuck. The model call stops first
 // (`CAPABILITY_BUDGET_SECONDS` in `llm_json.py`) and answers with a real reason;
 // this is the outer net for a connection that dies without either side noticing.
-const CHAT_TURN_TIMEOUT_MS = 90000;
+//
+// ⚠ THIS WENT 90 → 150 WITH THE SERVER'S 70 → 120, AND THE TWO MOVE TOGETHER OR
+// NOT AT ALL. 90 was not slack the server had spare: the expensive turns are
+// real work — a look at the board is 27–35s measured, a malformed answer buys a
+// second paid call inside the same attempt, and "add music and sound effects
+// story wise" on a fourteen-shot board is a long answer on top of both. That
+// exact sentence is what timed out at 70s, live, with a screenshot. The order is
+// asserted by `tests/director_timeout_check.py`, which reads all three numbers
+// out of their own files:
+//
+//     llm_json 120s  <  API_CHAT_TURN_TIMEOUT_S 150s  ==  this 150000
+const CHAT_TURN_TIMEOUT_MS = 150000;
 
 /**
  * THE CALLER STOPPED WAITING. ⚠ A FLAG, NOT A STRING MATCH, for the same reason
