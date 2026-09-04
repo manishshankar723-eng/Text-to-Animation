@@ -4,11 +4,5 @@
     "period": "2026-08",
     "projects": 22,
     "updated_at": "2026-08-29T20:55:40.604636+00:00"
-  },
-  "pw@example.com|2026-09": {
-    "email": "pw@example.com",
-    "period": "2026-09",
-    "projects": 2,
-    "updated_at": "2026-09-03T20:12:23.334486+00:00"
   }
 }

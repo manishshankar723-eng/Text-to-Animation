@@ -1074,6 +1074,14 @@ class PanelSequenceInfo(BaseModel):
     # every drawing and kept here so a later single-pose redraw is fenced by the
     # same rule the rest of the shot was drawn under.
     hold: str = ""
+    # ⚠ WHY THERE IS NO SEQUENCE, when there is none. Empty means "this clip has
+    # a board and these are its poses"; filled means "this clip is not a board
+    # panel at all" (an upload, a video clip, a colour card) or its board has
+    # gone. Same field, same wording and the same reason as
+    # `AnimaticPanelSource.reason` — the pane reads it instead of the route
+    # answering 400 to a question every selected clip asks. See
+    # `get_frame_sequence`.
+    reason: str = ""
 
 
 class RestyleRequest(BaseModel):

@@ -308,7 +308,11 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-09-04 — **THE SAME QUESTION ASKED OF EVERY WORKFLOW, AGAINST THE LIVE DATABASE.** *"mai chahta hun ki mera aur v workflow mai aisa kuchh to nhi hai check karo please, hai to thik kar do"*. A read-only sweep of every job kind for rows nobody ever put anything into: **animatic — the 4 reported ones; storyboard — 0; final video — 0; plan — 0; character — 0**. ⚠ **THE ONE THAT LOOKED LIKE A FIFTH WAS REAL WORK.** An *"Untitled plan"* with no messages and no calendar is holding a **written script** and the tokens it cost — my first, cruder emptiness test called it a ghost. That is the whole lesson of this pass: **test against everything the workflow can hold, not the fields you happen to remember**, because the price of being wrong is deleting somebody's work. ⚠ **THE PLAN LIST GOT THE GUARD ANYWAY**, since a create followed by a failed first message still leaves a record — but it **waits ten minutes** before hiding, because that list is refreshed in the same action that creates the session, while the first model turn is still in flight. ⚠ **Script → Storyboard and Animatics → Final Video need nothing** — the first only writes a draft once there are shots and only autosaves changed text, the second has no blank-create tile at all. ⚠ **AND THE EDITOR'S FIX IS NOW PROVED IN A REAL BROWSER**: `tests/e2e_animatic.py` says *opening the editor creates NOTHING yet [0 vs 0]* and *naming it is what creates the project [1 vs 0]*. Four stale selectors in that suite were repaired to get there (the workflow's rename, the one-section library, the ← button, Delete moving into the ⚙ menu, the Add control now taking video); **it is still stale from section 6 onwards** — `.tl-bar` and `.fs-dur-input` are the old FrameStrip's, replaced by the NLE timeline. New **RULEBOOK E119**, new `tests/ghost_rows_check.py`. See the Work Log.
+**Last updated:** 2026-09-04 — **THE DURATION HINT WAS PROMISING A RIPPLE THE BOX HAS NOT DONE SINCE CLIPS GOT TRACKS.** Found while repairing the browser suite, put to the user as "tooltip badlein ya behaviour" — *"okay option A kar do achhe se"*. ⚠ **THE BOX WAS RIGHT.** Typing 5s into the middle of three 2s clips makes the film **0:07, not 0:09**: a clip sits at its own `start_ms` on a numbered track, so it grows and nothing else budges — exactly what the timeline's DEFAULT trim (V) does, *"the only one that never touches a clip you were not pointing at"*. Making the box ripple would have made it the one control in the editor that behaves unlike the default tool. So the sentence changed, and it now NAMES the Ripple tool (B) rather than promising behaviour: somebody who wants the old effect knows it is one keypress away. ⚠ **THE SAME STALE CLAIM HAD SPREAD TO TWO MORE FILES** — `chat_turn.js` and `useEditorChat.js` both justified "sound runs after the steps" with *"`set_shot_duration` moves every moment after it"*, and the chat's verb calls the very same `patchFrame`. The ordering rule survives (an inserted shot ripples its row; re-timing moves that shot's own end); the reason was corrected in both. ⚠ **THE VEO / GENERATED-SHOT PATH IS UNTOUCHED AND WAS PROVED SO BEFORE ANYTHING CHANGED** — it still carries captions, text, shapes, images and the voiceover along with the pictures (`renderShifts` + `RIPPLED_LISTS`), which is what the user actually asked about; `tests/timeline_ripple_check.py` and `tests/veo_ripple_check.py` were run green to answer that question. New **RULEBOOK E121**, and the tooltip is pinned by `tests/e2e_animatic.py` §7 (**ALL PASSED**). See the Work Log.
+
+**Previously:** 2026-09-04 — **`tests/e2e_animatic.py` IS GREEN END TO END FOR THE FIRST TIME — 118 CHECKS, TWICE IN A ROW.** It had been stale since the NLE timeline replaced the frame strip, and a stale suite is worse than no suite: it dies in the middle, so nobody runs it, so nothing after the crash is covered at all. ⚠ **WHAT WAS STALE**: the workflow's rename, the library's one section, the ← button (an arrow with its name on the tooltip — 30s of timeout per run), Delete moving into the ⚙ menu, the Add control taking video, `.fs-card` now meaning a MEDIA BIN card, `.fs-dur-input` belonging to a strip that is not rendered at all, and the monitor being a **WebGL canvas** whose `<img>`s are hidden texture sources. ⚠ **AND THREE CHECKS WERE ASKING FOR THE OLD BEHAVIOUR, NOT A NEW BUG**: the Media pane's ＋ puts stills on the IMAGES lane now (a picture goes into the cut through a picture row's own ＋ — new §6b); lengthening a clip does NOT move the ones after it (clips are placed by `start_ms` on a track, so the film ends at 0:07, not 0:09); and `.an-vol` is a slider LOOK the audio pane draws five of. ⚠ **THE SUITE THEN FOUND TWO REAL FAULTS.** (1) The Properties pane fired two requests per selection that could only 400 for an upload or a colour card — the panes are no longer mounted for a clip that names no board (`isBoardShot`), and `get_frame_sequence` now answers **200 with a reason** like its sibling `get_frame_panel` already did. (2) The suite was spending a `projects` quota slot per run under a FIXED test address, into the repo's own `.local_usage.json` — so the third run of any month met **402 Payment Required** and read as a broken editor. Fresh account per run, and every local store now has a temp path in the documented command. ⚠ **AND §4c's "dead space under the timeline" WAS MEASURING FURNITURE** — the status strip is permanent (E109), so the workspace ends there, not at the timeline: 14px top and 14px bottom. New **RULEBOOK E120, G18**. See the Work Log.
+
+**Previously:** 2026-09-04 — **THE SAME QUESTION ASKED OF EVERY WORKFLOW, AGAINST THE LIVE DATABASE.** *"mai chahta hun ki mera aur v workflow mai aisa kuchh to nhi hai check karo please, hai to thik kar do"*. A read-only sweep of every job kind for rows nobody ever put anything into: **animatic — the 4 reported ones; storyboard — 0; final video — 0; plan — 0; character — 0**. ⚠ **THE ONE THAT LOOKED LIKE A FIFTH WAS REAL WORK.** An *"Untitled plan"* with no messages and no calendar is holding a **written script** and the tokens it cost — my first, cruder emptiness test called it a ghost. That is the whole lesson of this pass: **test against everything the workflow can hold, not the fields you happen to remember**, because the price of being wrong is deleting somebody's work. ⚠ **THE PLAN LIST GOT THE GUARD ANYWAY**, since a create followed by a failed first message still leaves a record — but it **waits ten minutes** before hiding, because that list is refreshed in the same action that creates the session, while the first model turn is still in flight. ⚠ **Script → Storyboard and Animatics → Final Video need nothing** — the first only writes a draft once there are shots and only autosaves changed text, the second has no blank-create tile at all. ⚠ **AND THE EDITOR'S FIX IS NOW PROVED IN A REAL BROWSER**: `tests/e2e_animatic.py` says *opening the editor creates NOTHING yet [0 vs 0]* and *naming it is what creates the project [1 vs 0]*. Four stale selectors in that suite were repaired to get there (the workflow's rename, the one-section library, the ← button, Delete moving into the ⚙ menu, the Add control now taking video); **it is still stale from section 6 onwards** — `.tl-bar` and `.fs-dur-input` are the old FrameStrip's, replaced by the NLE timeline. New **RULEBOOK E119**, new `tests/ghost_rows_check.py`. See the Work Log.
 
 **Previously:** 2026-09-04 — **A PROJECT IS NOT CREATED UNTIL YOU DO SOMETHING IN IT.** *"mai ye project mai kuchh nhi kiya magar ye yaha pe dikhte hai … user kuchh kare to hi project banao"*, with a screenshot of four empty *Untitled Project* rows. ⚠ **NEW PROJECT USED TO CREATE THE PROJECT ON THE WAY IN** and rely on the editor deleting it again on the way OUT — and that discard runs on exactly ONE of the four exits (the ← button). The sidebar, a refresh and a closed tab each left a row behind, **and each had already spent a slot of the account's `projects` quota** on a project holding nothing. ⚠ **SO THE EDITOR OPENS ON NOTHING NOW.** `NEW_DRAFT` means *a project that does not exist yet*: `animaticId` is `null`, `useAnimaticProject` loads nothing and takes the empty document as its own saved baseline, and `ensureProject()` mints the real project at the first thing that needs a server — an upload, a board or project-file import, a Freesound add, a ✨ draw, a chat turn, a Save-as, or the first autosave of any other edit. Do nothing and go back and **nothing was ever made**. ⚠ **THE TRAP IS THE STALE CLOSURE, NOT THE CREATE**: every url built after the create has to use the id it RETURNED (or `idRef.current`), never the `animaticId` captured before it — `/animatics/null/media/…` 404s once and the media fetch never retries, which is the same fault that once made an imported board forty-two black tiles. ⚠ **AND A DRAFT NEVER RE-READS ITSELF** when its id appears mid-session, or the frames that created the project would be replaced by the empty project the server was just handed. ⚠ **THE SERVER HIDES THE OLD ONES TOO** — the four rows in the screenshot are already in the database and older builds can still make them: `list_animatics` skips a project that is empty AND never named, and sweeps one older than a day off disk. ⚠ **THE EMPTINESS TEST MUST NOT NAME A `SUMMARY_DROP` FIELD** — `params.overlays` is dropped on that route, so a project whose only content is a picture on an Images lane reads as empty; `size_bytes == 0` is what keeps it. New **RULEBOOK E118**. `npm run build` green. ⚠ **NOT SEEN IN THE RUNNING APP** (G2/G7 — no browser suite was run). See the Work Log.
 
@@ -3641,7 +3645,167 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-09-04 (latest) — THE SAME QUESTION, ASKED OF EVERY WORKFLOW
+### 2026-09-04 (latest) — THE HINT PROMISED A RIPPLE; THE BOX HAD NOT DONE ONE FOR MONTHS
+
+    "okay option A kar do achhe se"
+
+Raised at the end of the browser-suite repair, explained in full, and decided by
+the user: change the wording, not the behaviour.
+
+**WHAT WAS WRONG.** The Properties pane's Duration row carried
+
+    "How much of the TIMELINE this clip occupies — everything after it moves"
+
+That was true while the picture was one butt-jointed sequence, where a hold WAS
+the running total. It stopped being true the day a clip got its own `start_ms`
+on a numbered track. Three 2s clips, type 5 into the middle one:
+
+    before   [ 1 ][ 2 ][ 3 ]              film 0:06
+    after    [ 1 ][ 2 · · · · ]           film 0:07
+                  [ 3 ]  <- did not move, now overlapped
+
+**WHY THE WORDING LOST AND NOT THE BEHAVIOUR.** The box does exactly what the
+timeline's DEFAULT trim (V) does — "the only one that never touches a clip you
+were not pointing at" (`Timeline.jsx`, the three tools). Ripple is tool B, by
+choice, because the old always-ripple was reported as moving clips nobody
+pointed at. Making the BOX ripple would have made it the single control in the
+editor that behaves unlike the default tool, and the surprise would land on
+somebody typing a number, which is the least gestural thing in the app. So the
+hint names the tool instead: anybody who wants the old effect is one keypress
+away and now knows it.
+
+⚠ **THE SAME SENTENCE HAD SPREAD TO TWO MORE FILES**, and grepping for it is the
+part worth copying. `chat_turn.js` and `useEditorChat.js` both justified "the
+sound pass runs after the steps" with *"`set_shot_duration` moves every moment
+after it"* — and that verb calls the very same `patchFrame` the box does, so the
+chat does not ripple either. The RULE is still right and stays; its REASON was
+corrected in both places: a cue lands on a moment, an inserted shot ripples its
+row, and re-timing a shot moves that shot's own end.
+
+⚠ **THE QUESTION THE USER ASKED FIRST, AND IT WAS THE RIGHT ONE**: *"agar
+tooltip theek karein to Veo / caption / voiceover wala khiskna pehle jaisa hi
+rahega na?"* Yes — and it was checked before a line was changed, not asserted.
+That is a different road entirely: `spreadPanelsForRenders` → `renderShifts` →
+`rippleFrames` / `rippleClips` / `rippleAudio` / `coverGrownShots`, the fix built
+for *"my caption and voiver over not move so both still"*. Both of its suites
+were run green to answer the question: `tests/timeline_ripple_check.py` and
+`tests/veo_ripple_check.py`.
+
+**AND THE HINT IS PINNED NOW.** `tests/e2e_animatic.py` §7 reads the tooltip a
+person actually sees and fails if it promises a ripple again — the only check in
+the repo that reads a `title` attribute, added because a comment saying "keep
+this accurate" is exactly what did not survive last time.
+
+**Files:** `client/src/components/properties/FrameProperties.jsx` (the hint),
+`client/src/animatic/agent/chat_turn.js`,
+`client/src/animatic/agent/useEditorChat.js` (the same claim, corrected),
+`tests/e2e_animatic.py` (§7 pins it).
+
+**Verified:** `tests/e2e_animatic.py` **ALL PASSED** (the new §7 check reads back
+the real tooltip); `tests/timeline_ripple_check.py`, `tests/veo_ripple_check.py`,
+`tests/editor_chat_check.py`, `tests/editor_chat_doors_check.py` green;
+`npm run build` green.
+
+New **RULEBOOK E121**.
+
+---
+
+### 2026-09-04 — THE BROWSER SUITE IS GREEN END TO END, AND IT FOUND TWO REAL BUGS ON THE WAY
+
+    "fix open issue"  (the REMAINING list from the last turn)
+
+Two items were owed: `tests/e2e_animatic.py` had been stale from section 6
+onwards, and its "no dead space under the timeline" check was failing. Both are
+done, and the suite now passes **every check, twice in a row**.
+
+**WHY A STALE SUITE IS WORSE THAN NO SUITE.** It does not fail, it *dies* — a
+missing selector throws, the run stops there, and everything after it is
+uncovered while still looking like it is tested. This one had been dying at
+section 6 since the NLE timeline replaced the frame strip.
+
+**WHAT WAS STALE** (all pre-existing, none of it a regression):
+
+- `.fs-card` is the MEDIA BIN's card now, so "3 frame cards" counted 4 — three
+  stills and the sound, which is correct.
+- `.fs-dur-input` belongs to `FrameStrip.jsx`, which **is not rendered
+  anywhere** (only its `sortFiles` is imported). A clip's length lives on the
+  Duration row of the Properties pane, which follows the selection.
+- The monitor is a **WebGL canvas** (`ProgramCanvas.jsx`); `.an-screen img`
+  matches the hidden TEXTURE SOURCES, and with two live it also trips
+  Playwright's strict mode.
+- "Frame shape" is the row labelled "Shape"; `.an-media-name` today belongs to
+  SHAPE clips, not to media cards (`.fs-label`).
+- `.an-prop-kind` is `text-transform: uppercase`, and `inner_text()` returns the
+  RENDERED text — so "Colour card" could only ever fail as a case-sensitive
+  match. Nothing was wrong with the editor.
+
+**THREE CHECKS WERE ASKING FOR BEHAVIOUR THAT WAS DELIBERATELY CHANGED**, which
+is the more interesting half:
+
+- The Media pane's ＋ names no row, so `addAssets` treats stills as OVERLAYS and
+  puts them on the Images lane — "when user uplaod media or layer so image shoul
+  come in image layer not sitll layer". Pictures go INTO the cut through a
+  picture row's own ＋, which is now its own section (§6b, driven through
+  Playwright's file-chooser event because that picker's `accept` is written at
+  the moment the row is pressed).
+- Typing 5s into a clip's Duration makes the film **0:07, not 0:09**: clips are
+  placed by `start_ms` on a track now, so the ones after it do not move and the
+  film ends when the longest clip does. ⚠ The Duration row's own tooltip still
+  promises "everything after it moves" — the timeline's trim gestures ripple,
+  this box does not. Asserted as it behaves, and flagged in the test.
+- `.an-vol` is a slider LOOK: the audio pane draws five (level, duck-to, three
+  EQ bands). The check asks for the row named Volume instead.
+
+**THEN IT FOUND TWO REAL FAULTS** — which is the whole argument for repairing a
+suite rather than deleting it.
+
+⚠ **(1) TWO REQUESTS PER SELECTION THAT COULD ONLY FAIL.**
+`RegeneratePanelInline` and `RelengthShotInline` sit under a comment saying they
+render nothing unless the clip comes from a board panel — and they nearly did:
+both return `null` once the answer arrives. But each ASKED FIRST, so selecting an
+upload, a video clip or a colour card fired `GET .../panel` and
+`GET .../sequence`, which 400'd, were swallowed by `.catch(() => {})`, and left
+red failed requests in the console on every single click. Both are now gated on
+`isBoardShot` (one definition, already written for the voiceover pass, and the
+same test the server's `_board_behind` starts with) so they are not mounted at
+all; the server stays the authority on whether the board still EXISTS. And
+`get_frame_sequence` was wrong measured against its own sibling —
+`get_frame_panel` answers **200 with a `reason`** for exactly this case, "so the
+pane never renders a button that is going to 400" — so it carries the reason now
+too, because a caller still has to tell "no board" from "a board with nothing
+drawn yet".
+
+⚠ **(2) THE SUITE WAS SPENDING A QUOTA SLOT PER RUN, INTO THE REPO.** It looked
+isolated — memory job store, temp users file, its own ports — but the counter
+went to the repo's own `.local_usage.json`, under the fixed address
+`pw@example.com`. The third run of any month then meets **402 Payment Required**
+on `POST /animatics`: Save-as silently does nothing, the top bar says "⚠ Not
+saved", and the run dies thirty seconds later somewhere else entirely. It reads
+exactly like a broken editor. The address is minted per run now, every local
+store has a temp path in the documented command, and the committed
+`pw@example.com` row is removed.
+
+**AND THE DEAD SPACE WAS FURNITURE.** §4c measured from the bottom of the
+timeline; the status strip has been permanent since **E109**, so the workspace
+ends there. 46px of "dead space" was the strip. Measured to the real last row:
+14px above, 14px below, symmetric.
+
+**Files:** `tests/e2e_animatic.py` (§4c, §5, §6, new §6b, §7, §8b, §9, §11b, the
+per-run account, the documented command), `server/animatics.py`
+(`get_frame_sequence` answers 200 with a reason), `server/schemas.py`
+(`PanelSequenceInfo.reason`), `client/src/components/AnimaticEditor.jsx` (the
+`board` slot is not mounted for a clip that names no board).
+
+**Verified:** `tests/e2e_animatic.py` **ALL PASSED**, run twice;
+`tests/animate_guard_check.py`, `tests/editor_board_import_check.py`,
+`tests/ghost_rows_check.py`, `tests/summary_projection_check.py` green;
+`npm run build` green.
+
+New **RULEBOOK E120, G18**.
+
+---
+
+### 2026-09-04 — THE SAME QUESTION, ASKED OF EVERY WORKFLOW
 
     "mai chahta hun ki mera aur v workflow mai aisa kuchh to nhi hai check karo
      please hai to thik kar do"

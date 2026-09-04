@@ -184,6 +184,10 @@ import useEditorChat from "../animatic/agent/useEditorChat.js";
 // ⚠ ONE ARITHMETIC FOR THE 🖼 PRICE, shared with the Director's own preview so
 // the 🖼 dialog and the 🎬 tick box can never quote one pass at two numbers.
 import { poseTally } from "../animatic/agent/poses_pass.js";
+// "Does this clip's picture come from a storyboard?" — ONE definition, already
+// written for the voiceover pass, reused here so the Properties pane and the
+// server cannot disagree about what a board shot is.
+import { isBoardShot } from "../animatic/agent/voice_pass.js";
 import { fitTakeToHold, shotRow } from "../animatic/agent/veo_pass.js";
 // ⚠ ONLY THE TWO LANE NAMES. Every number in `sound_pass.js` — the levels, the
 // fades, the loop ceiling — is decided there and arrives ON the clips, because the
@@ -11521,7 +11525,18 @@ export default function AnimaticEditor({
                 // BACK TO THE STORYBOARD, from the pane you are already in.
                 // Both render nothing unless this clip's picture comes from a
                 // board panel, so an animatic built from uploads is unchanged.
+                /* ⚠ NOT MOUNTED AT ALL FOR A CLIP THAT NAMES NO BOARD, which
+                   is what the note above always said they did — and they very
+                   nearly did: both render `null` once the answer comes back.
+                   But each one ASKED FIRST, so selecting an upload, a video clip
+                   or a colour card fired two requests that could only fail, on
+                   every single selection, and left red 400s (now 404s, for a
+                   clip the autosave has not written yet) in the console.
+                   `isBoardShot` is the same test the server's `_board_behind`
+                   makes; the server stays the authority on whether the board is
+                   still THERE. */
                 board={
+                  !isBoardShot(selectedFrame) ? null : (
                   <>
                     <RegeneratePanelInline
                       animaticId={animaticId}
@@ -11537,6 +11552,7 @@ export default function AnimaticEditor({
                       onRelength={(seconds) => relengthShot(selectedFrame.id, seconds)}
                     />
                   </>
+                  )
                 }
                 onChange={patchInspected}
                 onDuplicate={duplicateFrame}

@@ -298,7 +298,14 @@ function normaliseAsk(raw, drops) {
  * a round trip to a stock library. So a turn carries its sound BESIDE its steps,
  * and the runner does the fetching after the steps have finished moving the shots
  * the cues land on. That ordering is not a convenience: a cue lands on a MOMENT,
- * and `set_shot_duration` moves every moment after it.
+ * and the steps move moments — an inserted shot ripples its whole row, and
+ * re-timing a shot moves that shot's own end.
+ *
+ * ⚠ `set_shot_duration` DOES NOT MOVE THE CLIPS AFTER IT, and this comment used
+ * to say it did. It writes one clip's `duration_ms` through `patchFrame`, the
+ * same call the Properties pane's Duration box makes, and a clip has sat at its
+ * own `start_ms` on a numbered track since long before this file was written.
+ * The ordering rule above survives that correction; the reason for it did not.
  *
  * ⚠ **A CUE FOR A SHOT THAT DOES NOT EXIST IS DROPPED, LOUDLY.** Same rule as a
  * step: what survives is exactly what will be fetched, and what did not is on

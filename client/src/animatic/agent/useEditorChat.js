@@ -203,8 +203,11 @@ export default function useEditorChat({
   // ⚠ THE SOUND PASS IS NOT A VERB AND CANNOT BE ONE — every verb is
   // synchronous, and finding a sound is a round trip to a stock library. So it
   // runs AFTER the steps, which is also the only correct order: a cue lands on a
-  // moment, and `set_shot_duration` moves every moment after it. Same reasoning,
-  // same order, as the Director's phases D and E.
+  // moment, and the steps move moments — an inserted shot ripples its row, and
+  // re-timing a shot moves that shot's own end. (⚠ NOT "everything after it":
+  // `set_shot_duration` leaves the clips after it exactly where they are — see
+  // the note in `chat_turn.js`.) Same reasoning, same order, as the Director's
+  // phases D and E.
   buildSoundtrack,
   placeSoundtrack,
   openPaidDoor,

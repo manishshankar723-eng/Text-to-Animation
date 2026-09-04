@@ -118,9 +118,25 @@ export default function FrameProperties({
           />
         </PropRow>
 
+        {/* ⚠ THE TOOLTIP SAID "everything after it moves" AND THAT STOPPED BEING
+            TRUE WHEN CLIPS GOT TRACKS. It was written while the picture was one
+            butt-jointed sequence, where a hold WAS the running total; a clip is
+            placed by its own `start_ms` on a numbered track now, so lengthening
+            one leaves every other clip exactly where it was put — the same thing
+            the timeline's DEFAULT trim (V) does, and deliberately so: "the only
+            one that never touches a clip you were not pointing at" (see the
+            three tools in `Timeline.jsx`). The box was behaving correctly and
+            the sentence was describing the RIPPLE tool.
+            ⚠ SO IT NAMES THE TOOL INSTEAD OF PROMISING THE BEHAVIOUR. Somebody
+            who wanted the old ripple has one keypress away, and now knows it.
+            ⚠ THIS IS NOT THE VEO / GENERATED-SHOT PATH, which does still carry
+            the whole film — captions, text, shapes, images and the voiceover —
+            along with the pictures. That is `renderShifts` + `RIPPLED_LISTS` in
+            `ripple.js`, a different road entirely, pinned by
+            `tests/timeline_ripple_check.py` and `tests/veo_ripple_check.py`. */}
         <PropRow
           label="Duration"
-          title="How much of the TIMELINE this clip occupies — everything after it moves"
+          title="How long this clip holds on the timeline. The clips after it stay where they are — to close the gap instead, trim its edge with the Ripple tool (B)."
           reset={() => onChange(frame.id, { duration_ms: DEFAULT_HOLD_MS })}
           changed={frame.duration_ms !== DEFAULT_HOLD_MS}
           resetTo={`${DEFAULT_HOLD_MS / 1000}s`}

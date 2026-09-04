@@ -5460,12 +5460,24 @@ def get_frame_sequence(
 
     What the editor reads after a re-block finishes, to find out how many pose
     frames the shot now has and rebuild that run on the timeline.
+
+    ⚠ A CLIP WITH NO BOARD BEHIND IT IS AN ANSWER, NOT AN ERROR — the same rule
+    `get_frame_panel` above already follows, and this route was the one place
+    that broke it. `RelengthShotInline` asks this for EVERY clip the user
+    selects, because "has this shot got key poses?" is exactly what it needs to
+    know before it draws anything; on an upload, a video clip or a colour card
+    the 400 came back, was swallowed, and left a red failed request in the
+    console on every single selection. Reported by `tests/e2e_animatic.py` §14,
+    which fails the run on a console error and had no other way to see it.
+    ⚠ THE REASON IS CARRIED, NOT DROPPED, so a caller can still tell "no board"
+    apart from "a board with nothing drawn yet" — that distinction is the whole
+    argument for a 200 over an empty 404.
     """
     job = _get_owned_animatic(job_id, current)
     frame = _frame_or_404(job, frame_id)
     board, reason = _board_behind(job, frame)
     if board is None:
-        raise HTTPException(status_code=400, detail=reason)
+        return PanelSequenceInfo(index=0, reason=reason)
     return PanelSequenceInfo(**sequence_summary(board, int(frame.src.index or 0)))
 
 
