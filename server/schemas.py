@@ -3780,6 +3780,14 @@ class EditorChatConfig(BaseModel):
 
     enabled: bool = True
     dock: str = "right"
+    # How solid the panel is drawn, 40–100. ⚠ A PERCENTAGE, NOT A FRACTION — it
+    # goes straight into a CSS custom property the stylesheet multiplies by 1%,
+    # and a 0.6 arriving where 60 was expected is a panel nobody can see.
+    opacity: int = 100
+    # How far the film underneath is blurred, in px, 0–40. ⚠ ONLY APPLIED WHEN
+    # `opacity` is below 100 — a solid panel has nothing behind it to blur, and
+    # `backdrop-filter` is a per-frame cost over a playing timeline.
+    blur: int = 0
     greeting: str = ""
     max_turns_per_session: int = 0
     transcript_keep: int = 20

@@ -308,7 +308,19 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-09-03 — **THE CHAT CAN OFFER PAID WORK, AND IT CAN ASK TO SEE.** *"Chat ke andar price wala button abhi nahi hai … isko karo abhi"* and *"Chat tasveer dekh nahi sakti … isko v karo"*. ⚠ **(1) PAID WORK IS AN OFFER, WITH A REAL BUTTON.** A turn may carry up to two of `voiceover` / `captions` / `veo` / `images` in `passes`, and the panel draws a button per offer that opens the confirm dialog ✨ Animate / 🎙 Voiceover / 💬 Write captions / 🖼 Animatic images already use. ⚠ **`captions` IS A SEPARATE DOOR FROM THE VOICEOVER** — it reads audio the person recorded THEMSELVES and adds no voice, which is the actual request when somebody imports their own video; it was missed on the first pass because the voiceover writes captions too. ⚠ **AND A DOOR CALLS THE FUNCTION THE HAND-DRIVEN BUTTON CALLS, NEVER THE STATE SETTER** — this shipped as `setSpeechFor("voiceover")`, which skips `openVoiceover()`'s flush and dialogue-sheet fetch, so the chat's door would have opened an empty script under a stale price. Caught by writing the check, not by seeing it. ⚠ **NO PRICE IS COMPUTED IN THE CHAT AND NONE EVER MAY BE** — a figure worked out on the client, off the board the browser happens to be holding, next to a door that asks the server for the real one, is two answers about somebody's money; the door quotes and the chat points. An offer is not an edit, draws no Apply button, and (unlike a plan) survives a refresh, because it prices the film as it is *now*. ⚠ **(2) THE CHAT COULD NOT SEE, AND NOW IT CAN ASK TO.** A turn may come back as `kind: "look"` naming the fewest shots that could settle the question; the browser re-posts the SAME message with those stills attached at 512px, through the `?w=` proxy the monitor already uses. Nothing is sent until the model says it needs to see — automatic vision would make "how long is this?" the most expensive question in the product — and **one look per message is enforced in code**, not just asked for in the prompt. ⚠ **(3) AND THE LOOK EXPOSED A REAL TRAP, MEASURED NOT GUESSED**: the full 9.8KB system instruction *with images attached* took **149s and then failed**, twice; the same pictures, prompt and schema under a two-line system answered in **7.5s**. Bisected — images alone fast, big schema + images fast, long system alone fast, long system + images dead. So on a look the rules **move into the prompt** and `LOOK_SYSTEM` takes their place; nothing is trimmed, because a shorter rulebook would quietly plan worse. New **RULEBOOK E110, E111, E112**, new `tests/editor_chat_doors_check.py` (61 checks, no model). 17 suites green + `npm run build`. ⚠ **THE LOOK'S OWN LIVE RUN IS STILL OWED** — call 1 was proved live (it asked to look, in Hinglish) and the free Gemini tier is **20 requests a day**, which ran out before call 2 could be re-run against the fix. See the Work Log.
+**Last updated:** 2026-09-04 — **THE SAME QUESTION ASKED OF EVERY WORKFLOW, AGAINST THE LIVE DATABASE.** *"mai chahta hun ki mera aur v workflow mai aisa kuchh to nhi hai check karo please, hai to thik kar do"*. A read-only sweep of every job kind for rows nobody ever put anything into: **animatic — the 4 reported ones; storyboard — 0; final video — 0; plan — 0; character — 0**. ⚠ **THE ONE THAT LOOKED LIKE A FIFTH WAS REAL WORK.** An *"Untitled plan"* with no messages and no calendar is holding a **written script** and the tokens it cost — my first, cruder emptiness test called it a ghost. That is the whole lesson of this pass: **test against everything the workflow can hold, not the fields you happen to remember**, because the price of being wrong is deleting somebody's work. ⚠ **THE PLAN LIST GOT THE GUARD ANYWAY**, since a create followed by a failed first message still leaves a record — but it **waits ten minutes** before hiding, because that list is refreshed in the same action that creates the session, while the first model turn is still in flight. ⚠ **Script → Storyboard and Animatics → Final Video need nothing** — the first only writes a draft once there are shots and only autosaves changed text, the second has no blank-create tile at all. ⚠ **AND THE EDITOR'S FIX IS NOW PROVED IN A REAL BROWSER**: `tests/e2e_animatic.py` says *opening the editor creates NOTHING yet [0 vs 0]* and *naming it is what creates the project [1 vs 0]*. Four stale selectors in that suite were repaired to get there (the workflow's rename, the one-section library, the ← button, Delete moving into the ⚙ menu, the Add control now taking video); **it is still stale from section 6 onwards** — `.tl-bar` and `.fs-dur-input` are the old FrameStrip's, replaced by the NLE timeline. New **RULEBOOK E119**, new `tests/ghost_rows_check.py`. See the Work Log.
+
+**Previously:** 2026-09-04 — **A PROJECT IS NOT CREATED UNTIL YOU DO SOMETHING IN IT.** *"mai ye project mai kuchh nhi kiya magar ye yaha pe dikhte hai … user kuchh kare to hi project banao"*, with a screenshot of four empty *Untitled Project* rows. ⚠ **NEW PROJECT USED TO CREATE THE PROJECT ON THE WAY IN** and rely on the editor deleting it again on the way OUT — and that discard runs on exactly ONE of the four exits (the ← button). The sidebar, a refresh and a closed tab each left a row behind, **and each had already spent a slot of the account's `projects` quota** on a project holding nothing. ⚠ **SO THE EDITOR OPENS ON NOTHING NOW.** `NEW_DRAFT` means *a project that does not exist yet*: `animaticId` is `null`, `useAnimaticProject` loads nothing and takes the empty document as its own saved baseline, and `ensureProject()` mints the real project at the first thing that needs a server — an upload, a board or project-file import, a Freesound add, a ✨ draw, a chat turn, a Save-as, or the first autosave of any other edit. Do nothing and go back and **nothing was ever made**. ⚠ **THE TRAP IS THE STALE CLOSURE, NOT THE CREATE**: every url built after the create has to use the id it RETURNED (or `idRef.current`), never the `animaticId` captured before it — `/animatics/null/media/…` 404s once and the media fetch never retries, which is the same fault that once made an imported board forty-two black tiles. ⚠ **AND A DRAFT NEVER RE-READS ITSELF** when its id appears mid-session, or the frames that created the project would be replaced by the empty project the server was just handed. ⚠ **THE SERVER HIDES THE OLD ONES TOO** — the four rows in the screenshot are already in the database and older builds can still make them: `list_animatics` skips a project that is empty AND never named, and sweeps one older than a day off disk. ⚠ **THE EMPTINESS TEST MUST NOT NAME A `SUMMARY_DROP` FIELD** — `params.overlays` is dropped on that route, so a project whose only content is a picture on an Images lane reads as empty; `size_bytes == 0` is what keeps it. New **RULEBOOK E118**. `npm run build` green. ⚠ **NOT SEEN IN THE RUNNING APP** (G2/G7 — no browser suite was run). See the Work Log.
+
+**Previously:** 2026-09-04 — **THE BLUR IS A SLIDER NOW, BECAUSE THE CONSTANT WAS WRONG TWICE.** *"text padhne mai mushkil hai isliye blur daalo — **tum nhi**, admin panel pe daal do, mai set kar lunga blur ko v"*. ⚠ **THE SAME NUMBER FAILED IN BOTH DIRECTIONS IN TWO DAYS.** Hard-coded at `blur(16px)` it was right over a busy timeline in DARK and invisible in LIGHT — white frosted onto white, so the panel looked solid at every opacity. Removed entirely, the text became hard to read at low opacity. **Both failures were one number chosen for every screen**, which is the definition of a thing that should not be a constant. `blur` (0–40px) now sits in `chat_settings.LIMITS` beside `opacity`, rides the same `/editor-chat/config` call, and becomes `--ec-blur`. ⚠ **IT SHIPS AT 0 — WHAT IS ALREADY ON SCREEN — AND THAT IS DELIBERATE**: a default IS picking the number, which is the one thing I was told not to do, and it would change every existing deployment underneath its operator. The admin note says *try 12–20px* and leaves it there. ⚠ **AND A FILTER COSTS THE SAME AT ZERO AS AT SIXTEEN** — `backdrop-filter` at ANY value promotes the panel to its own compositing layer and re-filters everything behind it every frame, over a PLAYING timeline. So it is gated by a class (`.is-blurred`, only when `blur > 0` **and** the panel is see-through), never by a permanent `blur(calc(…))` on the rule; both gates are asserted separately. The slider is disabled at 100% solidity and says why. New **RULEBOOK E117**. All chat + admin suites green, `npm run build` green. ⚠ **YOURS TO SET** — that was the request, and I have not picked a value. See the Work Log.
+
+**Previously:** 2026-09-04 — **THE CHAT PANEL HAD NO EDGE — IT WAS WEARING THE TOKEN MADE FOR BLENDING IN.** *"chatbot panel ka strock badhao, oh bg editor mai macth v ho raha ahi — highlight karo panel border ko"*. ⚠ **`--border` IS TUNED FOR A CARD SITTING INSIDE A PAGE**, where an edge that disappears is the point. This panel lies OVER the editor, and the editor's own panes come from the same `--panel` family — so the token that makes a card look settled made the chat look like part of the furniture behind it. `.ec-panel` has its own `--ec-stroke` now, **2px instead of 1px**, and the floating window gained a **tight 1px ring inside its wide shadow**: the soft shadow says "above the page" and says nothing at all where the panel sits over something equally dark, so the ring is what actually draws the outline. ⚠ **DERIVED, NOT TYPED** — it is `--border` mixed towards `--text`, so it follows the admin's Brand colours and **flips direction on its own**: the edge lifts in dark and darkens in light. A hex would have been right in one theme and wrong in the other, which is the exact mistake the blur made yesterday. ⚠ **AND IT STRENGTHENS AS THE GROUND DISAPPEARS** — under `.is-see-through` the mix moves further towards `--text`, because at 30% fill the border is the only thing separating the chat from the film. ⚠ **NOT GOLD**, per **E16**: gold is the action on a screen and an outline is not an action. New **RULEBOOK E116**. `npm run build` + the chat and admin suites green. ⚠ **STILL YOURS TO LOOK AT** — a stroke is a judgement call and I have not seen it on a screen. See the Work Log.
+
+**Previously:** 2026-09-04 — **THE TRANSPARENCY SLIDER WAS LYING, AND IT WAS LYING WORST IN THE LIGHT THEME.** *"dekho dark mai thora ho raha hai white mai to ho hi nhi raha hai — aisa karo tum 0 to 100 rakho mai admin panel se check kar lunga kitna better hai"*. Three faults in yesterday's `opacity`, all from **judging a transparency effect in one theme**. ⚠ **(1) THE ALPHA WAS STACKED THREE DEEP.** The panel, `.sc-chat-log` and `.sc-composer` were each mixed to the SAME percentage — and alpha compounds: 40% over 40% covers **64%**, and the log is most of the panel's surface. The slider said one thing and the screen did another. The inner surfaces are **fully transparent** now and keep only their borders, so `--ec-opacity` is the whole and only story at every point on the range. ⚠ **(2) THE `backdrop-filter` MADE THE LIGHT THEME IMMUNE.** `blur(16px)` over `--panel: #ffffff` on an `#f4f6fa` page is **white frosted onto white** — a panel that looks solid at every setting, which is exactly what was reported. It is gone: a filter that changes how the number reads, differently per theme, is the one thing that makes an operator's own judgement impossible. Pure alpha, identical maths in both themes. ⚠ **(3) THE FLOOR OF 40 WAS PICKED OFF THE DARK THEME TOO** and is gone with it — the range is **0–100** and the operator judges it against their own deployment, which is what was asked for. ⚠ **AND ONCE 0 IS LEGAL, EVERY `or 100` IS A BUG**: `int(row.get("opacity") or 100)` in `editor_chat.py` turned the one value at the very end of the slider into its exact opposite. Zero is an ANSWER on this field, so it is `is not None`, never `or` — now pinned by its own check. **RULEBOOK E114 struck and replaced by E115** (the alpha-on-the-backgrounds half survives; the blur and the floor did not). All chat suites green + `npm run build`. ⚠ **STILL NOT SEEN ON A REAL SCREEN BY ME** — the operator is the one testing the range. See the Work Log.
+
+**Previously:** 2026-09-04 — **THE CHAT PANEL MOVES, RESIZES, AND CAN BE MADE SEE-THROUGH FROM THE ADMIN PANEL.** *"chat bot ka popup screen ko move kar sake and chhota aur bara kar sake panel ko apne hisab se user, aur admin panel mai ai editor se chatbot panel ko transparent kar sake"*. ⚠ **(1) MOVE AND RESIZE ARE TWO DIFFERENT PERMISSIONS.** A dock pinned to a screen edge has no answer for *"put it somewhere else"*, so a **third dock, `float`**, is the one that moves — a window placed by its title bar and remembered in that browser. The two pinned docks **resize** (width only; they are full height by definition). ⚠ **THE WIDTH HANDLE IS `PaneSplitter`, THE WORKSPACE'S OWN SEAM** — same drag maths, same double-click reset, same arrow keys, same 2px line that shows only on hover; a fresh handle would have been a second thing that behaves *almost* like the seams. It borrows `--an-seam`, which `.an-nle` declares, so `.ec-panel` re-declares it — a `fixed` panel is not inside `.an-nle` and the grab strip would have been zero pixels wide. The corner grip is the only new handle, and only because no seam in this app drags on both axes. ⚠ **THE WINDOW IS CLAMPED WHOLLY ON SCREEN, NOT "MOSTLY"** — there is no taskbar to fetch it back from, so once its Send button is past the right edge the button that would move it is unreachable; `panel_box.js` clamps SIZE FIRST, THEN POSITION, and the viewport is state so a shrunk browser window pulls the panel in with it. ⚠ **AND THE INLINE STYLE BEATS THE MEDIA QUERY** — under 820px the component stops emitting geometry at all rather than trusting `@media` to override it. ⚠ **(2) SEE-THROUGH IS THE OPERATOR'S FIELD.** `opacity` (40–100, default 100) lives in `chat_settings.py` beside the dock, rides the same `/editor-chat/config` call, and becomes ONE custom property, `--ec-opacity`. **The alpha goes on the three backgrounds — panel, log, composer — never on the panel's `opacity`**, which would fade the conversation along with the ground it sits on; `backdrop-filter` is behind an `.is-see-through` class so a solid panel pays no per-frame GPU cost. **The customer gets no slider** and the floor is 40, because a chat somebody fades until they cannot read it has no way back. New **RULEBOOK E113, E114**, new `client/src/animatic/agent/panel_box.js`, 18 new checks across `tests/editor_chat_render_check.py` (§6a, §6b) and `tests/editor_chat_check.py` (§9). `npm run build` green, `tests/workflow_mount_check.py` green. ⚠ **NOT YET SEEN ON A REAL SCREEN** — per **G7** a green build is not evidence that a panel drags. See the Work Log.
+
+**Previously:** 2026-09-03 — **THE CHAT CAN OFFER PAID WORK, AND IT CAN ASK TO SEE.** *"Chat ke andar price wala button abhi nahi hai … isko karo abhi"* and *"Chat tasveer dekh nahi sakti … isko v karo"*. ⚠ **(1) PAID WORK IS AN OFFER, WITH A REAL BUTTON.** A turn may carry up to two of `voiceover` / `captions` / `veo` / `images` in `passes`, and the panel draws a button per offer that opens the confirm dialog ✨ Animate / 🎙 Voiceover / 💬 Write captions / 🖼 Animatic images already use. ⚠ **`captions` IS A SEPARATE DOOR FROM THE VOICEOVER** — it reads audio the person recorded THEMSELVES and adds no voice, which is the actual request when somebody imports their own video; it was missed on the first pass because the voiceover writes captions too. ⚠ **AND A DOOR CALLS THE FUNCTION THE HAND-DRIVEN BUTTON CALLS, NEVER THE STATE SETTER** — this shipped as `setSpeechFor("voiceover")`, which skips `openVoiceover()`'s flush and dialogue-sheet fetch, so the chat's door would have opened an empty script under a stale price. Caught by writing the check, not by seeing it. ⚠ **NO PRICE IS COMPUTED IN THE CHAT AND NONE EVER MAY BE** — a figure worked out on the client, off the board the browser happens to be holding, next to a door that asks the server for the real one, is two answers about somebody's money; the door quotes and the chat points. An offer is not an edit, draws no Apply button, and (unlike a plan) survives a refresh, because it prices the film as it is *now*. ⚠ **(2) THE CHAT COULD NOT SEE, AND NOW IT CAN ASK TO.** A turn may come back as `kind: "look"` naming the fewest shots that could settle the question; the browser re-posts the SAME message with those stills attached at 512px, through the `?w=` proxy the monitor already uses. Nothing is sent until the model says it needs to see — automatic vision would make "how long is this?" the most expensive question in the product — and **one look per message is enforced in code**, not just asked for in the prompt. ⚠ **(3) AND THE LOOK EXPOSED A REAL TRAP, MEASURED NOT GUESSED**: the full 9.8KB system instruction *with images attached* took **149s and then failed**, twice; the same pictures, prompt and schema under a two-line system answered in **7.5s**. Bisected — images alone fast, big schema + images fast, long system alone fast, long system + images dead. So on a look the rules **move into the prompt** and `LOOK_SYSTEM` takes their place; nothing is trimmed, because a shorter rulebook would quietly plan worse. New **RULEBOOK E110, E111, E112**, new `tests/editor_chat_doors_check.py` (61 checks, no model). 17 suites green + `npm run build`. ⚠ **THE LOOK'S OWN LIVE RUN IS STILL OWED** — call 1 was proved live (it asked to look, in Hinglish) and the free Gemini tier is **20 requests a day**, which ran out before call 2 could be re-run against the fix. See the Work Log.
 
 **Previously:** 2026-09-03 — **THE STATUS STRIP IS ALWAYS ON SCREEN NOW, AND IT SAYS SOMETHING USEFUL WHEN IT HAS NOTHING TO REPORT.** *"ye guide karne wala panel hamesha rakho screen pe … jab mai koi bhi new ya recent project open karta hun to ye us samay nhi dikhta, tabhi dikhta hai jab user kuchh click kare."* ⚠ **THE STRIP WAS CONDITIONAL ON HAVING A MESSAGE** — `{(error || notice || exporting || … ) && (<div className="an-statusbar">…)}` — so a project opened cold had no strip at all, and the first anybody ever saw of it was it **appearing** under their own first click, moving the foot of the editor while they were reading something else. It is unconditional now and holds a **resting hint** (`restingHint` in `AnimaticEditor.jsx`) whenever there is nothing to report, so the editor is one fixed height for the whole session. ⚠ **THE HINT ALWAYS LOSES**: it renders only under `{!error && !notice && …}` and every progress row still renders beside it, so a tip can never push a real message off the single line they all share. ⚠ **IT IS CONTEXTUAL, IN THIS ORDER** — a non-Selection tool first (a razor you cannot see is the oldest trap in an editor, and it reads *"Razor tool is on"*), then an empty project (*"Add media to begin"*), a multi-selection (*"3 clips selected"*), one selection (*"Frame selected — edit it on the right"*), playing, and otherwise the shortcut line. ⚠ **THREE OR FOUR WORDS VISIBLE, THE SENTENCE IN THE `title`**, because the strip is `nowrap` and elides — a paragraph here is cut off mid-word — and because helper prose belongs on hover everywhere else in this app. New `.an-status-hint` is **muted, not the notice's gold**: permanent furniture in message colours teaches you to stop reading the strip. ⚠ **`.an-status-note` IS DELIBERATELY UNTOUCHED** — eight browser suites read a notice through that exact class and would have gone green against the hint if the two had shared one. New **RULEBOOK E109**. `npm run build` green; declaration order re-checked against **G6** (every value `restingHint` reads is declared above it). ⚠ **NO BROWSER SUITE WAS RUN** (G2 — not asked), so per **G7** this is not yet proved on screen. See the Work Log.
 
@@ -3629,7 +3641,453 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-09-03 (latest) — THE CHAT SAT ON "THINKING…" AND THE TAB GAVE UP FIRST
+### 2026-09-04 (latest) — THE SAME QUESTION, ASKED OF EVERY WORKFLOW
+
+    "mai chahta hun ki mera aur v workflow mai aisa kuchh to nhi hai check karo
+     please hai to thik kar do"
+
+Straight after the Editor fix, and the right question: if one library grew rows
+nobody made, which of the others does too?
+
+**MEASURED, NOT REASONED ABOUT.** A read-only pass over the live collection, one
+emptiness test per job kind:
+
+| Workflow | Records | Rows nobody put anything into |
+|---|---|---|
+| Editor (animatic) | 521 | **4** — the ones in the screenshot |
+| Script -> Storyboard | 83 | 0 |
+| Animatics -> Final Video | 3 | 0 |
+| Plan & Script | 6 | 0 |
+| Character pipeline | 2 | 0 |
+
+⚠ **THE ONE THAT LOOKED LIKE A FIFTH GHOST WAS REAL WORK.** My first sweep
+flagged an "Untitled plan" with no messages, no calendar and no channel. Opening
+the record: it holds **one written script** and the token usage that paid for it.
+The crude test asked about three fields; the session's content lives in five.
+**Write the emptiness test against everything the workflow can hold** — the cost
+of getting it wrong is not a stale row, it is deleting somebody's work.
+
+**WHY THE OTHER THREE ARE ALREADY RIGHT** (worth writing down, so nobody
+"fixes" them):
+
+- **Script -> Storyboard** creates its draft only once there are shots
+  (`shots.length` guards the effect in `ScriptToStoryboard.jsx`), and the script
+  autosave compares against what it loaded — open the form, type nothing, and
+  nothing is written.
+- **Animatics -> Final Video** has no blank-create tile; every project starts
+  From a Storyboard and so arrives with shots. Its `isEmpty` guard is kept as a
+  deliberately unreachable one, and the comment there says so.
+- **Plan & Script** was already lazy: `ensureSession` fires on the first message,
+  the first channel, the first script or a rename — never on opening the screen.
+
+**WHAT CHANGED.** `list_plans` gained the same guard the Editor's library has
+(`_is_ghost_plan`): a session with no messages, no scripts, no calendar and no
+channel, still carrying the placeholder name, is not listed. The path that can
+still make one is a create that succeeds followed by a first message that fails.
+
+⚠ **AND IT WAITS TEN MINUTES BEFORE HIDING, WHICH THE EDITOR'S DOES NOT.** There
+the row is only ever looked at from the library, after the user has left the
+editor. Here the session is created and the sidebar refreshed **in the same
+action**, while the first model turn is still in flight — a turn is tens of
+seconds — so hiding on sight would take the session the user is sitting in off
+their own list until the reply landed. `tests/plan_check.py` caught exactly that:
+it creates a session and asserts the library has it.
+
+**PROVED IN A REAL BROWSER, TOO.** `tests/e2e_animatic.py` now says
+*"opening the editor creates NOTHING yet [0 vs 0 before]"* and *"naming it is
+what creates the project [1 vs 0 before]"* — the reported bug, from the other
+side. Getting there meant repairing selectors that had been stale for months:
+the workflow's rename ("Your Animatics" -> "Your Projects"), the library's one
+section, the ← button (an arrow with its name on the tooltip, not a text label —
+it timed out for 30s a run), Delete moving into the ⚙ menu, and the Add control
+now accepting video.
+
+⚠ **THAT SUITE IS STILL STALE FROM SECTION 6 ONWARDS AND I HAVE NOT REWRITTEN
+IT.** `.tl-bar` and `.fs-dur-input` belong to the old FrameStrip, which the NLE
+timeline replaced; `.fs-card` now means a Media-bin card, so "3 frame cards"
+correctly counts 4 (three stills and a sound). Section 4c's "dead space under
+the timeline" also fails and is untouched by this work.
+
+**Files:** `server/plans.py` (`_is_ghost_plan`, `_older_than`,
+`GHOST_HIDE_AFTER_S`, `list_plans`), new `tests/ghost_rows_check.py`,
+`tests/e2e_animatic.py` (the five stale selectors).
+
+**Verified:** `tests/ghost_rows_check.py` (18 rule checks + the live collection),
+`tests/plan_check.py`, `tests/summary_projection_check.py`,
+`tests/animate_guard_check.py`, `tests/editor_board_import_check.py` (browser)
+all green; `tests/e2e_animatic.py` green through section 5b, stale after it.
+
+New **RULEBOOK E119**.
+
+---
+
+### 2026-09-04 — A PROJECT IS BORN AT THE FIRST ACTION, NOT AT THE FIRST CLICK
+
+    "mai ye project mai kuchh nhi kiya magar ye yaha pe dikhte hai aur mai fir
+     in project ko kholta hun to open hota hai fir mai back click karta hun to
+     ye project hat jata hai ... user kuchh kare to hi project banao"
+
+Four empty **Untitled Project** rows on the Editor library, none of them made on
+purpose.
+
+**WHY THEY WERE THERE.** New Project did `POST /animatics` on the way IN, opened
+the editor on the id it got back, and left the tidying up to `handleBack`: an
+animatic with no frames, no text, no audio and no name is deleted on the way out.
+
+⚠ **THAT DISCARD RUNS ON ONE OF THE FOUR EXITS.** The ← button calls it. The
+sidebar (which just unmounts the editor), a browser refresh and a closed tab do
+not — so three ways out of four left a row in the library for ever. And every one
+of those rows had already spent a slot of the account's `projects` quota
+(`require_quota("projects")` fires on the create) for a project containing
+nothing. The user's own description is exactly right: they open one, go back, and
+*that* one disappears — while the ones made the other ways never do.
+
+**WHAT IT IS NOW.** The editor opens on nothing at all.
+
+- `NEW_DRAFT` (exported from `AnimaticLibrary.jsx`) is handed to the workflow
+  shell instead of a job id. `createBlank` calls no API.
+- In `AnimaticEditor`, `animaticId` is `null` until there is a real project, and
+  `ensureProject()` creates one **on demand**, once per session, deduplicated
+  through a promise ref so five uploads racing each other make one project.
+- `useAnimaticProject` gained a `draft` mode: it loads nothing, opens carrying the
+  placeholder title as its INITIAL state, adopts the empty document as its saved
+  baseline, and `flush` calls `ensureId()` before its first write.
+- Everything that needs a server calls it first: image / video / audio uploads,
+  the storyboard import, the project-file import, a Freesound add, ✨ Generate
+  image, a ✨ chat turn, and Save-as.
+
+Do nothing and press ← and **nothing was ever created** — no record, no folder,
+no quota.
+
+⚠ **THE TRAP HERE IS THE STALE CLOSURE, NOT THE CREATE.** A function that started
+before the project existed holds `animaticId === null` for ever, so every url it
+builds afterwards is `/animatics/null/media/...`. That request 404s, the media
+fetch caches nothing on failure and does not retry, and the result is permanent —
+it is the same fault that once made an imported board forty-two black tiles
+(`doBoardImport`). So each of those paths uses the id `ensureProject()`
+**returned**, and the callbacks that cannot await use `idRef.current`, which the
+create writes synchronously.
+
+⚠ **AND A DRAFT MUST NEVER RE-READ ITSELF FROM THE SERVER.** Its `animaticId`
+goes `null` -> real mid-session, which re-runs the load effect; fetching there
+would replace the frames that just created the project with the empty project the
+server was handed a moment ago. The same rule protects the ✨ chat's transcript,
+which is keyed on the project id and would otherwise be wiped by the turn that
+created it.
+
+**THE ROWS ALREADY IN THE DATABASE.** The client fix cannot reach them, and a
+stale tab on an older build can still make one, so `list_animatics` now skips a
+project that is **empty AND never named**, and sweeps one older than a day off
+disk (`_is_ghost` / `_purge_animatic`, which `DELETE /animatics/{id}` now shares).
+
+⚠ **THE EMPTINESS TEST MAY NOT NAME A FIELD THE LIST ROUTE DROPS.** That route
+serves slimmed documents (`SUMMARY_DROP`) and `params.overlays` is one of the
+fields it removes — so a project whose only content is a picture on an Images
+lane arrives looking exactly like an empty one. `size_bytes == 0` is what keeps
+it: an overlay has an upload, and an upload is a file in the project's media
+folder.
+
+**Files:** `client/src/components/AnimaticLibrary.jsx` (`NEW_DRAFT`,
+`createBlank` creates nothing), `client/src/components/AnimaticEditor.jsx`
+(`ensureProject`, `idRef`, every entry point, `handleBack` / `handleDelete`),
+`client/src/animatic/useAnimaticProject.js` (draft mode, `ensureId` in `flush`),
+`client/src/animatic/agent/useEditorChat.js` (`ensureId`, and the transcript that
+survives the id arriving), `client/src/components/ProjectImportModal.jsx`,
+`server/animatics.py` (`_is_ghost`, `_older_than`, `_purge_animatic`,
+`list_animatics`), `tests/e2e_animatic.py` sections 2b and 4b.
+
+**Verified:** `npm run build` green; every changed client file parses under
+esbuild. ⚠ **NO BROWSER SUITE WAS RUN** (G2 — not asked), so per **G7** this is
+not yet proved on a screen; `tests/e2e_animatic.py` carries the updated contract
+for whoever runs it next.
+
+New **RULEBOOK E118**.
+
+---
+
+### 2026-09-04 — THE BLUR BECAME A SLIDER, BECAUSE THE CONSTANT WAS WRONG TWICE
+
+    "text padhne mai mushkil hai isliye blur daalo tum nhi ti admin panel pe
+     daal do mai set kar lunga blur ko v"
+
+**THE SAME NUMBER FAILED IN BOTH DIRECTIONS INSIDE TWO DAYS.**
+
+`backdrop-filter: blur(16px)` shipped hard-coded with the transparency feature.
+In the DARK theme it does exactly its job: it keeps the captions burnt into the
+film from reading through the assistant's own words. In the LIGHT theme
+`--panel` is `#ffffff` over an `#f4f6fa` page — **white frosted onto white** — so
+the panel looked solid at every opacity setting, and that was reported as
+*"white mai to ho hi nhi raha hai"*.
+
+So it was removed. And with nothing softening the picture underneath, the text
+became hard to read as soon as the opacity came down — reported the same day.
+
+⚠ **BOTH FAILURES ARE THE SAME MISTAKE: one number chosen for every screen.**
+That is the definition of a thing that should not be a constant, and the user
+said so plainly — *"tum nhi"*, put it on the admin panel.
+
+**WHAT IT IS NOW**
+
+`blur` (0–40px) in `chat_settings.LIMITS`, beside `opacity`, clamped by the same
+`clean()`, carried on the same `/editor-chat/config` call, and reaching the panel
+as `--ec-blur`. One more slider in the same admin section, and the two are judged
+together against a real deployment in both themes.
+
+⚠ **IT SHIPS AT 0 AND THAT IS THE POINT, NOT AN OVERSIGHT.** A default IS
+picking the number — the one thing I was told not to do — and any non-zero
+default would change every existing deployment underneath its operator without
+being asked. 0 is exactly what is on screen today. The admin note carries the
+starting point (*try 12–20px*) instead of the code carrying it.
+
+⚠ **AND A FILTER COSTS THE SAME AT ZERO AS AT SIXTEEN.** `backdrop-filter` at
+ANY value, `0px` included, promotes the element to its own compositing layer and
+makes the browser re-filter everything behind it **on every frame** — and behind
+this panel is a timeline that plays video. So it is not
+`blur(calc(var(--ec-blur) * 1px))` sitting on the rule permanently; it is gated
+by a class, `.is-blurred`, added only when `blur > 0` **and** the panel is
+see-through. A deployment that leaves the slider at 0 pays nothing at all. Both
+gates are asserted separately, because either one alone would look correct.
+
+The slider is also **disabled at 100% solidity**, and the note says why — a
+control that silently does nothing is a control people report as broken.
+
+**Files:** `server/chat_settings.py` (`LIMITS["blur"]`, `EDITABLE`, `defaults`),
+`server/schemas.py`, `server/editor_chat.py` (`is not None`, not `or`),
+`server/admin.py`, `client/src/styles/editor-chat.css` (`--ec-blur`,
+`.is-see-through.is-blurred`), `client/src/components/EditorChat.jsx` (the `blur`
+prop and the two-condition class), `client/src/components/AnimaticEditor.jsx`,
+`client/src/admin/AdminChat.jsx` (the second slider), `tests/editor_chat_check.py`
+§9, `tests/editor_chat_render_check.py` §6b.
+
+**Verified:** `tests/editor_chat_check.py`, `tests/editor_chat_render_check.py`,
+`tests/admin_check.py`, `tests/admin_fields_check.py`,
+`tests/editor_chat_doors_check.py` green; `npm run build` green. ⚠ **NO VALUE
+CHOSEN AND NONE SEEN ON A SCREEN** — that was the request.
+
+New **RULEBOOK E117**.
+
+### 2026-09-04 — THE PANEL HAD NO EDGE: IT WORE THE TOKEN MADE FOR BLENDING IN
+
+    "aur chatbot panel ka strock badhao oh bg editor mai macth v ho raha ahi
+     highlight karo panel order ko"
+
+Screenshot: the floating chat over the editor, its outline indistinguishable
+from the panes behind it — you could not see where the chat ended and the film
+began.
+
+**`--border` IS THE WRONG TOKEN FOR THIS ONE SURFACE, AND IT IS WRONG BY DESIGN.**
+
+Every card in this app sits *inside* a page and wants an edge that settles into
+it — that is what `--border` is tuned for, across both themes and every Brand
+preset. ⚠ **This panel does not sit inside anything.** It lies OVER the editor,
+and the editor's own panes are drawn from the same `--panel` family, so a border
+tuned for blending is separating two surfaces of nearly the same colour. The
+token was doing its job perfectly and its job was the opposite of what was needed.
+
+`.ec-panel` now carries **`--ec-stroke`**, and the facing edge is **2px, not
+1px** — a hairline is what a card wears; this is the seam between somebody's chat
+and somebody's film.
+
+⚠ **THE FLOATING WINDOW ALSO GAINED A TIGHT 1px RING INSIDE ITS WIDE SHADOW.** A
+soft `0 20px 56px` shadow says "this is above the page" — and says **nothing at
+all** where the panel happens to sit over something equally dark, which over a
+timeline is most of the time. The ring hugs the border and draws the outline
+itself, so the window has an edge wherever it is dropped.
+
+⚠ **DERIVED, NEVER TYPED (RULEBOOK E103).** `--ec-stroke` is `--border` mixed
+towards `--text`, so it follows the admin's Brand colours and **flips direction
+by itself**: `--text` is near-white in dark so the edge lifts, near-black in
+light so the edge darkens. A hex here would have been right in one theme and
+wrong in the other — the identical mistake the `backdrop-filter` made in the
+entry below, one day earlier.
+
+⚠ **AND IT STRENGTHENS AS THE GROUND GOES AWAY.** Under `.is-see-through` the mix
+moves further towards `--text`. At 100% the fill tells you where the panel is; at
+30% the border is the only thing that does, and it is sitting over a moving
+picture.
+
+⚠ **IT IS NOT GOLD, AND THAT WAS A DECISION.** The accent would certainly have
+"highlighted" it — and **E16** says gold means *the action* on a screen, one per
+screen, never navigation or chrome. An outline is not an action.
+
+**Files:** `client/src/styles/editor-chat.css` (`--ec-stroke`, the 2px edges on
+all three docks, the ring in `.ec-dock-float`'s shadow, the see-through lift).
+
+**Verified:** `npm run build`, `tests/editor_chat_render_check.py`,
+`tests/admin_fields_check.py` green. ⚠ **NOT SEEN ON A SCREEN BY ME** — a stroke
+weight is a judgement call, and the two ratios (65/35 normally, 40/60 when
+see-through) are the two numbers worth telling me to change.
+
+New **RULEBOOK E116**.
+
+### 2026-09-04 — THE SEE-THROUGH SLIDER WAS LYING, AND WORST IN THE LIGHT THEME
+
+    "dekho dark mai thora ho raha hai white mai to ho hi nhi raha hai aisa karo
+     tum 0 to 100 rakho mai admin panel se check kar lunga kitna mai better hai"
+
+Three screenshots: the floating panel in the light theme at 40% looking solid,
+the admin slider pinned at its floor of 40, and the same panel in dark where the
+effect is at least visible. Same root cause under all three — **yesterday's
+`opacity` was designed and eyeballed in the dark theme only.**
+
+**1 · THE ALPHA WAS STACKED THREE DEEP, SO THE NUMBER MEANT NOTHING.**
+
+`.ec-panel`, `.sc-chat-log` and `.sc-composer` were each `color-mix`-ed to the
+SAME percentage. Alpha **compounds**: 40% over 40% leaves 64% covered, and the
+log is most of the panel's surface — so the slider said 40 and the screen did
+64, unevenly, depending on which part of the panel you looked at. The two inner
+surfaces are `background: transparent` now and keep only their borders. One
+layer, one number, and `--ec-opacity` is the whole story everywhere on the panel.
+
+**2 · `backdrop-filter` MADE THE LIGHT THEME IMMUNE TO THE SETTING.**
+
+`blur(16px) saturate(1.15)` was added to keep the burnt-in captions underneath
+from reading through the assistant's words, and in dark it does that. In light,
+`--panel` is `#ffffff` and the page under it is `#f4f6fa` — **white frosted onto
+white**, which looks identical at 100% and at 40%. That is precisely *"white mai
+to ho hi nhi raha hai"*.
+
+⚠ **It is removed rather than tuned.** The operator asked to judge this
+themselves across the whole range; a filter that changes how the number reads,
+and changes it differently per theme, is the one thing that makes that judgement
+impossible. Pure alpha now — identical maths in both themes, and what the slider
+says is what the screen does. If frosted glass is wanted later it is a separate,
+deliberate ask.
+
+**3 · THE FLOOR OF 40 CAME FROM THE SAME BAD MEASUREMENT.**
+
+It was written into `LIMITS` as a safety rail — *"below this the captions read
+through the chat's own words"* — and that sentence was true of the dark theme and
+false of the light one, where 40% white mixed into white is not an effect at all.
+⚠ **A floor set by how one theme happens to look is a floor that lies about the
+other one.** The range is `0–100` now and the admin screen says what the low end
+actually costs instead of pretending a number is unsafe.
+
+**4 · AND ONCE 0 IS LEGAL, EVERY `or 100` IS A BUG.**
+
+`server/editor_chat.py` built the response with
+`int(row.get("opacity") or 100)`. `0 or 100` is `100` — so the one value at the
+very end of the operator's slider would have arrived as its **exact opposite**,
+and the setting hardest to test would have been the one that silently didn't
+work. It is `row["opacity"] if row.get("opacity") is not None else 100` now, and
+`tests/editor_chat_render_check.py` renders an `opacity: 0` panel specifically to
+hold that. The client was already safe (`?? 100`, not `|| 100`) — that was luck,
+and it is now written down.
+
+**Files:** `client/src/styles/editor-chat.css` (`.is-see-through` — one layer, no
+filter), `client/src/components/EditorChat.jsx` (the header note),
+`client/src/admin/AdminChat.jsx` (the slider floor and both notes — it now tells
+the operator to judge it in BOTH themes and says why light needs a lower number),
+`server/chat_settings.py` (`LIMITS["opacity"]["min"] = 0`),
+`server/editor_chat.py` (the falsy-zero fix),
+`tests/editor_chat_check.py` §9, `tests/editor_chat_render_check.py` §6b.
+
+**Verified:** `tests/editor_chat_check.py`, `tests/editor_chat_render_check.py`,
+`tests/admin_check.py`, `tests/admin_fields_check.py` green; `npm run build`
+green. ⚠ **NOT SEEN ON A REAL SCREEN BY ME** — and this entry exists because the
+last one wasn't either. The operator is the one testing the range.
+
+**RULEBOOK E114 struck; replaced by E115.** The alpha-on-the-backgrounds half of
+E114 survives into it; the blur and the floor were both wrong and are recorded as
+wrong rather than quietly edited.
+
+### 2026-09-04 — THE PANEL WOULD NOT MOVE, WOULD NOT RESIZE, AND COULD NOT BE SEEN THROUGH
+
+    "mai chahta hun ki tum chat bot ka popup screen ko move kar sake and chhota
+     and bara kar sake panel ko apne hisab se user aur admin panel mai ai editor
+     se chatbot panel ko transparent kar sake"
+
+Reported with two screenshots of the ✨ AI Editor open on the right: a fixed
+column covering the Properties inspector, with no way to shift it, narrow it or
+see the film underneath it.
+
+**1 · MOVE AND RESIZE ARE NOT ONE FEATURE, AND MOST DOCKS ONLY GET THE SECOND.**
+
+`.ec-dock-right` and `.ec-dock-sidebar` are pinned to a screen edge by CSS.
+"Somewhere else" has no meaning for either of them — a right-hand dock dragged
+into the middle of the screen is not a right-hand dock. So the panel gained a
+**third dock, `float`** (`chat_settings.DOCK_FLOAT`, `.ec-dock-float`): a window
+placed by its title bar, resized by its bottom-right corner, and remembered in
+that browser. The two pinned docks gained **width only**; they are full height by
+definition and there is nothing else to give them.
+
+⚠ **THE WIDTH HANDLE IS `PaneSplitter` — THE SEAM THE WORKSPACE ALREADY USES.**
+It carries the drag maths (start read once, every move measured from it, so the
+value does not drift when a drag hits `min`), double-click-to-reset, the arrow
+keys, and the 2px line that appears only on hover. A handle written fresh for
+this panel would have been a second thing that behaves *almost* like the three
+seams next to it. ⚠ It measures its grab strip in **`--an-seam`, which `.an-nle`
+declares** — and `.ec-panel` is `fixed` and is NOT inside `.an-nle`, so the
+variable is re-declared on the panel or the strip is zero pixels wide and there
+is nothing to grab. The corner grip is the only genuinely new handle, and only
+because **no seam in this app drags on both axes**; it still carries the seam's
+other habits (double-click resets, arrow keys resize, `role="separator"`).
+
+**2 · THE WINDOW IS CLAMPED WHOLLY ON SCREEN — NOT "MOSTLY".**
+
+The obvious rule is the desktop one: keep a title bar's worth visible and let the
+rest hang off the edge. ⚠ **That is wrong here, and the reason is that there is
+no taskbar.** Once the Send button is past the right edge, the button that would
+move the window back is unreachable — there is nothing to click to recover it. So
+`client/src/animatic/agent/panel_box.js` clamps the box whole, and it clamps
+**size first, then position**: a width clamped *after* the `x` it was used to
+compute leaves a gap on the right that grows on every resize. ⚠ **The viewport is
+STATE, not a read at draw time** — nothing else re-renders this panel when the
+browser window shrinks under it, so a window left at the bottom of a tall screen
+would simply have been off the bottom of a short one.
+
+⚠ **AND AN INLINE STYLE BEATS A MEDIA QUERY.** Under 820px `editor-chat.css`
+turns all three docks into one full-width sheet; the component has to **stop
+emitting `left/top/width/height` at that same width** rather than trust the
+`@media` block to win. Trusting it is how a phone ends up with a 380px window
+jammed in a corner.
+
+**3 · SEE-THROUGH IS THE ADMIN'S FIELD, AND THE ALPHA DOES NOT GO ON THE PANEL.**
+
+`opacity` (40–100, default 100) joins the dock in `server/chat_settings.py` — one
+row, `clean()`-clamped like every other number there — rides the existing
+`/editor-chat/config` call, and reaches the panel as ONE custom property,
+`--ec-opacity`.
+
+⚠ **`opacity` ON THE ROOT WOULD HAVE BEEN THE BUG.** It fades the conversation,
+the buttons and the spinner along with the ground they sit on, and a chat you
+cannot read is not a transparent chat. The alpha goes on the **three surfaces**
+via `color-mix` — the panel, `.sc-chat-log` and `.sc-composer` — and the text
+stays at full strength. The log and the composer are in that list because two
+opaque slabs inside a see-through frame read as a panel that failed to load.
+
+⚠ **THE BLUR IS NOT DECORATION.** Underneath is a playing film with captions
+burnt into it; at 60% those captions read straight through the assistant's own
+words. `backdrop-filter` is what keeps both legible — and it sits behind an
+`.is-see-through` class so a solid panel does not pay a per-frame GPU cost over a
+playing timeline for nothing.
+
+⚠ **AND THE CUSTOMER GETS NO SLIDER.** *"admin panel mai ... transparent kar
+sake"* was the request, and it is also the right answer: somebody who fades their
+own chat to 40% and can no longer read it has no way back. The floor is 40 for
+the same reason, and it is the server's number — the admin screen prints
+`bounds.opacity.min` rather than a second copy of it.
+
+**Files:** `client/src/animatic/agent/panel_box.js` (new — the geometry and the
+clamps), `client/src/components/EditorChat.jsx` (the float dock, the drag, the
+grip, the `--ec-opacity` style), `client/src/styles/editor-chat.css`
+(`.ec-dock-float`, `.ec-grip`, `.ec-side-split`, `.is-see-through`),
+`client/src/components/AnimaticEditor.jsx` (passes `opacity`),
+`client/src/admin/AdminChat.jsx` (the solidity slider + the note that says which
+docks move), `server/chat_settings.py` (`DOCK_FLOAT`, `LIMITS["opacity"]`),
+`server/schemas.py`, `server/editor_chat.py`, `server/admin.py`,
+`tests/editor_chat_render_check.py` (§6a, §6b), `tests/editor_chat_check.py` (§9).
+
+**Verified:** `tests/editor_chat_render_check.py` and `tests/editor_chat_check.py`
+green with the new assertions, `tests/workflow_mount_check.py` green,
+`tests/editor_director_check.py` green (it mounts the real editor with the chat
+hook in it), `npm run build` green. ⚠ **NOT SEEN ON A REAL SCREEN YET** — per **G7** a green
+build is not evidence that a panel drags, and nobody has dragged it.
+
+New **RULEBOOK E113** (move vs resize, and reuse the seam) and **E114** (how to
+make a panel see-through).
+
+### 2026-09-03 — THE CHAT SAT ON "THINKING…" AND THE TAB GAVE UP FIRST
 
     "chatbot bahut time le raha hai thinking mai kay ho raha hai fix karo please"
 

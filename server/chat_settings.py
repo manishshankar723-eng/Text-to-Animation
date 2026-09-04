@@ -29,10 +29,23 @@ nobody advertised.
 ⚠ **THE DOCK IS A SETTING BECAUSE IT WAS ASKED TO BE ONE.**
 ---------------------------------------------------------------------------
 *"tu dono kar do mai admin panel se change kar lunga"* — the panel can open as a
-right-hand dock (what Descript's Underlord and Premiere's AI Assistant both do)
-or slide out of the sidebar under the button that launched it. Both are built;
-this decides which one a deployment gets. `DOCK_USER` hands the choice to the
-person using the editor and remembers it in their browser.
+right-hand dock (what Descript's Underlord and Premiere's AI Assistant both do),
+slide out of the sidebar under the button that launched it, or float as a small
+window the person drags where they want it. All three are built; this decides
+which one a deployment gets. `DOCK_USER` hands the choice to the person using the
+editor and remembers it in their browser.
+
+⚠ **AND `opacity` + `blur` ARE THE OTHER HALF OF THAT REQUEST** — *"admin panel mai ai
+editor se chatbot panel ko transparent kar sake"*. They are a percentage and a
+pixel count, they are the operator's to set, and the client turns each into one
+CSS custom property. They are NOT user preferences: a customer who drags the
+panel to 40% and then cannot read the chat has no way back, so the numbers live
+here where support can see them.
+
+⚠ **AND `blur` EXISTS BECAUSE A HARD-CODED ONE WAS WRONG TWICE** — 16px baked in
+(unreadable-in-light), then removed (unreadable-at-low-opacity). Both were one
+number chosen for every screen. It is a slider now, next to `opacity`, and the
+two are judged together against a real deployment.
 
 ---------------------------------------------------------------------------
 ⚠ **THE TWO SAFETY RAILS DEFAULT ON AND SHOULD STAY ON.**
@@ -85,11 +98,18 @@ _DOC_ID = "editor_chat"
 # Where the panel opens
 # ---------------------------------------------------------------------------
 # ⚠ THE IDS GO STRAIGHT INTO A CSS CLASS on the client (`ec-dock-right` /
-# `ec-dock-side`), so they are checked against this list rather than trusted.
+# `ec-dock-sidebar` / `ec-dock-float`), so they are checked against this list
+# rather than trusted.
 DOCK_RIGHT = "right"
 DOCK_SIDE = "sidebar"
+# ⚠ THE FLOATING WINDOW IS THE ONE THAT MOVES. Both docks above are pinned to an
+# edge by CSS, so "put it somewhere else" has no answer in either of them — asked
+# for outright: *"chat bot ka popup screen ko move kar sake and chhota aur bara
+# kar sake"*. This one is placed by the person using it and remembers where it
+# was left. The two docked ones resize (width only); only this one moves.
+DOCK_FLOAT = "float"
 DOCK_USER = "user"
-DOCKS = (DOCK_RIGHT, DOCK_SIDE, DOCK_USER)
+DOCKS = (DOCK_RIGHT, DOCK_SIDE, DOCK_FLOAT, DOCK_USER)
 
 # What each one is, in the words the admin screen prints. Kept beside the ids so
 # a dock added later cannot be added without also being described.
@@ -103,6 +123,12 @@ DOCK_INFO = {
         "label": "Slides out of the sidebar",
         "note": "Opens straight out of the ✨ AI Editor button in the rail. "
                 "Keeps the editor full width; narrower.",
+    },
+    DOCK_FLOAT: {
+        "label": "Floating window",
+        "note": "Opens as a small window over the editor. Drag its title bar to "
+                "move it anywhere, drag the bottom-right corner to resize it, and "
+                "it remembers where it was left in that browser.",
     },
     DOCK_USER: {
         "label": "Let each person choose",
@@ -128,6 +154,40 @@ LIMITS = {
     # How many shots of the film are described to the model before the read-model
     # is summarised instead. A 500-shot project must not put 500 shots in a prompt.
     "shot_detail_limit": {"min": 10, "max": 200, "default": 60},
+    # ⚠ HOW SOLID THE PANEL IS, AS A PERCENTAGE — 100 is the panel this app has
+    # always had, and anything lower lets the film show through it. Asked for
+    # outright: *"admin panel mai ai editor se chatbot panel ko transparent kar
+    # sake"*.
+    #
+    # ⚠ **THE FLOOR WAS 40 FOR ONE DAY AND 40 WAS THE WRONG NUMBER.** It was
+    # picked from the DARK theme, where a dark panel over a dark editor is
+    # obviously see-through by 60%. The light theme is `--panel: #ffffff` over an
+    # `#f4f6fa` page — **white on white** — so 40% white mixed into white is a
+    # difference nobody can see, and the report was exactly that: *"dark mai
+    # thora ho raha hai white mai to ho hi nhi raha hai"*. A floor set by how one
+    # theme happens to look is a floor that lies about the other one.
+    #
+    # ⚠ **SO IT GOES TO 0, AND THE OPERATOR JUDGES** — *"0 to 100 rakho mai admin
+    # panel se check kar lunga kitna better hai"*. 0 is a panel with no ground at
+    # all, which is a real answer over a full-screen preview and a bad one over a
+    # busy timeline. The admin screen says so beside the slider; it is not this
+    # file's job to decide it for them.
+    "opacity": {"min": 0, "max": 100, "default": 100},
+    # ⚠ HOW MUCH THE FILM UNDERNEATH IS BLURRED, IN PIXELS — and it is a SETTING
+    # rather than a constant because the constant was wrong twice. It shipped as
+    # a hard-coded `blur(16px)`, which is right over a busy timeline in the dark
+    # theme and is white-frosted-onto-white in the light one; it was then removed
+    # entirely, and the text became hard to read at low opacity. Both of those
+    # were me picking a number for somebody else's screen. Asked for outright:
+    # *"text padhne mai mushkil hai isliye blur daalo — tum nhi, admin panel pe
+    # daal do, mai set kar lunga blur ko v"*.
+    #
+    # ⚠ **0 IS THE DEFAULT AND IT IS THE HONEST ONE.** It is exactly what is on
+    # screen today, so nobody's deployment changes underneath them, and the admin
+    # screen says what raising it buys. ⚠ **AND IT ONLY DOES ANYTHING WHEN
+    # `opacity` IS BELOW 100** — there is nothing showing through a solid panel to
+    # blur, and `backdrop-filter` is a per-frame GPU cost over a playing timeline.
+    "blur": {"min": 0, "max": 40, "default": 0},
 }
 
 EDITABLE = frozenset({
@@ -137,6 +197,8 @@ EDITABLE = frozenset({
     "transcript_keep",
     "max_turns_per_session",
     "shot_detail_limit",
+    "opacity",
+    "blur",
     "ask_on_spend",
     "ask_on_destructive",
     "allow_paid_passes",
@@ -170,6 +232,10 @@ def defaults() -> dict:
         "transcript_keep": LIMITS["transcript_keep"]["default"],
         "max_turns_per_session": LIMITS["max_turns_per_session"]["default"],
         "shot_detail_limit": LIMITS["shot_detail_limit"]["default"],
+        # Fully solid, which is the panel that shipped. See LIMITS above.
+        "opacity": LIMITS["opacity"]["default"],
+        # No blur, which is also what is on screen today. See LIMITS above.
+        "blur": LIMITS["blur"]["default"],
         "ask_on_spend": True,
         "ask_on_destructive": True,
         # ⚠ ON SINCE 2026-09-03, AND WHAT IT TURNS ON IS THE OFFER. Off, the

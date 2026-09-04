@@ -720,6 +720,86 @@ SUMMARY_DROP = (
 )
 
 
+# ---------------------------------------------------------------------------
+# GHOST PROJECTS — rows nobody ever put anything into
+# ---------------------------------------------------------------------------
+# ⚠ A PROJECT IS ONLY A PROJECT ONCE SOMETHING IS IN IT. The New Project tile
+# used to POST one of these before the user had done a single thing, so "open
+# it, change my mind, go back" left an empty "Untitled Project" on the library
+# for ever — four of them in one screenshot, reported as "i did nothing in this
+# project but it shows here". The client no longer creates a project until the
+# first real edit (`ensureProject` in AnimaticEditor.jsx); this is the other
+# half of that fix — the empty rows ALREADY in the database, and anything a
+# stale tab still manages to make, never reach the library.
+#
+# ⚠ THE TITLES ARE THE CLIENT'S `isUntitled`, IN PYTHON. Same sentinel, same
+# reason it has a legacy entry: every project made before 2026-08-21 carries the
+# older wording, and comparing against the new string alone would quietly
+# promote all of them to "named".
+_UNTITLED_TITLES = {"Untitled Project", "Untitled animatic"}
+
+# How old an empty row has to be before it is swept off disk as well as hidden.
+# A day, because nothing younger can be trusted to be dead: a second tab may be
+# building a project RIGHT NOW that has been created but not yet saved.
+GHOST_MAX_AGE_S = 24 * 3600
+
+# ⚠ AND ONLY A FEW PER REQUEST. Hiding a row is free; deleting one is an rmtree
+# and a store write, and this runs INSIDE the library's own GET. An account
+# carrying a hundred of them must not pay for all hundred on the first load —
+# the rest go on the next one, and the list is correct either way because
+# hiding does not depend on the sweep.
+GHOST_SWEEP_PER_CALL = 20
+
+
+def _is_ghost(job: Job, card: AnimaticSummary) -> bool:
+    """Is this row an empty, never-named project — i.e. not a project at all?
+
+    ⚠ `size_bytes == 0` IS DOING REAL WORK HERE, not belt-and-braces. This is
+    asked on the LIST route, whose documents are slimmed (`SUMMARY_DROP`), and
+    `params.overlays` is one of the fields it drops — so a project whose only
+    content is a picture on an Images lane arrives here looking exactly like an
+    empty one. Its upload is on disk, so its media folder is not empty, and that
+    is what keeps it. Never widen this test to a field that SUMMARY_DROP removes.
+    """
+    title = (job.character_name or "").strip()
+    if title and title not in _UNTITLED_TITLES:
+        return False  # a name the user chose is content in itself
+    if card.frame_count or card.text_count or card.audio_count or card.has_video:
+        return False
+    if card.size_bytes:
+        return False
+    params = job.params or {}
+    # Vector shapes and user-added rows carry no file, so the size test above
+    # cannot see them.
+    if params.get("shapes") or params.get("layers"):
+        return False
+    return True
+
+
+def _older_than(stamp: str, seconds: int) -> bool:
+    """Is this ISO timestamp further back than `seconds`? Unreadable ⇒ no."""
+    from datetime import datetime, timezone
+
+    try:
+        t = datetime.fromisoformat(stamp or "")
+    except (TypeError, ValueError):
+        return False
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - t).total_seconds() > seconds
+
+
+def _purge_animatic(job_id: str) -> None:
+    """Delete a project's folder and its record. Shared by DELETE and the sweep."""
+    folder = _animatic_dir(job_id)
+    if os.path.isdir(folder):
+        try:
+            shutil.rmtree(folder)
+        except OSError:
+            logger.exception("[animatic %s] could not remove %s", job_id, folder)
+    get_store().delete(job_id)
+
+
 def _summarise(job: Job, boards: dict | None = None) -> AnimaticSummary:
     """One library card.
 
@@ -1128,7 +1208,27 @@ def list_animatics(
         drop=SUMMARY_DROP,
     )
     boards: dict = {}
-    return [_summarise(j, boards) for j in jobs]
+    cards: list[AnimaticSummary] = []
+    swept = 0
+    for j in jobs:
+        card = _summarise(j, boards)
+        # ⚠ EMPTY + NEVER NAMED = NOT A PROJECT. It is never listed, and once it
+        # is old enough to be certainly dead it is swept off disk too — see
+        # `_is_ghost`. Failures here are logged and ignored: a stuck folder must
+        # never be what stops the library loading.
+        if _is_ghost(j, card):
+            if swept < GHOST_SWEEP_PER_CALL and _older_than(
+                j.updated_at or j.created_at, GHOST_MAX_AGE_S
+            ):
+                swept += 1
+                try:
+                    _purge_animatic(j.job_id)
+                    logger.info("[animatic %s] swept: empty and never named", j.job_id)
+                except Exception:
+                    logger.exception("[animatic %s] sweep failed", j.job_id)
+            continue
+        cards.append(card)
+    return cards
 
 
 # ---------------------------------------------------------------------------
@@ -1341,13 +1441,7 @@ def delete_animatic(job_id: str, current: CurrentUser = Depends(get_current_user
             status_code=409,
             detail="This project is still exporting — wait for it to finish first.",
         )
-    folder = _animatic_dir(job_id)
-    if os.path.isdir(folder):
-        try:
-            shutil.rmtree(folder)
-        except OSError:
-            logger.exception("[animatic %s] could not remove %s", job_id, folder)
-    get_store().delete(job_id)
+    _purge_animatic(job_id)
     return None
 
 

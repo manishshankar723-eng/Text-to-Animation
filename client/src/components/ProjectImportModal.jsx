@@ -54,7 +54,16 @@ const DOC_ACCEPT = ".xml,.edl,.zip,.prproj";
 const MEDIA_RE =
   /\.(png|jpe?g|webp|bmp|gif|tiff?|mp4|mov|webm|m4v|avi|mkv|mp3|wav|m4a|aac|ogg|oga|flac)$/i;
 
-export default function ProjectImportModal({ open, animaticId, busy, onClose, onApply }) {
+export default function ProjectImportModal({
+  open,
+  animaticId,
+  // ⚠ `animaticId` CAN BE NULL — reading a project file INTO a blank project is
+  // one of the things that creates it. See `ensureProject` in AnimaticEditor.jsx.
+  ensureId,
+  busy,
+  onClose,
+  onApply,
+}) {
   const [doc, setDoc] = useState(null);
   const [media, setMedia] = useState([]);
   const [read, setRead] = useState(null);
@@ -184,7 +193,7 @@ export default function ProjectImportModal({ open, animaticId, busy, onClose, on
     setGuessed(wantGuess);
     try {
       setRead(
-        await api.importProjectFile(animaticId, {
+        await api.importProjectFile(animaticId || (await ensureId?.()), {
           document: doc,
           media,
           experimental: wantGuess,

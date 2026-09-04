@@ -2110,6 +2110,10 @@ class ChatSettingsBody(BaseModel):
     transcript_keep: int | None = None
     max_turns_per_session: int | None = None
     shot_detail_limit: int | None = None
+    # How solid the panel is drawn, as a percentage. Clamped by the store.
+    opacity: int | None = None
+    # How far the film underneath it is blurred, in px. Clamped by the store.
+    blur: int | None = None
     ask_on_spend: bool | None = None
     ask_on_destructive: bool | None = None
     allow_paid_passes: bool | None = None

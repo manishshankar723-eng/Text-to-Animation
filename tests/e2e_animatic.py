@@ -92,15 +92,17 @@ with sync_playwright() as pw:
     print("\n=== 2. Video Editor library ===")
     page.click("text=Video Editor")
     page.wait_for_selector(".lib-new", timeout=15000)
-    check("page title", page.locator(".wf-title").inner_text().strip() == "Your Animatics",
+    check("page title", page.locator(".wf-title").inner_text().strip() == "Your Projects",
           page.locator(".wf-title").inner_text().strip())
     tiles = page.locator(".lib-new-row .lib-new")
     check("two New tiles", tiles.count() == 2, str(tiles.count()))
     a, b = tiles.nth(0).bounding_box(), tiles.nth(1).bounding_box()
     check("the two tiles sit SIDE BY SIDE", abs(a["y"] - b["y"]) < 4 and b["x"] > a["x"],
           f"y {a['y']:.0f}/{b['y']:.0f}")
+    # ⚠ ONE SECTION, NOT TWO. "All Animatics" used to repeat the whole list
+    # underneath "Recent", so the newest project was drawn on the page twice.
     heads = page.locator(".lib-section-title").all_inner_texts()
-    check("Recent + All sections", heads == ["Recent Animatics", "All Animatics"], str(heads))
+    check("one Recent Projects section", heads == ["Recent Projects"], str(heads))
 
     print("\n=== 2b. open it, touch nothing, leave — it must NOT be kept ===")
     def server_count():
@@ -111,7 +113,7 @@ with sync_playwright() as pw:
     page.wait_for_selector(".an-nle", timeout=15000)
     check("New goes straight into the editor", page.locator(".an-name-modal").count() == 0)
     page.wait_for_timeout(700)
-    page.click("text=← Your Animatics")
+    page.click(".an-topbar .back-btn")
     page.wait_for_selector(".lib-new", timeout=15000)
     page.wait_for_timeout(900)
     # The reported bug: an untouched animatic used to be kept, so the library
@@ -122,7 +124,13 @@ with sync_playwright() as pw:
     print("\n=== 3. open the editor (this one gets used) ===")
     page.click(".lib-new-row .lib-new >> nth=0")
     page.wait_for_selector(".an-nle", timeout=15000)
-    check("one exists while it's open", server_count() == before + 1, str(server_count()))
+    # ⚠ NOTHING IS CREATED BY OPENING THE EDITOR ANY MORE. The project is born
+    # at the first real action — here that is the "Save as…" a few steps down.
+    # It used to be created on the way in and discarded on the way out, and the
+    # discard only ran on ←, so every other exit left an empty "Untitled
+    # Project" in the library for ever.
+    check("opening the editor creates NOTHING yet", server_count() == before,
+          f"{server_count()} vs {before} before")
     for region in ("an-topbar", "an-pane-media", "an-pane-program", "an-pane-props", "an-pane-timeline"):
         box = page.locator(f".{region}").bounding_box()
         check(f"{region} rendered with real size", box and box["width"] > 40 and box["height"] > 20,
@@ -149,8 +157,9 @@ with sync_playwright() as pw:
     save_btn = page.locator(".an-topbar button", has_text="Save")
     check("Save sits BEFORE Export",
           save_btn.bounding_box()["x"] < page.locator(".an-export").bounding_box()["x"])
-    check("Delete sits AFTER Export",
-          page.locator(".an-del-btn").bounding_box()["x"] > page.locator(".an-export").bounding_box()["x"])
+    check("the ⚙ menu (which holds Delete) sits AFTER Export",
+          page.locator(".an-settings-btn").bounding_box()["x"]
+          > page.locator(".an-export").bounding_box()["x"])
     # An unnamed animatic must ASK for a name when you press Save — that is the
     # "save as" moment.
     check("Save on an unnamed animatic opens the name panel",
@@ -169,6 +178,10 @@ with sync_playwright() as pw:
           page.locator(".an-title").input_value())
     page.wait_for_timeout(1200)
     check("a NAMED animatic saves without asking again", save_btn.is_disabled())
+    # Naming it IS doing something with it — that is the moment the project is
+    # created on the server. See `ensureProject` in AnimaticEditor.jsx.
+    check("naming it is what creates the project", server_count() == before + 1,
+          f"{server_count()} vs {before} before")
 
     page.locator(".an-title").fill("Renamed by the test")
     page.wait_for_timeout(150)
@@ -181,7 +194,9 @@ with sync_playwright() as pw:
     check("...and then goes quiet again",
           page.locator(".an-save").inner_text().strip() == "",
           repr(page.locator(".an-save").inner_text().strip()))
-    page.click(".an-del-btn")
+    page.click(".an-settings-btn")
+    page.wait_for_timeout(250)
+    page.click(".an-settings-menu button:has-text('Delete project')")
     page.wait_for_timeout(250)
     check("Delete asks first", page.locator(".an-del-confirm").count() == 1)
     page.locator(".an-del-confirm button", has_text="Cancel").click()
@@ -261,7 +276,7 @@ with sync_playwright() as pw:
           pane.locator(".an-media-audio").count() == 0)
 
     print("\n=== 6. add images AND audio through that one control ===")
-    page.locator('input[accept="image/*,audio/*"]').set_input_files(IMAGES + [WAV])
+    page.locator('input[accept="image/*,video/*,audio/*"]').set_input_files(IMAGES + [WAV])
     page.wait_for_selector(".wave-canvas", timeout=30000)
     page.wait_for_selector(".fs-card:not(.fs-add)", timeout=30000)
     page.wait_for_timeout(1500)
@@ -447,7 +462,7 @@ with sync_playwright() as pw:
 
     print("\n=== 12b. an un-exported animatic must not claim to be exporting ===")
     page.set_viewport_size({"width": 1600, "height": 950})
-    page.click("text=← Your Animatics")
+    page.click(".an-topbar .back-btn")
     page.wait_for_selector(".lib-new", timeout=15000)
     page.wait_for_timeout(900)
     # ⚠ THE STATUS MOVED FROM THE THUMBNAIL TO THE DETAILS COLUMN when the

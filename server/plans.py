@@ -248,14 +248,81 @@ def create_plan(
     return _detail(job)
 
 
+# ---------------------------------------------------------------------------
+# GHOST SESSIONS — rows nobody ever said anything in
+# ---------------------------------------------------------------------------
+# ⚠ SAME RULE AS THE EDITOR'S LIBRARY (`_is_ghost` in animatics.py), and it is
+# here because a live audit found one: an "Untitled plan" with no messages, no
+# calendar and no channel, sitting in the list. Creating the session IS lazy
+# here — `ensureSession` in `PlanAndScript.jsx` only fires on a real action —
+# but a create that succeeds and is then followed by a failed first message, or
+# by the tab being closed, still leaves the record behind. A session nobody
+# said anything in is not a session.
+#
+# ⚠ AND UNLIKE THE EDITOR'S, THIS ONE WAITS BEFORE HIDING ANYTHING. There, the
+# row is only ever looked at from the library, after the user has left the
+# editor. Here the session is created and the list is refreshed IN THE SAME
+# ACTION, while the first message is still in flight — a model turn is tens of
+# seconds — so hiding on sight would take the session the user is sitting in
+# off their own sidebar until the reply landed. Ten minutes is far longer than
+# any turn and far shorter than "I abandoned this".
+_UNTITLED_PLANS = {"", "Untitled plan"}
+GHOST_HIDE_AFTER_S = 10 * 60
+GHOST_MAX_AGE_S = 24 * 3600
+GHOST_SWEEP_PER_CALL = 20
+
+
+def _is_ghost_plan(job) -> bool:
+    """Empty AND never named — i.e. not a planning session at all."""
+    if (job.character_name or "").strip() not in _UNTITLED_PLANS:
+        return False  # a name the user chose is content in itself
+    p = job.params or {}
+    return not (
+        p.get("messages")
+        or p.get("scripts")
+        or (p.get("plan") or {}).get("items")
+        or (p.get("channel") or {})
+    )
+
+
+def _older_than(stamp: str, seconds: int) -> bool:
+    """Is this ISO timestamp further back than `seconds`? Unreadable ⇒ no."""
+    try:
+        t = datetime.fromisoformat(stamp or "")
+    except (TypeError, ValueError):
+        return False
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - t).total_seconds() > seconds
+
+
 @router.get("", response_model=list[PlanSummary])
 def list_plans(
     limit: int = Query(50, ge=1, le=200),
     current: CurrentUser = Depends(get_current_user),
 ):
-    """The caller's planning sessions, newest first."""
+    """The caller's planning sessions, newest first.
+
+    ⚠ An empty, never-named session is not listed — see `_is_ghost_plan`.
+    """
     jobs = get_store().list(limit=limit, owner=current.email, kinds=[JobKind.PLAN])
-    return [_summary(j) for j in jobs]
+    rows: list[PlanSummary] = []
+    swept = 0
+    for j in jobs:
+        stamp = j.updated_at or j.created_at
+        if _is_ghost_plan(j) and _older_than(stamp, GHOST_HIDE_AFTER_S):
+            if swept < GHOST_SWEEP_PER_CALL and _older_than(
+                stamp, GHOST_MAX_AGE_S
+            ):
+                swept += 1
+                try:
+                    get_store().delete(j.job_id)
+                    logger.info("[plan %s] swept: empty and never named", j.job_id)
+                except Exception:
+                    logger.exception("[plan %s] sweep failed", j.job_id)
+            continue
+        rows.append(_summary(j))
+    return rows
 
 
 @router.get("/{job_id}", response_model=PlanDetail)

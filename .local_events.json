@@ -1,0 +1,52 @@
+[
+  {
+    "id": "cb7abb176b9a4c0ea7722f67d1db84c0",
+    "at": "2026-09-03T20:08:48.371825+00:00",
+    "type": "user.registered",
+    "email": "pw@example.com",
+    "actor": null,
+    "ip": "127.0.0.1",
+    "user_agent": "python-requests/2.34.2",
+    "meta": {}
+  },
+  {
+    "id": "2b9ba96cd6be4da88135046df5ab14a0",
+    "at": "2026-09-03T20:08:48.596856+00:00",
+    "type": "user.login",
+    "email": "pw@example.com",
+    "actor": null,
+    "ip": "127.0.0.1",
+    "user_agent": "python-requests/2.34.2",
+    "meta": {}
+  },
+  {
+    "id": "769a5cb35c3a452883d5400074e74347",
+    "at": "2026-09-03T20:09:56.544385+00:00",
+    "type": "user.login",
+    "email": "pw@example.com",
+    "actor": null,
+    "ip": "127.0.0.1",
+    "user_agent": "python-requests/2.34.2",
+    "meta": {}
+  },
+  {
+    "id": "2ea1fad89e98428c8b01867afbb03f72",
+    "at": "2026-09-03T20:11:13.319895+00:00",
+    "type": "user.login",
+    "email": "pw@example.com",
+    "actor": null,
+    "ip": "127.0.0.1",
+    "user_agent": "python-requests/2.34.2",
+    "meta": {}
+  },
+  {
+    "id": "a84d5c1da64549edb75cbb7493ce056c",
+    "at": "2026-09-03T20:12:18.768587+00:00",
+    "type": "user.login",
+    "email": "pw@example.com",
+    "actor": null,
+    "ip": "127.0.0.1",
+    "user_agent": "python-requests/2.34.2",
+    "meta": {}
+  }
+]

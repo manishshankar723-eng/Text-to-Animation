@@ -97,6 +97,16 @@ def config(
     return EditorChatConfig(
         enabled=enabled,
         dock=row.get("dock") or chat_settings.DOCK_RIGHT,
+        # ⚠ NOT `or 100`. Zero is a REAL setting now that the floor is gone —
+        # a panel with no ground at all — and `0 or 100` is 100, so the one value
+        # at the very end of the operator's slider would have arrived as its
+        # opposite. Every other field on this response can use `or` because "" and
+        # 0 are not answers there; this one they are.
+        opacity=int(row["opacity"] if row.get("opacity") is not None else 100),
+        # ⚠ `is not None` FOR THE SAME REASON — 0 is the shipped default here, so
+        # `or 0` would have been harmless by luck and wrong by rule. Both of these
+        # fields have a legal zero; neither may use `or`.
+        blur=int(row["blur"] if row.get("blur") is not None else 0),
         greeting=row.get("greeting") or "",
         max_turns_per_session=int(row.get("max_turns_per_session") or 0),
         transcript_keep=int(row.get("transcript_keep") or 20),

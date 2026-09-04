@@ -96,6 +96,11 @@ export default function AdminChat() {
   // "200" — three tier writes and three audit records for one edit.
   const [turns, setTurns] = useState({});
   const [greeting, setGreeting] = useState("");
+  // ⚠ HELD WHILE THE SLIDER IS MOVING, SAVED WHEN IT IS LET GO — the same rule
+  // the Features tab's rollout percentage follows. A save on every `change` is
+  // one audit record per pixel dragged.
+  const [opacity, setOpacity] = useState(100);
+  const [blur, setBlur] = useState(0);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -105,6 +110,8 @@ export default function AdminChat() {
       .then((r) => {
         setRow(r);
         setGreeting(r.settings?.greeting || "");
+        setOpacity(r.settings?.opacity ?? 100);
+        setBlur(r.settings?.blur ?? 0);
         setTurns(
           Object.fromEntries(
             (r.tiers || []).map((t) => [t.id, t.turns === null ? "" : String(t.turns)])
@@ -125,6 +132,8 @@ export default function AdminChat() {
       const saved = await call();
       setRow(saved);
       setGreeting(saved.settings?.greeting || "");
+      setOpacity(saved.settings?.opacity ?? 100);
+      setBlur(saved.settings?.blur ?? 0);
       setTurns(
         Object.fromEntries(
           (saved.tiers || []).map((t) => [t.id, t.turns === null ? "" : String(t.turns)])
@@ -246,6 +255,98 @@ export default function AdminChat() {
               </span>
             </label>
           ))}
+          {/* ⚠ SAID ONCE, HERE, BECAUSE IT IS TRUE OF ALL THREE. Every dock can
+              be resized by the customer — the two pinned ones by the edge that
+              faces the editor, the floating one by its bottom-right corner —
+              and only the floating one can be picked up and moved. Putting that
+              in each dock's own note would have been three copies of one
+              sentence that then disagreed the first time one changed. */}
+          <p className="muted tiny admin-rollout-note">
+            Whichever you pick, the customer can drag the panel wider or narrower
+            and it is remembered in their browser. <strong>Only the floating
+            window can be moved</strong> — the other two are pinned to an edge.
+          </p>
+        </div>
+      </section>
+
+      {/* ============================================== how see-through it is = */}
+      <section className="card admin-card">
+        <div className="admin-section-head">
+          <div>
+            <h2 className="admin-h2">How see-through the panel is</h2>
+            <p className="muted tiny admin-group-blurb">
+              At 100% it is a solid panel. At 0% it has no background at all and
+              the film shows straight through the words. <strong>Judge it with
+              the editor open in both themes</strong> — the light theme is a
+              white panel over a near-white page, so it needs a much lower number
+              than the dark one before anything looks different.{" "}
+              <strong>This is yours, not theirs</strong>: the editor has no slider
+              for it, so a panel nobody can read is not something a customer can
+              do to themselves.
+            </p>
+          </div>
+        </div>
+        <div className="admin-rollout">
+          <label className="admin-rollout-row wide">
+            <span className="muted tiny">Panel solidity</span>
+            <span className="admin-pct">
+              <input
+                type="range"
+                min={bounds.opacity?.min ?? 0}
+                max={bounds.opacity?.max ?? 100}
+                step={5}
+                value={opacity}
+                disabled={!!busy}
+                onChange={(e) => setOpacity(Number(e.target.value))}
+                onMouseUp={() => save({ opacity })}
+                onTouchEnd={() => save({ opacity })}
+                onKeyUp={() => save({ opacity })}
+                title="100% is solid. Lower lets the timeline show through the chat."
+              />
+              <span className="admin-pct-num">{opacity}%</span>
+            </span>
+          </label>
+          {/* ⚠ THE SECOND HALF OF THE SAME DECISION, AND IT IS A SLIDER FOR
+              THE SAME REASON THE FIRST ONE IS. Blur shipped hard-coded at 16px
+              (invisible in the light theme, where white frosts onto white), was
+              then removed entirely (and the text became hard to read at low
+              opacity) — one number picked for every screen, wrong twice. It only
+              does anything while the panel is see-through, which is why it is
+              disabled and says so at 100%. */}
+          <label className="admin-rollout-row wide">
+            <span className="muted tiny">Blur behind it</span>
+            <span className="admin-pct">
+              <input
+                type="range"
+                min={bounds.blur?.min ?? 0}
+                max={bounds.blur?.max ?? 40}
+                step={2}
+                value={blur}
+                disabled={!!busy || opacity >= 100}
+                onChange={(e) => setBlur(Number(e.target.value))}
+                onMouseUp={() => save({ blur })}
+                onTouchEnd={() => save({ blur })}
+                onKeyUp={() => save({ blur })}
+                title="Softens the film behind the panel so the chat stays readable. Does nothing while the panel is solid."
+              />
+              <span className="admin-pct-num">{blur}px</span>
+            </span>
+          </label>
+          {/* ⚠ THE WHOLE OPACITY RANGE IS OPEN, AND THAT IS THE POINT — the floor
+              used to be 40, chosen off the DARK theme, and in the light theme 40%
+              white over a white page is a difference nobody can see. Judging it
+              is the operator's job now, so the screen says what the low end
+              actually costs instead of pretending a number is unsafe. */}
+          <p className="muted tiny admin-rollout-note">
+            Solidity is the whole story on its own — at 60% the panel covers 60%
+            of what is behind it, the same in both themes.{" "}
+            <strong>Blur is what makes the words readable</strong> once you go
+            low: it softens the film underneath instead of covering it, so the
+            chat stays legible over a busy timeline.{" "}
+            {opacity >= 100
+              ? "It is switched off here because a solid panel has nothing behind it to blur."
+              : "Try 12–20px if the text is hard to read at this solidity."}
+          </p>
         </div>
       </section>
 

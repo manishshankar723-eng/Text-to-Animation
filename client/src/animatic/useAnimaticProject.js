@@ -52,7 +52,17 @@ function signatureOf(doc) {
 
 
 /**
- * @param animaticId  which project to open
+ * @param animaticId  which project to open — NULL while the editor is holding a
+ *                    blank draft nothing has been done to yet
+ * @param draft       true when this editor was opened on New Project rather
+ *                    than on a saved one. ⚠ IT NEVER LOADS: the document is the
+ *                    empty one in memory, and it stays that way even after
+ *                    `ensureId` mints a real project mid-session — re-reading it
+ *                    from the server then would throw away the very edit that
+ *                    created it.
+ * @param draftTitle  the placeholder name a draft opens with
+ * @param ensureId    creates the project on demand and answers its id. A draft
+ *                    has nowhere to save to until this has been called once.
  * @param serverBusy  true while the server owns this job (an export encoding or
  *                    a Veo batch rendering). `save_animatic` refuses to write
  *                    through either, so the autosave stands down and retries.
@@ -67,10 +77,26 @@ function signatureOf(doc) {
  *                    would never be saved.
  * @param onError     the editor's error banner
  */
-export default function useAnimaticProject({ animaticId, serverBusy, onLoaded, onError }) {
-  const [loading, setLoading] = useState(true);
+export default function useAnimaticProject({
+  animaticId,
+  draft = false,
+  draftTitle = "",
+  ensureId,
+  serverBusy,
+  onLoaded,
+  onError,
+}) {
+  // ⚠ A DRAFT IS NEVER "LOADING" — there is nothing to fetch, so starting at
+  // `true` would flash "Opening your project…" over an editor that is already
+  // ready. Same reasoning as the title below it.
+  const [loading, setLoading] = useState(!draft);
 
-  const [title, setTitle] = useState("");
+  // ⚠ A DRAFT OPENS ALREADY CARRYING THE PLACEHOLDER, as its initial state and
+  // NOT from an effect. Setting it after the first render would move the
+  // document's signature away from the baseline just adopted, so a blank editor
+  // nobody had touched would read as "unsaved" and autosave itself into
+  // existence — which is the exact thing this draft mode exists to prevent.
+  const [title, setTitle] = useState(draft ? draftTitle : "");
   const [frames, setFrames] = useState([]);
   const [settings, setSettings] = useState({
     aspect_ratio: "16:9",
@@ -144,8 +170,27 @@ export default function useAnimaticProject({ animaticId, serverBusy, onLoaded, o
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
 
+  const ensureIdRef = useRef(ensureId);
+  ensureIdRef.current = ensureId;
+
   // ---------------------------------------------------------------- loading
   useEffect(() => {
+    // ⚠ A DRAFT HAS NOTHING TO LOAD, and it must not grow one later either.
+    // `animaticId` goes null → real the moment the first edit creates the
+    // project, which re-runs this effect: fetching then would replace the
+    // frames the user has just added with the empty project the server was
+    // just handed. Guarded by `loadedRef` rather than by the dependency list so
+    // it initialises exactly once — and it does NOT clear that flag on the way
+    // out, because adopting a second baseline mid-session would mark unsaved
+    // work as saved.
+    if (draft) {
+      if (!loadedRef.current) {
+        setLoading(false);
+        adoptBaselineRef.current = true;
+        loadedRef.current = true;
+      }
+      return undefined;
+    }
     let alive = true;
     setLoading(true);
     api
@@ -192,7 +237,7 @@ export default function useAnimaticProject({ animaticId, serverBusy, onLoaded, o
       alive = false;
       loadedRef.current = false;
     };
-  }, [animaticId]);
+  }, [animaticId, draft, draftTitle]);
 
   // ---------------------------------------------------------------- saving
   /**
@@ -225,6 +270,30 @@ export default function useAnimaticProject({ animaticId, serverBusy, onLoaded, o
       const base = docRef.current;
       if (!base) return;
       const doc = patch ? { ...base, ...patch } : base;
+      // ⚠ THE FIRST SAVE OF A DRAFT IS WHAT CREATES THE PROJECT. Everything
+      // else that needs a server (an upload, an import) has already called this
+      // for itself; this is the path for an edit that needs none — a colour
+      // card, a caption, a changed aspect ratio.
+      let id = animaticId;
+      if (!id) {
+        try {
+          id = await ensureIdRef.current?.();
+        } catch (e) {
+          setSaveState("error");
+          onErrorRef.current?.(e.message);
+          // ⚠ RE-THROWN FOR A PATCHED FLUSH, exactly as a failed save is below:
+          // a caller that saves on purpose and then acts on the result must not
+          // be told a write happened when the project was never even created.
+          if (patch) throw e;
+          return;
+        }
+      }
+      if (!id) {
+        // Nowhere to save to and nothing lost — the edit stays dirty and the
+        // next autosave tries again.
+        if (patch) throw new Error("This project could not be created.");
+        return;
+      }
       dirtyRef.current = false;
       // Captured BEFORE the request: if the user edits while it's in flight, the
       // new signature won't match this and the project correctly stays dirty.
@@ -234,7 +303,7 @@ export default function useAnimaticProject({ animaticId, serverBusy, onLoaded, o
       const sent = patch ? signatureOf(doc) : base.signature;
       setSaveState("saving");
       try {
-        await api.saveAnimatic(animaticId, {
+        await api.saveAnimatic(id, {
           title: doc.title,
           settings: doc.settings,
           frames: doc.frames.map(frameForSave),

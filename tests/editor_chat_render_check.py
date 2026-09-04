@@ -178,10 +178,26 @@ out.scoring = draw({ ...base, scoring: "Finding 2 sounds…", running: true, tur
   ...soundTurn, applied: true, steps: 1,
 }] });
 
-// ------------------------------------------------------------- the two docks
+// ----------------------------------------------------------- the three docks
 out.dockRight = draw(base, { dock: "right" });
 out.dockSide = draw(base, { dock: "sidebar" });
+out.dockFloat = draw(base, { dock: "float" });
 out.dockUser = draw(base, { dock: "user" });
+
+// ------------------------------------------- how see-through the operator set
+out.solid = draw(base, { dock: "right", opacity: 100 });
+out.seeThrough = draw(base, { dock: "right", opacity: 60 });
+// ⚠ ZERO IS A REAL SETTING, NOT AN ABSENT ONE. `opacity: 0` went through an
+// `or 100` on the server once and came back as its opposite; the client has the
+// same trap in `?? 100` / `|| 100`.
+out.invisible = draw(base, { dock: "right", opacity: 0 });
+// ⚠ THE BLUR IS A SECOND SETTING AND IT IS GATED ON BOTH. `backdrop-filter` at
+// any value promotes the panel to its own compositing layer over a playing
+// timeline, so it is only worth paying for when there is something showing
+// through AND the operator asked for it.
+out.blurred = draw(base, { dock: "right", opacity: 60, blur: 16 });
+out.blurOnSolid = draw(base, { dock: "right", opacity: 100, blur: 16 });
+out.seeThroughNoBlur = draw(base, { dock: "right", opacity: 60, blur: 0 });
 
 // ------------------------------------------------- blocked, and unlimited
 out.blocked = draw({ ...base, blocked: "You've used all 500 AI Editor messages this month." });
@@ -328,12 +344,69 @@ def main() -> int:
     check("…and Undo is withheld until it has finished",
           "Undo this edit" not in out["scoring"] and "Undo this edit" in out["scored"])
 
-    print("\n6 · Both docks are real, and the switcher only appears when it should\n")
+    print("\n6 · All three docks are real, and the switcher only appears when it should\n")
     check("the right-hand dock", "ec-dock-right" in out["dockRight"])
     check("the sidebar dock", "ec-dock-sidebar" in out["dockSide"])
+    check("the floating window", "ec-dock-float" in out["dockFloat"])
     check("a locked deployment shows no dock switcher",
           "ec-dock-pick" not in out["dockRight"] and "ec-dock-pick" not in out["dockSide"])
     check("'let each person choose' shows it", "ec-dock-pick" in out["dockUser"])
+    check("…and it offers the floating window too", "Floating window" in out["dockUser"])
+
+    print("\n6a · It can be moved and it can be resized — and those are different\n")
+    # ⚠ THE FLOATING WINDOW IS PLACED BY JAVASCRIPT, NOT BY THE STYLESHEET, so
+    # the geometry has to be in the markup or the panel opens full-height in the
+    # corner. `left:` is the one that proves the inline style went on at all.
+    check("the floating window carries its own position",
+          "left:" in out["dockFloat"] and "top:" in out["dockFloat"],
+          out["dockFloat"][:160])
+    # ⚠ ONLY THE FLOATING ONE MOVES. A `left:` on the right-hand dock would mean
+    # the panel had come off the edge it is supposed to be pinned to.
+    check("…and the pinned docks do not",
+          "left:" not in out["dockRight"].split(">")[0])
+    check("the floating window has a corner to resize by",
+          "ec-grip" in out["dockFloat"])
+    check("…and it says so on hover, not in the panel",
+          "Drag to resize" in out["dockFloat"])
+    check("the title bar says it can be dragged",
+          "Drag to move the panel" in out["dockFloat"])
+    # ⚠ THE PINNED DOCKS RESIZE TOO — by the workspace's own seam, not by a
+    # second handle written for this panel. `an-split` is `PaneSplitter`'s class.
+    # ⚠ AND IT IS ABSENT ON THE FIRST PAINT ON PURPOSE: the width is measured off
+    # the real element in an effect, and `react-dom/server` runs no effects. What
+    # this pins is that the seam is NEVER on the floating window, which has a
+    # corner instead — two resize affordances on one panel is the bug.
+    check("the floating window has no edge seam", "an-split" not in out["dockFloat"])
+
+    print("\n6b · How see-through it is, and whose decision that is\n")
+    check("the operator's number reaches the panel", "--ec-opacity:60" in
+          out["seeThrough"].replace("--ec-opacity: 60", "--ec-opacity:60"),
+          out["seeThrough"][:200])
+    check("…and see-through is a class, so a solid panel pays for nothing",
+          "is-see-through" in out["seeThrough"])
+    check("a solid panel is not made see-through", "is-see-through" not in out["solid"])
+    check("⚠ zero survives as zero, and is not read as 'no setting'",
+          "--ec-opacity:0" in out["invisible"].replace("--ec-opacity: 0", "--ec-opacity:0")
+          and "is-see-through" in out["invisible"],
+          out["invisible"][:200])
+    # ⚠ THE CUSTOMER HAS NO SLIDER FOR THIS, AND MUST NOT GROW ONE. A panel a
+    # customer can fade until they cannot read it has no way back — see the note
+    # at the top of `EditorChat.jsx`.
+    check("the operator's blur reaches the panel", "--ec-blur:16" in
+          out["blurred"].replace("--ec-blur: 16", "--ec-blur:16")
+          and "is-blurred" in out["blurred"],
+          out["blurred"][:220])
+    # ⚠ BOTH GATES, AND EACH ONE ON ITS OWN. A blur on a solid panel is a
+    # per-frame GPU cost over a playing timeline for an effect nobody can see,
+    # and a `blur(0px)` costs the same layer as a `blur(16px)`.
+    check("…and a blur on a SOLID panel is not paid for",
+          "is-blurred" not in out["blurOnSolid"])
+    check("…nor is a blur of zero on a see-through one",
+          "is-blurred" not in out["seeThroughNoBlur"]
+          and "is-see-through" in out["seeThroughNoBlur"])
+    check("the customer is offered no transparency control",
+          "opacity" not in out["dockUser"].lower().replace("--ec-opacity", "")
+          and "blur" not in out["dockUser"].lower().replace("--ec-blur", ""))
 
     print("\n7 · The allowance is shown before it runs out, not at the refusal\n")
     check("the count is on screen", "3 of 500 messages" in out["empty"])

@@ -195,7 +195,7 @@ import { ACTION_API } from "../animatic/agent/actions.js";
 // pane lists the LIBRARY now (`MediaBin`), so the component has no reader here —
 // its file-name sort still does, on every upload path.
 import { sortFiles } from "./FrameStrip.jsx";
-import { UNTITLED, isUntitled } from "./AnimaticLibrary.jsx";
+import { NEW_DRAFT, UNTITLED, isUntitled } from "./AnimaticLibrary.jsx";
 import Timeline, { formatTime } from "./Timeline.jsx";
 import Icon from "./Icon.jsx";
 // The account dropdown, shared with the sidebar — see AccountMenu.jsx for why
@@ -809,7 +809,10 @@ function measureAudio(file) {
 }
 
 export default function AnimaticEditor({
-  animaticId,
+  // ⚠ MAY BE `NEW_DRAFT` — "a project that does not exist yet". See
+  // `ensureProject` below; `animaticId` inside this component is the REAL id
+  // and is `null` until there is one.
+  animaticId: openedId,
   onBack,
   onDeleted,
   onMakeFinalVideo,
@@ -830,6 +833,59 @@ export default function AnimaticEditor({
 }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+
+  // ------------------------------------------------- THE PROJECT'S OWN ID
+  // ⚠ A NEW PROJECT IS NOT CREATED UNTIL THE USER DOES SOMETHING IN IT, and
+  // that is the whole of this block. New Project used to POST a project on the
+  // way in, and the editor discarded it again on the way out if it was still
+  // empty — but that discard only runs on the ← button, so the sidebar, a
+  // refresh or a closed tab each left an empty "Untitled Project" in the
+  // library for ever (and spent a slot of the account's project quota).
+  // Reported with a screenshot of four of them: "i did nothing in this project
+  // but it shows here".
+  //
+  // So a blank start opens on NOTHING: `animaticId` is null, the document is
+  // the empty one this component starts with, and `ensureProject()` mints the
+  // real project at the FIRST thing that needs a server — an upload, an import,
+  // a draw, or the first autosave. Do nothing and go back and nothing was ever
+  // made.
+  const isDraft = openedId === NEW_DRAFT;
+  const [createdId, setCreatedId] = useState(null);
+  const animaticId = isDraft ? createdId : openedId;
+  // The id read from inside an async flow that has just created it — state is a
+  // render behind, and the url a fresh upload is served from cannot wait.
+  const idRef = useRef(animaticId);
+  idRef.current = animaticId;
+  // One create per session, however many uploads race into it: the first caller
+  // starts it and everybody else awaits the same promise.
+  const creatingRef = useRef(null);
+
+  /**
+   * The project's id, creating the project if this is still a blank draft.
+   *
+   * ⚠ AWAIT IT AND USE WHAT IT RETURNS — never the `animaticId` in scope. The
+   * value in a closure that started before the create is `null` and stays
+   * `null`, so a url built from it (`/animatics/null/media/…`) 404s for ever:
+   * the fetch caches nothing on failure and does not retry, which is exactly
+   * how an imported board came to be forty-two black tiles once before.
+   */
+  const ensureProject = useCallback(async () => {
+    if (idRef.current) return idRef.current;
+    if (!creatingRef.current) {
+      creatingRef.current = api
+        .createAnimatic({ title: UNTITLED })
+        .then((project) => {
+          idRef.current = project.job_id;
+          setCreatedId(project.job_id);
+          return project.job_id;
+        })
+        .catch((e) => {
+          creatingRef.current = null; // a failed create must be retryable
+          throw e;
+        });
+    }
+    return creatingRef.current;
+  }, []);
 
   // --- Media ---
   const [urls, setUrls] = useState({}); // frame id → object URL
@@ -1283,6 +1339,12 @@ export default function AnimaticEditor({
     loadedRef, dirtyRef, baselineRef,
   } = useAnimaticProject({
     animaticId,
+    // A blank start has nothing to load and nowhere to save — until the first
+    // edit calls `ensureProject` and there is a project. See the block at the
+    // top of this component.
+    draft: isDraft,
+    draftTitle: UNTITLED,
+    ensureId: ensureProject,
     serverBusy,
     onLoaded: (p) => onLoadedRef.current(p),
     onError: setError,
@@ -4745,7 +4807,7 @@ export default function AnimaticEditor({
         const file = new File([blob], `${frame.label || "frame"}.${type.split("/")[1] || "png"}`, {
           type,
         });
-        const res = await api.uploadAnimaticImages(animaticId, [file]);
+        const res = await api.uploadAnimaticImages(await ensureProject(), [file]);
         uploadId = res.items?.[0]?.upload_id || "";
         if (!uploadId) {
           setNotice("That picture could not be copied onto the layer.");
@@ -4775,7 +4837,7 @@ export default function AnimaticEditor({
         h: 0.3,
         opacity: 1,
         rotation: 0,
-        url: `/animatics/${animaticId}/media/${uploadId}`,
+        url: `/animatics/${idRef.current}/media/${uploadId}`,
       };
       setOverlays((list) => [...list, overlay]);
       selectOnly({ overlay: overlay.id });
@@ -4989,7 +5051,7 @@ export default function AnimaticEditor({
     // `kind` and `src` exactly as a card does, which is the whole reason one
     // handler can serve both — see `assetFromFrame`.
     const path = src.upload_id
-      ? `/animatics/${animaticId}/media/${src.upload_id}`
+      ? `/animatics/${idRef.current}/media/${src.upload_id}`
       : assetUrl(animaticId, { kind: item.kind || "image", src });
     if (!path) return;
     const ext = video ? "mp4" : "png";
@@ -5160,7 +5222,7 @@ export default function AnimaticEditor({
           offset_ms: 0,
           volume: 1,
           muted: false,
-          url: `/animatics/${animaticId}/media/${card.upload_id}`,
+          url: `/animatics/${idRef.current}/media/${card.upload_id}`,
         };
         setAudioTracks((list) => [...list, clip]);
         selectOnly({ track: clipId(clip) });
@@ -5385,7 +5447,8 @@ export default function AnimaticEditor({
     setUploading(true);
     setError("");
     try {
-      const res = await api.uploadAnimaticImages(animaticId, images);
+      const id = await ensureProject(); // creates the project on a blank start
+      const res = await api.uploadAnimaticImages(id, images);
       // The playhead for the ＋ and the picker; the drop point for a file
       // dragged straight onto the row (`dropAsset`).
       const start = Math.round(startMs === undefined ? timeRef.current : startMs);
@@ -5401,7 +5464,7 @@ export default function AnimaticEditor({
         h: 0.3,
         opacity: 1,
         rotation: 0,
-        url: `/animatics/${animaticId}/media/${item.upload_id}`,
+        url: `/animatics/${id}/media/${item.upload_id}`,
       }));
       setOverlays((list) => [...list, ...added]);
       // The same uploads a still would make, so they list in the library beside
@@ -5848,14 +5911,18 @@ export default function AnimaticEditor({
     setUploading(true);
     setError("");
     try {
-      const res = await api.uploadAnimaticImages(animaticId, files);
+      // ⚠ THE ID COMES BACK FROM HERE, and every url below is built from THAT.
+      // On a blank project this call is what creates it, so the `animaticId` in
+      // this closure is still null. See `ensureProject`.
+      const id = await ensureProject();
+      const res = await api.uploadAnimaticImages(id, files);
       const added = (res.items || []).map((item) => ({
         id: newId(),
         src: { kind: "upload", upload_id: item.upload_id },
         duration_ms: 2000,
         label: "",
         // Uploads are servable immediately, before the project is saved.
-        url: `/animatics/${animaticId}/media/${item.upload_id}`,
+        url: `/animatics/${id}/media/${item.upload_id}`,
       }));
       // ⚠ ONTO A TRACK, AT A TIME. `insertPictures` gives the newcomers explicit
       // starts and ripples what follows them on that row — a list splice alone
@@ -5897,13 +5964,14 @@ export default function AnimaticEditor({
     setUploading(true);
     setError("");
     try {
-      const res = await api.uploadAnimaticVideos(animaticId, files);
+      const id = await ensureProject(); // creates the project on a blank start
+      const res = await api.uploadAnimaticVideos(id, files);
       const added = (res.items || []).map((item) =>
         newVideoClip(
           item.upload_id,
           item.duration_ms,
           (item.filename || "").replace(/\.[^.]+$/, ""),
-          animaticId
+          id
         )
       );
       // ⚠ ONTO A TRACK, AT A TIME. `insertPictures` gives the newcomers explicit
@@ -6001,7 +6069,12 @@ export default function AnimaticEditor({
     setBoardBusy(true);
     setBoardError("");
     try {
-      const res = await api.importStoryboardIntoAnimatic(animaticId, boardPick);
+      // ⚠ THE ID COMES BACK FROM HERE. Importing a board into a blank project
+      // is the create, so the closure's `animaticId` is still null — and the
+      // frame urls a few lines down are the ones that 404 for ever if they are
+      // built from it. See the note above about black tiles.
+      const id = await ensureProject();
+      const res = await api.importStoryboardIntoAnimatic(id, boardPick);
       const added = res.frames || [];
       if (!added.length) {
         setBoardError("That board has no drawn panels yet.");
@@ -6030,7 +6103,7 @@ export default function AnimaticEditor({
       const placed = insertPictures(framesRef.current, added, undefined, track, null);
       const fresh = new Set(added.map((f) => f.id));
       const next = placed.map((f) =>
-        fresh.has(f.id) ? { ...f, url: `/animatics/${animaticId}/frame/${f.id}` } : f
+        fresh.has(f.id) ? { ...f, url: `/animatics/${id}/frame/${f.id}` } : f
       );
       // ⚠ THE LIBRARY GOES UP IN THE SAME WRITE AS THE FRAMES. A panel imported
       // and then deleted before the debounce fired would otherwise be gone from
@@ -6204,12 +6277,12 @@ export default function AnimaticEditor({
         // The route these pictures are served out of — same as the board
         // import: they arrive on screen already pointing at something that
         // answers, and `url` is not part of what gets saved.
-        url: `/animatics/${animaticId}/frame/${f.id}`,
+        url: `/animatics/${idRef.current}/frame/${f.id}`,
       }));
       const tracks = sounds.map((a) => ({
         ...a,
         layer_id: laneFor.get(a.layer_id || "_import_0") || "",
-        url: `/animatics/${animaticId}/media/${a.upload_id}`,
+        url: `/animatics/${idRef.current}/media/${a.upload_id}`,
       }));
 
       // The lettering and the shapes, re-based onto the rows minted above. A
@@ -6565,7 +6638,7 @@ export default function AnimaticEditor({
         offset_ms: 0,
         volume: 1,
         muted: false,
-        url: `/animatics/${animaticId}/media/${upload.upload_id}`,
+        url: `/animatics/${idRef.current}/media/${upload.upload_id}`,
       },
     ]);
     // ⚠ THE FILE JOINS THE LIBRARY, and it is the file and not the clip. A
@@ -6603,8 +6676,9 @@ export default function AnimaticEditor({
       // ⚠ MEASURED IN THE BROWSER, IN PARALLEL WITH THE UPLOAD. The server has
       // no audio decoder and does not need one — an `imageio-ffmpeg` install
       // ships no ffprobe — so this is the only place the file's length is known.
+      const id = await ensureProject(); // creates the project on a blank start
       const [res, durationMs] = await Promise.all([
-        api.uploadAnimaticAudio(animaticId, file),
+        api.uploadAnimaticAudio(id, file),
         measureAudio(file),
       ]);
       placeAudioUpload(
@@ -6647,7 +6721,7 @@ export default function AnimaticEditor({
     // ⚠ THE ID, NOT THE PREVIEW URL THE CARD IS HOLDING. The server re-asks
     // Freesound where the file is, re-checks the licence, and only then
     // downloads — see `import_sound` in server/animatics.py.
-    const res = await api.importSound(animaticId, item.id);
+    const res = await api.importSound(await ensureProject(), item.id);
     placeAudioUpload(
       {
         upload_id: res.upload_id,
@@ -6746,7 +6820,7 @@ export default function AnimaticEditor({
       muted: false,
       fade_in_ms: Math.max(0, Math.round(clip.fade_in_ms || 0)),
       fade_out_ms: Math.max(0, Math.round(clip.fade_out_ms || 0)),
-      url: `/animatics/${animaticId}/media/${clip.upload_id}`,
+      url: `/animatics/${idRef.current}/media/${clip.upload_id}`,
     });
 
     if (sfx.length) {
@@ -7296,6 +7370,9 @@ export default function AnimaticEditor({
   // useEditorChat.js for why the second one could never have worked.
   const chat = useEditorChat({
     animaticId,
+    // Asking the chat to do something IS doing something: on a blank project
+    // this is what creates it. See `ensureProject` at the top of this file.
+    ensureId: ensureProject,
     readCtx: readDirectorCtx,
     api: directorApi,
     applySnapshot,
@@ -7742,7 +7819,7 @@ export default function AnimaticEditor({
       const res = await api.uploadAnimaticImages(animaticId, [file]);
       const item = (res.items || [])[0];
       if (!item?.upload_id) throw new Error(res.rejected?.[0] || "That picture could not be read.");
-      const path = `/animatics/${animaticId}/media/${item.upload_id}`;
+      const path = `/animatics/${idRef.current}/media/${item.upload_id}`;
       // A small proxy, not the full-size picture: this is a 3rem thumbnail and
       // the original may be 4K. Same `maxEdge` the Media library's cards use.
       let blob = "";
@@ -8095,7 +8172,8 @@ export default function AnimaticEditor({
     // it. Everything this function still needs is captured above.
     setImgGen(null);
     try {
-      const res = await api.generateAnimaticImage(animaticId, {
+      const id = await ensureProject(); // creates the project on a blank start
+      const res = await api.generateAnimaticImage(id, {
         prompt: imgGenPrompt.trim(),
         aspectRatio: imgGenAspect,
       });
@@ -8134,7 +8212,7 @@ export default function AnimaticEditor({
         rotation: 0,
         // Servable immediately, before the project is saved — the same url
         // `addOverlayFiles` gives a fresh upload.
-        url: `/animatics/${animaticId}/media/${item.upload_id}`,
+        url: `/animatics/${id}/media/${item.upload_id}`,
       };
       setOverlays((list) => [...list, overlay]);
       // ⚠ NAMED, unlike an uploaded overlay's card. A dropped file has a
@@ -9647,7 +9725,7 @@ export default function AnimaticEditor({
         // `url` is dropped by `frameForSave`, so carrying it changes nothing
         // about what is sent - and it means the drawings arrive on screen
         // already pointing at a route that answers.
-        url: `/animatics/${animaticId}/frame/${id}`,
+        url: `/animatics/${idRef.current}/frame/${id}`,
       };
     });
 
@@ -10138,7 +10216,10 @@ export default function AnimaticEditor({
   // change your mind, go back" doesn't leave a row in the library. Anything with
   // content — or a name you chose — is kept.
   async function handleBack() {
-    if (isEmpty) {
+    // ⚠ `animaticId` CAN BE NULL HERE — a blank project the user did nothing in
+    // was never created, so there is nothing to discard. That is the fix; this
+    // branch is what is left of it for projects that DO exist and are empty.
+    if (isEmpty && animaticId) {
       dirtyRef.current = false; // nothing worth flushing on the way out
       try {
         await api.deleteAnimatic(animaticId);
@@ -10168,7 +10249,9 @@ export default function AnimaticEditor({
     // The autosave effect will pick the new title up, but don't make the user
     // wait for the debounce when they've explicitly asked to save.
     try {
-      await api.saveAnimatic(animaticId, { title: name });
+      // Naming a blank project is doing something with it, so this is one of
+      // the moments that creates it.
+      await api.saveAnimatic(await ensureProject(), { title: name });
       baselineRef.current = null; // force the pending debounce to write the rest
     } catch (e) {
       setError(e.message);
@@ -10177,7 +10260,8 @@ export default function AnimaticEditor({
 
   async function handleDelete() {
     try {
-      await api.deleteAnimatic(animaticId);
+      // A draft nothing was ever done to has no record to delete.
+      if (animaticId) await api.deleteAnimatic(animaticId);
       onDeleted?.();
     } catch (e) {
       setError(e.message);
@@ -12494,6 +12578,7 @@ export default function AnimaticEditor({
       <ProjectImportModal
         open={projectImportOpen}
         animaticId={animaticId}
+        ensureId={ensureProject}
         busy={importBusy}
         onClose={() => !importBusy && setProjectImportOpen(false)}
         onApply={applyProjectImport}
@@ -13668,6 +13753,8 @@ export default function AnimaticEditor({
         chat={chat}
         readCtx={readDirectorCtx}
         dock={chat.config?.dock || "right"}
+        opacity={chat.config?.opacity ?? 100}
+        blur={chat.config?.blur ?? 0}
         greeting={chat.config?.greeting || ""}
       />
 

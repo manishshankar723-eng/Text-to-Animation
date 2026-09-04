@@ -176,7 +176,12 @@ function toStore(turns) {
 /**
  * THE ✨ AI EDITOR CHAT.
  *
- * @param {string}   animaticId    the project — the chat is keyed to it
+ * @param {string}   animaticId    the project — the chat is keyed to it. NULL on
+ *                                 a blank project nothing has been done to yet;
+ *                                 `ensureId` is what turns it into a real one.
+ * @param {function} ensureId      creates the project on demand and answers its
+ *                                 id — a chat turn is the user doing something,
+ *                                 so it may be the thing that creates it
  * @param {function} readCtx       the editor's live read-model (`readDirectorCtx`)
  * @param {object}   api           the editor's callbacks, named in `ACTION_API`
  * @param {function} applySnapshot restores a whole document — Ctrl+Z's own function
@@ -188,6 +193,7 @@ function toStore(turns) {
  */
 export default function useEditorChat({
   animaticId,
+  ensureId,
   readCtx,
   api: editorApi,
   applySnapshot,
@@ -267,6 +273,8 @@ export default function useEditorChat({
   // be editing the film as it was when the panel mounted.
   const readCtxRef = useRef(readCtx);
   readCtxRef.current = readCtx;
+  const ensureIdRef = useRef(ensureId);
+  ensureIdRef.current = ensureId;
   const editorApiRef = useRef(editorApi);
   editorApiRef.current = editorApi;
   // ⚠ THUNKS FOR THE SAME REASON. `placeSoundtrack` closes over the audio tracks
@@ -276,7 +284,18 @@ export default function useEditorChat({
   soundRef.current = { buildSoundtrack, placeSoundtrack };
 
   // ------------------------------------------------------------- persistence
+  // ⚠ THE FIRST ID A DRAFT GETS IS NOT A PROJECT SWITCH. A blank editor starts
+  // with no project at all and mints one at the first action — including a chat
+  // turn — so `animaticId` goes null → real MID-CONVERSATION. Reloading from
+  // storage then would wipe the exchange that created the project.
+  const chatKeyRef = useRef(animaticId);
   useEffect(() => {
+    if (chatKeyRef.current === animaticId) return;
+    if (!chatKeyRef.current && animaticId) {
+      chatKeyRef.current = animaticId; // the draft just became a project
+      return;
+    }
+    chatKeyRef.current = animaticId;
     setTurns(loadStored(animaticId));
     setRevertable("");
     setError("");
@@ -391,7 +410,11 @@ export default function useEditorChat({
       const ctx = readCtxRef.current();
       const caps = capabilities();
       const keep = config?.transcript_keep || 20;
-      const answer = await api.editorChatTurn(animaticId, {
+      // ⚠ THE PROJECT MAY NOT EXIST YET. A blank editor holds nothing until the
+      // first real action, and asking the chat to do something is one — see
+      // `ensureProject` in AnimaticEditor.jsx.
+      const projectId = animaticId || (await ensureIdRef.current?.());
+      const answer = await api.editorChatTurn(projectId, {
         messages: wireMessages(history, keep),
         board: { ...boardFrom(ctx), sound: soundDigest(ctx) },
         capabilities: caps,

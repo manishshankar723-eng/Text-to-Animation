@@ -6,16 +6,51 @@
  * look like three different products is three products. See the header of
  * `EditorChat.jsx`.
  *
- * ⚠ TWO DOCKS, ONE COMPONENT, AND THE DIFFERENCE IS ENTIRELY IN HERE. The panel
- * renders identical markup either way; `.ec-dock-right` and `.ec-dock-sidebar`
- * are the whole of the layout fork. A second render path would have been two
- * panels to fix every bug in.
+ * ⚠ THREE DOCKS, ONE COMPONENT, AND THE DIFFERENCE IS ALMOST ENTIRELY IN HERE.
+ * The panel renders identical markup whichever it is; `.ec-dock-right`,
+ * `.ec-dock-sidebar` and `.ec-dock-float` are the whole of the layout fork. A
+ * second render path would have been three panels to fix every bug in.
+ *
+ * ⚠ THE ONE THING THE STYLESHEET DOES NOT OWN IS WHERE THE FLOATING WINDOW SITS.
+ * Only JavaScript knows where the person dragged it, so `EditorChat` sets
+ * `left/top/width/height` inline. **An inline style beats a media query**, which
+ * is why the component — not the `@media` block at the bottom of this section —
+ * is what stops applying them under 820px.
  */
 
 /* =========================================================================
    THE PANEL
    ========================================================================= */
 .ec-panel {
+  /* ⚠ HOW SOLID THE PANEL IS, AS A NUMBER THE OPERATOR SET — the admin panel's
+     `opacity`, arriving inline as `--ec-opacity: 70`. 100 here is the fallback
+     for a config call that never answered, and it is the panel this app has
+     always had: a settings read that fails must never change what people see. */
+  --ec-opacity: 100;
+  /* How far the film underneath is blurred, in px — the admin panel's `blur`,
+     arriving inline as `--ec-blur: 14`. 0 is the fallback and it is also the
+     shipped setting. See `.is-blurred` below for why it is a separate class and
+     not just this number reaching `backdrop-filter`. */
+  --ec-blur: 0;
+  /* `PaneSplitter` measures its grab strip in `--an-seam`, which `.an-nle`
+     declares for the workspace. This panel is `fixed` and is NOT inside that
+     element, so the seam it borrows has to be declared here too or the width
+     handle is zero pixels wide. */
+  --an-seam: 0.6rem;
+  /* ⚠ THIS PANEL'S EDGE IS NOT `--border`, AND IT IS THE ONE SURFACE IN THE APP
+     THAT NEEDS ITS OWN. `--border` is tuned for a card sitting INSIDE the page,
+     against a ground it is meant to blend with — but this panel floats OVER the
+     editor, and the editor's own panes are the same `--panel` family, so a
+     border tuned for blending puts a near-invisible line between two surfaces of
+     almost the same colour. Reported exactly that way: *"chatbot panel ka stroke
+     badhao, wo bg editor mai match v ho raha hai — highlight karo panel border
+     ko"*.
+     ⚠ DERIVED, NEVER TYPED (RULEBOOK E103). It is `--border` pulled towards
+     `--text`, so it follows the admin's Brand colours and flips direction on its
+     own: in dark `--text` is near-white so the edge LIFTS, in light `--text` is
+     near-black so the edge DARKENS. A hex here would have been right in one
+     theme and wrong in the other, which is the same mistake the blur made. */
+  --ec-stroke: color-mix(in srgb, var(--border) 65%, var(--text));
   position: fixed;
   top: 0;
   bottom: 0;
@@ -24,7 +59,10 @@
   gap: 0.6rem;
   padding: 0.9rem;
   background: var(--panel);
-  border-left: 1px solid var(--border);
+  /* ⚠ 2px, NOT 1. A hairline is what a card inside a page wears; this is the
+     seam between the chat and somebody's film, and at 1px it read as part of the
+     editor's own furniture. */
+  border-left: 2px solid var(--ec-stroke);
   /* ⚠ 120 CLEARS THE RAIL AND STAYS UNDER THE MODALS. The sidebar is 100 (see
      the long note on `.sidebar` in shell.css for why it is that high), the
      editor's own panes top out at 60, and the modals and lightbox sit at
@@ -48,21 +86,166 @@
   left: 280px;
   width: clamp(320px, 24vw, 400px);
   border-left: none;
-  border-right: 1px solid var(--border);
+  border-right: 2px solid var(--ec-stroke);
   box-shadow: 12px 0 32px rgba(0, 0, 0, 0.28);
 }
 .shell.nav-collapsed .ec-dock-sidebar {
   left: 92px;
 }
+
+/* THE FLOATING WINDOW — the only dock that MOVES, and the reason the other two
+   only ever needed a width. Asked for outright: *"chat bot ka popup screen ko
+   move kar sake and chhota aur bara kar sake"*.
+   ⚠ IT HAS FOUR BORDERS, NOT ONE. `.ec-panel` draws a single `border-left`
+   because a dock only ever shows the edge that faces the work; a window in the
+   middle of the screen shows all four, and the shadow has to come off the pinned
+   direction and go under the whole thing. */
+.ec-dock-float {
+  border: 2px solid var(--ec-stroke);
+  border-radius: 14px;
+  /* ⚠ TWO SHADOWS, AND THE TIGHT ONE IS THE ONE THAT DOES THE WORK. The wide
+     soft shadow says "this is above the page"; it says nothing at all where the
+     panel happens to sit over something the same darkness. The 1px ring hugging
+     the border is what draws the actual outline, so the window has an edge even
+     where the shadow has nothing to fall on. */
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 20px 56px rgba(0, 0, 0, 0.45);
+}
+/* ⚠ THE TITLE BAR IS THE HANDLE, so it must not select its own text on the
+   press that starts a drag — the same reason `.an-nle:has(.an-split.dragging)`
+   turns selection off across the whole editor while a seam is moving. */
+.ec-dock-float .ec-head {
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.ec-dock-float.is-dragging .ec-head {
+  cursor: grabbing;
+}
+/* Buttons inside the bar keep their own pointer — the ✕ is not a handle, and a
+   grab cursor over it says it is. */
+.ec-dock-float .ec-head button {
+  cursor: pointer;
+}
+/* A drag must not paint a selection across the conversation behind the pointer. */
+.ec-panel.is-dragging {
+  user-select: none;
+}
+
+/* ⚠ THE CORNER GRIP — the only handle in this app that drags on BOTH axes,
+   which is why it is not a `PaneSplitter`. Drawn as two faint strokes, the shape
+   every window manager uses, and brightened on hover/focus the way the seams'
+   own grip is rather than sitting there as permanent chrome. */
+.ec-grip {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  touch-action: none;
+  border-radius: 0 0 12px 0;
+  background:
+    linear-gradient(135deg, transparent 46%, var(--border) 46%, var(--border) 54%, transparent 54%),
+    linear-gradient(135deg, transparent 72%, var(--border) 72%, var(--border) 80%, transparent 80%);
+  transition: filter 0.12s ease;
+}
+.ec-grip:hover,
+.ec-grip:focus-visible {
+  outline: none;
+  filter: brightness(2.2);
+}
+
+/* ⚠ THE WIDTH HANDLE IS THE WORKSPACE SEAM, ABSOLUTELY PLACED. `.an-split` is
+   `align-self: stretch` because in the workspace it is a flex child of the row
+   it divides; here it is a child of the panel it resizes, so it is taken out of
+   the flow and pinned to the edge that faces the editor. Pulled half a seam past
+   the border so the grab strip covers the border line itself, which is what
+   people actually aim at. */
+.ec-side-split {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 2;
+}
+.ec-side-split-right {
+  left: calc(var(--an-seam) / -2);
+}
+.ec-side-split-sidebar {
+  right: calc(var(--an-seam) / -2);
+}
+
+/* =========================================================================
+   HOW SEE-THROUGH IT IS — one number from the admin panel
+   =========================================================================
+   ⚠ THE ALPHA GOES ON THE GROUND, NEVER ON THE PANEL. `opacity` on the root
+   would fade the conversation, the buttons and the spinner along with the ground
+   they sit on, and a chat you cannot read is not a transparent chat. So one
+   background carries the operator's number and the text stays at full strength.
+
+   ⚠ **ONE LAYER, NOT THREE — AND THE FIRST VERSION GOT THIS WRONG.** The log and
+   the composer were mixed to the SAME percentage as the panel behind them, which
+   stacks: 40% over 40% is 64% covered, and the log is most of the panel's
+   surface. So the number meant one thing on the slider and another on screen —
+   reported as *"dark mai thora ho raha hai white mai to ho hi nhi raha hai"*.
+   They are fully transparent now and keep only their borders, so `--ec-opacity`
+   is the whole and only story: at 60 the panel is 60% covered, everywhere.
+
+   ⚠ **AND THE BLUR IS A SECOND SLIDER, NOT A CONSTANT — BECAUSE THE CONSTANT WAS
+   WRONG TWICE.** It shipped hard-coded at `blur(16px)`: right over a busy
+   timeline in dark, and white-frosted-onto-white in light (`--panel: #ffffff`
+   over an `#f4f6fa` page), where the panel then looked solid at every opacity.
+   So it was removed — and the text became hard to read at low opacity. Both
+   failures were the same mistake: one number chosen for every screen. Asked for
+   outright: *"text padhne mai mushkil hai isliye blur daalo — tum nhi, admin
+   panel pe daal do, mai set kar lunga blur ko v"*. The operator sets it beside
+   the opacity and judges the two together, on their own deployment, in both
+   themes. */
+.ec-panel.is-see-through {
+  background: color-mix(in srgb, var(--panel) calc(var(--ec-opacity) * 1%), transparent);
+}
+.ec-panel.is-see-through .sc-chat-log,
+.ec-panel.is-see-through .sc-composer {
+  background: transparent;
+}
+/* ⚠ A SEPARATE CLASS, NOT JUST `blur(calc(var(--ec-blur) * 1px))` ON THE RULE
+   ABOVE. `backdrop-filter` at ANY value — `0px` included — promotes the panel to
+   its own compositing layer and makes the browser re-filter everything behind it
+   on every frame, over a timeline that is playing video. At 0 that is a real
+   per-frame cost bought for an effect nobody can see. The class is only added
+   when the operator has actually asked for blur, so a deployment that leaves it
+   at 0 pays exactly nothing.
+   ⚠ AND IT IS SCOPED UNDER `.is-see-through`: a solid panel has nothing behind
+   it to blur, so blur without transparency is the same cost for the same
+   nothing. */
+.ec-panel.is-see-through.is-blurred {
+  backdrop-filter: blur(calc(var(--ec-blur) * 1px));
+  -webkit-backdrop-filter: blur(calc(var(--ec-blur) * 1px));
+}
+/* ⚠ THE LOWER THE GROUND GOES, THE MORE THE EDGE HAS TO CARRY. At 100% the fill
+   itself tells you where the panel is; at 30% the border is the only thing that
+   does, and it is sitting over a moving picture. So the stroke goes the rest of
+   the way to `--text` when the panel is see-through — the same derivation, just
+   further along it. */
+.ec-panel.is-see-through {
+  --ec-stroke: color-mix(in srgb, var(--border) 40%, var(--text));
+}
+
+
 /* Under 820px the rail is a full-width block above the page, so a panel beside
-   it has nothing to be beside. Both docks become the same full-width sheet —
-   which is what a phone wants from either of them anyway. */
+   it has nothing to be beside. All three docks become the same full-width sheet
+   — which is what a phone wants from any of them anyway. ⚠ THE COMPONENT STOPS
+   SETTING ITS INLINE GEOMETRY AT THIS SAME WIDTH; an inline `left` would beat
+   every line in here. */
 @media (max-width: 820px) {
   .ec-dock-right,
-  .ec-dock-sidebar {
+  .ec-dock-sidebar,
+  .ec-dock-float {
     left: 0;
     right: 0;
     width: auto;
+    border-radius: 0;
   }
 }
 

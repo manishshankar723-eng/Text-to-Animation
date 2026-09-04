@@ -10,18 +10,62 @@
 // at its top and for the same reason.
 //
 // ---------------------------------------------------------------------------
-// ⚠ TWO DOCKS, AND THE ADMIN PANEL CHOOSES. Asked for outright: *"tu dono kar do
-// mai admin panel se change kar lunga"*.
+// ⚠ THREE DOCKS, AND THE ADMIN PANEL CHOOSES. Asked for outright: *"tu dono kar
+// do mai admin panel se change kar lunga"*.
 // ---------------------------------------------------------------------------
 //   `right`    a column beside the timeline — what Descript's Underlord and
 //              Premiere's AI Assistant both do, and the one with room to read a
 //              plan without scrolling.
 //   `sidebar`  slides straight out of the ✨ button in the rail, over the editor.
-//   `user`     both are offered and the CHOICE is remembered in this browser.
+//   `float`    a small window dragged wherever the person wants it.
+//   `user`     all of them are offered and the CHOICE is remembered in this
+//              browser.
 //
 // The dock is a class on the root and nothing else — no second render path, no
-// duplicated markup. A layout that forked into two component trees would be two
-// panels to fix every bug in.
+// duplicated markup. A layout that forked into three component trees would be
+// three panels to fix every bug in.
+//
+// ---------------------------------------------------------------------------
+// ⚠ IT MOVES AND IT RESIZES, AND THOSE ARE TWO DIFFERENT THINGS.
+// ---------------------------------------------------------------------------
+// Asked for outright: *"chat bot ka popup screen ko move kar sake and chhota aur
+// bara kar sake"*. **Every dock resizes** — the two pinned ones by their inner
+// edge (width only; they are full height by definition), the floating one by its
+// bottom-right corner. **Only the floating one moves**, because the other two
+// are pinned to a screen edge and "somewhere else" has no meaning for them.
+//
+// ⚠ THE EDGE HANDLE IS `PaneSplitter`, THE ONE THE WORKSPACE SEAMS ALREADY USE
+// — same drag maths, same double-click-to-reset, same arrow keys, same 2px line
+// that only appears on hover. A second resize handle written here would have
+// been a second thing that behaves almost like the seams. The corner grip is the
+// only new one, and it is new because no seam in this app drags on both axes.
+//
+// ⚠ AND THE NUMBERS ARE CLAMPED IN `panel_box.js`, NOT HERE. See its header for
+// why the window is kept WHOLLY on screen rather than "mostly" — there is no
+// taskbar to fetch it back from once its Send button is past the edge.
+//
+// ---------------------------------------------------------------------------
+// ⚠ HOW SEE-THROUGH IT IS BELONGS TO THE ADMIN, NOT TO THE PERSON DRAGGING IT.
+// ---------------------------------------------------------------------------
+// *"admin panel mai ai editor se chatbot panel ko transparent kar sake"*. It
+// arrives on the config as a PERCENTAGE and becomes one custom property,
+// `--ec-opacity`; `editor-chat.css` does the rest. `blur` is its partner and
+// works the same way (`--ec-blur`, in px) — how far the film underneath is
+// softened so the conversation stays readable on top of it. It is not a user control on
+// purpose: a customer who fades their own chat until they cannot read it has no
+// way back.
+//
+// ⚠ AND IT RUNS 0–100 WITH NO FLOOR. There was one, at 40, and it was picked off
+// the DARK theme — the light theme is a white panel over a near-white page, so
+// 40 there is a difference nobody can see (*"dark mai thora ho raha hai white mai
+// to ho hi nhi raha hai"*). The operator judges it against their own deployment:
+// *"0 to 100 rakho mai admin panel se check kar lunga kitna better hai"*.
+//
+// ⚠ AND THE BLUR IS A SLIDER FOR THE SAME REASON, NOT A NUMBER I PICKED. It was
+// hard-coded at 16px (unreadable in light), then removed (unreadable at low
+// opacity) — one number chosen for every screen, wrong twice. *"text padhne mai
+// mushkil hai isliye blur daalo — tum nhi, admin panel pe daal do, mai set kar
+// lunga blur ko v"*. It ships at 0, which is exactly what is on screen today.
 //
 // ---------------------------------------------------------------------------
 // ⚠ IT PLANS, THE USER APPLIES. NOTHING ON THIS PANEL EDITS ON ARRIVAL.
@@ -36,9 +80,23 @@
 // the same relationship `DirectorPanel` has to `useDirectorRun`: a component
 // that renders a decision, not one that makes it.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import PaneSplitter from "./PaneSplitter.jsx";
 import { describeStep } from "../animatic/agent/actions.js";
+// ⚠ THE GEOMETRY IS A MODULE, NOT FOUR NUMBERS IN A HANDLER. See its header.
+import {
+  NARROW_W,
+  clampBox,
+  clampWidth,
+  defaultBox,
+  forgetBox,
+  readBox,
+  readWidth,
+  viewport,
+  writeBox,
+  writeWidth,
+} from "../animatic/agent/panel_box.js";
 // ⚠ THE LABELS COME FROM THE SAME MODULE THAT READS THE OFFER, so a door added
 // there cannot arrive here as a blank button with no name on it.
 import { DOOR_LABEL } from "../animatic/agent/chat_turn.js";
@@ -50,12 +108,19 @@ const DOCK_KEY = "aniwala.editorChatDock.v1";
 const DOCKS = [
   { id: "right", label: "Dock right", ico: "▥" },
   { id: "sidebar", label: "Beside the rail", ico: "▤" },
+  // ⚠ THE ONE THAT MOVES. Its glyph is a window, not a column, because that is
+  // the difference a person is picking between.
+  { id: "float", label: "Floating window — drag it anywhere", ico: "❐" },
 ];
+
+/** ⚠ CHECKED AGAINST THE LIST, NOT AGAINST A HAND-WRITTEN `||` CHAIN — a dock
+ *  added above and forgotten here comes back from storage as "right" forever. */
+const DOCK_IDS = DOCKS.map((d) => d.id);
 
 function storedDock() {
   try {
     const value = localStorage.getItem(DOCK_KEY);
-    return value === "sidebar" || value === "right" ? value : "right";
+    return DOCK_IDS.includes(value) ? value : "right";
   } catch {
     return "right";
   }
@@ -108,17 +173,24 @@ export default function EditorChat({
   onClose,
   chat,
   readCtx,
-  // "right" | "sidebar" | "user" — the operator's setting, from /editor-chat/config.
+  // "right" | "sidebar" | "float" | "user" — the operator's setting, from
+  // /editor-chat/config.
   dock = "right",
+  // How solid the panel is drawn, 0–100. The operator's, not the customer's.
+  opacity = 100,
+  // How far the film underneath is blurred, 0–40 px. The operator's too, and it
+  // only does anything while `opacity` is below 100.
+  blur = 0,
   greeting = "",
 }) {
   const [draft, setDraft] = useState("");
   const [mine, setMine] = useState(storedDock);
   const logRef = useRef(null);
   const inputRef = useRef(null);
+  const panelRef = useRef(null);
 
   // ⚠ THE SETTING WINS UNLESS IT SAYS OTHERWISE. `user` is the only value that
-  // hands the choice over; the other two are the operator's decision and a
+  // hands the choice over; the other three are the operator's decision and a
   // remembered preference must not survive them changing it.
   const side = dock === "user" ? mine : dock;
 
@@ -129,6 +201,127 @@ export default function EditorChat({
     } catch {
       // Storage blocked. The choice still applies for this page load.
     }
+  }
+
+  // ======================================================== size and position
+  // ⚠ THE VIEWPORT IS STATE, NOT A READ AT DRAW TIME. A window the browser has
+  // been shrunk under has to be pulled back in, and nothing else re-renders this
+  // panel when that happens — the timeline behind it does, and it is not this
+  // panel's parent.
+  const [vp, setVp] = useState(viewport);
+  useEffect(() => {
+    const onResize = () => setVp(viewport());
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  // ⚠ UNDER 820px NONE OF THIS APPLIES. Both docks become one full-width sheet
+  // there and a floating window has nothing to float over — and an inline style
+  // beats the media query that says so, so the panel has to withhold the style
+  // rather than trust the stylesheet to override it.
+  const narrow = vp.w <= NARROW_W;
+  const floating = side === "float" && !narrow;
+
+  const [box, setBox] = useState(readBox);
+  // The drag handlers need the CURRENT box on every pointer move, and a state
+  // value closed over at pointerdown is the box as it was when the drag began.
+  const boxRef = useRef(box);
+  const putBox = useCallback((next) => {
+    boxRef.current = next;
+    setBox(next);
+  }, []);
+
+  // Pull it back on screen whenever the browser window changes shape.
+  useEffect(() => {
+    putBox(clampBox(boxRef.current, vp));
+  }, [vp, putBox]);
+
+  // The docked column's width. ⚠ `null` MEANS "NOBODY HAS DRAGGED IT" and the
+  // CSS `clamp(320px, 26vw, 420px)` is still in charge; the measure below turns
+  // that into a number for the handle to report, WITHOUT marking it as a choice
+  // this browser has made.
+  const [width, setWidth] = useState(readWidth);
+  const touched = useRef(width !== null);
+
+  useEffect(() => {
+    if (!open || narrow || floating || width !== null) return;
+    const el = panelRef.current;
+    if (el) setWidth(clampWidth(el.getBoundingClientRect().width, vp));
+  }, [open, narrow, floating, width, vp]);
+
+  // ⚠ WRITTEN AFTER THE DRAG SETTLES, NOT ON EVERY POINTER MOVE. `PaneSplitter`
+  // reports continuously — sixty `localStorage` writes a second is what that
+  // would be without this, on the main thread, for one drag.
+  useEffect(() => {
+    if (!touched.current || width === null) return;
+    const t = setTimeout(() => writeWidth(width), 250);
+    return () => clearTimeout(t);
+  }, [width]);
+
+  const [dragging, setDragging] = useState(false);
+
+  /** One drag, either kind: read the start once, clamp every move, save on up. */
+  const drag = useCallback(
+    (e, onMove) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const from = { x: e.clientX, y: e.clientY, box: boxRef.current };
+      setDragging(true);
+      const move = (ev) =>
+        putBox(clampBox(onMove(from, ev.clientX - from.x, ev.clientY - from.y), viewport()));
+      const up = () => {
+        setDragging(false);
+        // On the WINDOW, like `PaneSplitter`: the pointer leaves the handle
+        // within a few pixels and the drag has to keep working when it does.
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        writeBox(boxRef.current);
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+    },
+    [putBox]
+  );
+
+  /** The title bar moves the window — unless the press landed on a button. */
+  function beginMove(e) {
+    if (!floating) return;
+    // ⚠ THE ✕ AND THE DOCK SWITCH LIVE IN THIS BAR. Without this a press on
+    // Close starts a drag, and the click that would have shut the panel is
+    // swallowed by `preventDefault`.
+    if (e.target.closest("button")) return;
+    drag(e, (from, dx, dy) => ({ ...from.box, x: from.box.x + dx, y: from.box.y + dy }));
+  }
+
+  /** The corner grip resizes both axes at once. No seam in this app does that. */
+  function beginResize(e) {
+    drag(e, (from, dx, dy) => ({ ...from.box, w: from.box.w + dx, h: from.box.h + dy }));
+  }
+
+  function resetBox() {
+    const next = defaultBox(vp);
+    putBox(next);
+    forgetBox();
+  }
+
+  /** Arrow keys on the grip, so the window is resizable without a pointer. */
+  function nudge(e) {
+    const step = 24;
+    const now = boxRef.current;
+    let next = null;
+    if (e.key === "ArrowLeft") next = { ...now, w: now.w - step };
+    else if (e.key === "ArrowRight") next = { ...now, w: now.w + step };
+    else if (e.key === "ArrowUp") next = { ...now, h: now.h - step };
+    else if (e.key === "ArrowDown") next = { ...now, h: now.h + step };
+    else if (e.key === "Home") {
+      resetBox();
+      e.preventDefault();
+      return;
+    } else return;
+    e.preventDefault();
+    const clamped = clampBox(next, vp);
+    putBox(clamped);
+    writeBox(clamped);
   }
 
   // Keep the newest turn in view — a log that has to be scrolled to read the
@@ -154,15 +347,86 @@ export default function EditorChat({
     chat.send(text);
   }
 
+  // ⚠ ONE STYLE OBJECT, AND MOST OF IT IS EMPTY MOST OF THE TIME. The floating
+  // window is placed here because only JavaScript knows where the person left
+  // it; everything else — the edges, the shadow, the radius — is the stylesheet's.
+  const style = { "--ec-opacity": opacity, "--ec-blur": blur };
+  if (floating) {
+    style.left = box.x;
+    style.top = box.y;
+    style.width = box.w;
+    style.height = box.h;
+    // `.ec-panel` pins top AND bottom to 0. A floating window sets its own
+    // height, so the pin at the far end has to be released or the height is
+    // ignored and the panel is full-screen-tall wherever it was dropped.
+    style.right = "auto";
+    style.bottom = "auto";
+  } else if (!narrow && width !== null && touched.current) {
+    // ⚠ ONLY ONCE SOMEBODY HAS ACTUALLY DRAGGED IT. `width` is also set by the
+    // measure above, purely so the handle has a number to report — and writing
+    // THAT back as an inline width would freeze every untouched panel at
+    // whatever `clamp(320px, 26vw, 420px)` happened to be on the day they opened
+    // it, so it would stop following the window for people who never resized.
+    style.width = width;
+  }
+
   return (
     <aside
-      className={`ec-panel ec-dock-${side}`}
+      ref={panelRef}
+      className={
+        `ec-panel ec-dock-${side}` +
+        (opacity < 100 ? " is-see-through" : "") +
+        // ⚠ BOTH CONDITIONS, AND THE CLASS IS THE WHOLE POINT — `backdrop-filter`
+        // at any value, `0px` included, makes the browser re-filter everything
+        // behind this panel every frame over a playing timeline. It is only worth
+        // that when there is something showing through AND somebody asked for it.
+        (opacity < 100 && blur > 0 ? " is-blurred" : "") +
+        (dragging ? " is-dragging" : "")
+      }
+      style={style}
       aria-label="AI Editor"
       // ⚠ NOT `role="dialog"`. It is a panel that sits beside the work, not a
       // modal over it — the timeline stays live and keyboard-reachable while the
       // chat is open, which is the whole point of docking it.
     >
-      <header className="ec-head">
+      {/* ⚠ THE WIDTH HANDLE IS THE WORKSPACE'S OWN SEAM, not a new widget — see
+          the note at the top of this file. It sits on the edge that faces the
+          EDITOR, so the drag that widens the panel is the one that pushes into
+          the work: on the right-hand dock that is the left edge and the pointer
+          travelling right makes it narrower (`sign={-1}`); out of the rail it is
+          the mirror image. Never drawn on the floating window, which has a
+          corner instead, and never under 820px, where the panel is the width of
+          the screen and there is nothing to drag. */}
+      {!floating && !narrow && width !== null && (
+        <PaneSplitter
+          orientation="vertical"
+          className={`ec-side-split ec-side-split-${side}`}
+          value={width}
+          min={300}
+          max={clampWidth(9999, vp)}
+          sign={side === "sidebar" ? 1 : -1}
+          label="Panel width"
+          onChange={(next) => {
+            touched.current = true;
+            setWidth(clampWidth(next, vp));
+          }}
+          onReset={() => {
+            touched.current = true;
+            setWidth(clampWidth(380, vp));
+          }}
+        />
+      )}
+
+      <header
+        className="ec-head"
+        onPointerDown={beginMove}
+        onDoubleClick={floating ? resetBox : undefined}
+        title={
+          floating
+            ? "Drag to move the panel · double-click to put it back"
+            : undefined
+        }
+      >
         <span className="ec-head-title">
           <span aria-hidden="true">✨</span> AI Editor
         </span>
@@ -337,6 +601,23 @@ export default function EditorChat({
           saved in this browser only
         </span>
       </div>
+
+      {/* ⚠ THE CORNER, AND IT IS THE ONE HANDLE IN THIS APP THAT DRAGS ON BOTH
+          AXES — which is why it is not a `PaneSplitter`. It carries the seam's
+          other two habits anyway: double-click puts the window back where it
+          opens, and the arrow keys resize it for anyone who cannot drag. */}
+      {floating && (
+        <div
+          className="ec-grip"
+          onPointerDown={beginResize}
+          onDoubleClick={resetBox}
+          onKeyDown={nudge}
+          role="separator"
+          tabIndex={0}
+          aria-label="Panel size"
+          title="Drag to resize · double-click to put it back"
+        />
+      )}
     </aside>
   );
 }

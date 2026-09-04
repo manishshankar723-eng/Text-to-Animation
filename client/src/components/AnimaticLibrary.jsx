@@ -35,6 +35,12 @@ export const UNTITLED = "Untitled Project";
 // save-as prompt would never appear. Ask `isUntitled`, never `=== UNTITLED`.
 const LEGACY_UNTITLED = ["Untitled animatic"];
 
+// ⚠ "OPEN THE EDITOR ON A PROJECT THAT DOES NOT EXIST YET." New Project hands
+// this to the workflow shell instead of a job id: the editor opens blank and
+// creates the project on the server at the first real edit. Not a job id and
+// never sent to one — `AnimaticEditor` swaps it for `null` on the way in.
+export const NEW_DRAFT = "new";
+
 /** Is this title the placeholder — this one, an older one, or nothing at all? */
 export function isUntitled(title) {
   const t = (title || "").trim();
@@ -157,19 +163,19 @@ export default function AnimaticLibrary({ onOpen }) {
     );
   }
 
-  // Straight into the editor — naming happens when you Save. An animatic you
-  // open and don't touch is discarded on the way out (see AnimaticEditor's
-  // handleBack), so this can't litter the library.
-  async function createBlank() {
-    setBusyId("new");
+  // ⚠ NOTHING IS CREATED HERE ANY MORE — it opens an EMPTY EDITOR, and the
+  // project is born on the server the first time the user actually does
+  // something in it (`ensureProject` in AnimaticEditor.jsx).
+  //
+  // It used to POST a project on the way in and rely on the editor discarding
+  // it again on the way out. That discard only runs on the ← button, so every
+  // other exit — the sidebar, a refresh, a closed tab — left an empty "Untitled
+  // Project" in the library for ever, and each one had already spent a slot of
+  // the account's project quota. Reported with a screenshot of four of them:
+  // "i did nothing in this project but it shows here".
+  function createBlank() {
     setError("");
-    try {
-      const project = await api.createAnimatic({ title: UNTITLED });
-      onOpen(project.job_id);
-    } catch (e) {
-      setError(e.message);
-      setBusyId(null);
-    }
+    onOpen(NEW_DRAFT);
   }
 
   async function createFromBoard(board) {
@@ -421,7 +427,6 @@ export default function AnimaticLibrary({ onOpen }) {
         <button
           type="button"
           className="card lib-new"
-          disabled={busyId === "new"}
           onClick={createBlank}
         >
           <span className="lib-new-plus">+</span>

@@ -832,6 +832,36 @@ def server_checks() -> None:
 
     check("a bad dock falls back", cs.clean({"dock": "moon"})["dock"] == cs.DOCK_RIGHT)
     check("a real dock is kept", cs.clean({"dock": cs.DOCK_SIDE})["dock"] == cs.DOCK_SIDE)
+    # ⚠ THE FLOATING WINDOW IS THE ONE THAT MOVES, and its id goes straight into
+    # a CSS class (`ec-dock-float`) — so it has to be in the list AND described,
+    # or the admin screen draws a radio button with no words beside it.
+    check("the floating window is a real dock", cs.clean({"dock": cs.DOCK_FLOAT})["dock"] == cs.DOCK_FLOAT)
+    check("…and every dock is described for the admin screen",
+          all(cs.DOCK_INFO.get(d, {}).get("label") for d in cs.DOCKS))
+    # ⚠ HOW SEE-THROUGH THE PANEL IS — the operator's, and clamped like every
+    # other number on that screen. ⚠ **THE WHOLE RANGE IS OPEN AND THAT IS A
+    # DECISION, NOT AN OVERSIGHT.** The floor was 40 for one day, picked off the
+    # DARK theme; the light theme is a white panel over a near-white page, so at
+    # 40 it looked solid and the report was *"white mai to ho hi nhi raha hai"*.
+    # A floor set by how one theme happens to look lies about the other one.
+    check("the panel ships solid", cs.defaults()["opacity"] == 100)
+    check("⚠ it goes all the way to invisible — the operator judges, not the store",
+          cs.clean({"opacity": 0})["opacity"] == 0)
+    check("…and a negative still cannot get through", cs.clean({"opacity": -20})["opacity"] == 0)
+    check("…and cannot go over solid", cs.clean({"opacity": 400})["opacity"] == 100)
+    check("nonsense opacity falls back to solid", cs.clean({"opacity": "faint"})["opacity"] == 100)
+    check("every value in between is kept as typed", cs.clean({"opacity": 35})["opacity"] == 35)
+    # ⚠ THE BLUR IS A SLIDER BECAUSE THE CONSTANT WAS WRONG TWICE — 16px baked in
+    # (invisible in the light theme), then removed (unreadable at low opacity).
+    # It ships at 0, which is exactly what is on screen, so no deployment changes
+    # under anyone; the operator raises it when they lower the solidity.
+    check("blur ships off, so nothing changes underneath a deployment",
+          cs.defaults()["blur"] == 0)
+    check("a runaway blur is clamped", cs.clean({"blur": 500})["blur"] == 40)
+    check("…and a negative cannot get through", cs.clean({"blur": -9})["blur"] == 0)
+    check("a real blur is kept as typed", cs.clean({"blur": 16})["blur"] == 16)
+    check("the admin screen is handed the blur bounds too",
+          "blur" in cs.admin_payload()["limits"])
     # ⚠ THE NUMBER THAT IS THE BILL. A fat-fingered 2000 here is a prompt nobody
     # meant to send, on every turn, for every customer.
     check("a runaway transcript is clamped", cs.clean({"transcript_keep": 5000})["transcript_keep"] == 60)
