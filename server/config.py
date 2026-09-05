@@ -359,6 +359,13 @@ CHAT_SETTINGS_CACHE_TTL_S = float(os.environ.get("API_CHAT_SETTINGS_CACHE_TTL_S"
 # ⚠ RAISING THIS PAIR FURTHER IS NOT FREE: `budget_seconds` hands the chat the
 # SMALLER of its ceiling and `DIRECTOR_BUDGET_SECONDS` (135), so a server budget
 # above 135 stops being the chat's number at all. See `CAPABILITY_BUDGET_SECONDS`.
+#
+# ⚠ AND IT IS A FLOOR NOW, NOT THE ANSWER. The chat's clock became an ADMIN
+# PANEL field (`chat_settings.turn_seconds`), and the real wait is derived from
+# it — `chat_settings.wire_wait_seconds()`, sent to the browser on
+# `/editor-chat/config`. This line is what a fresh deployment starts at and what
+# `tests/director_timeout_check.py` reads to prove the three numbers are in
+# order at rest. ⚠ RAISING IT NO LONGER RAISES ANYTHING: change the panel.
 CHAT_TURN_TIMEOUT_S = float(os.environ.get("API_CHAT_TURN_TIMEOUT_S", "150"))
 
 

@@ -635,9 +635,39 @@ def main() -> int:
     check("the count is on screen", "3 of 500 messages" in out["empty"])
     check("…and hidden when it is unlimited", "messages this month" not in out["unlimited"])
     # ⚠ PINNED BECAUSE IT WAS WRONG: the hint used to promise an Apply button on
-    # every turn, including an empty chat that has nothing to apply.
+    # every turn, including an empty chat that has nothing to apply. It now lives
+    # on Send's tooltip rather than in a caption row — the promise still has to
+    # be ON the panel, which is what this asserts; where it sits is the next check.
     check("the composer's promise is true even with nothing to apply",
           "before it happens" in out["empty"] and "press Apply" not in out["empty"])
+    # ⚠ THE CAPTION ROW ITSELF IS GONE, and that is the point of the change:
+    # the strip it occupied belongs to the typing box. A caption that comes back
+    # under every turn takes a line off the box again, silently.
+    check("…and no resting caption is taking a line off the typing box",
+          "sc-composer-hint" not in out["empty"])
+    # ⚠ AND THE BOX THAT TOOK THAT SPACE MEASURES ITSELF THE WAY THIS APP
+    # ALREADY LEARNED TO. `scrollHeight` alone is short by the border
+    # (`box-sizing: border-box` is global) and short again by the sub-pixel an
+    # integer throws away — and under the `overflow: hidden` the composer sets
+    # while it fits, either one eats the bottom of the last line, which is the
+    # exact fault the growing was asked for. Paid for twice already: once on the
+    # shot description (`GrowTextarea.jsx`, `shot_density_check.py` §5) and once
+    # on the offer form's bullet box (`admin_fields_check.py`). Read out of the
+    # source because there is no DOM here to measure.
+    panel_src = (ROOT / "client" / "src" / "components" / "EditorChat.jsx").read_text(encoding="utf-8")
+    check("⚠ THE COMPOSER'S HEIGHT INCLUDES THE BORDER AND THE LOST SUB-PIXEL",
+          "el.scrollHeight + (el.offsetHeight - el.clientHeight) + 1" in panel_src,
+          "EditorChat.jsx is measuring with a bare scrollHeight again")
+    check("…and `height: auto` comes first, or the box could grow but never shrink",
+          panel_src.index('el.style.height = "auto"')
+          < panel_src.index("el.scrollHeight + (el.offsetHeight"))
+    css_src = (ROOT / "client" / "src" / "styles" / "editor-chat.css").read_text(encoding="utf-8")
+    rule = css_src.split(".ec-composer .ec-composer-input {")[1].split("}")[0]
+    check("…and the stylesheet stops the two things that fight a computed height: "
+          "the drag handle and a second sizing mechanism",
+          "resize: none;" in rule and "field-sizing" not in rule, rule.strip())
+    check("…and states the line-height, which is what that height is computed from",
+          "line-height:" in rule, rule.strip())
     check("a blocked chat says so", "all 500 AI Editor messages" in out["blocked"])
     check("…and the composer is disabled with it",
           out["blocked"].count("disabled") > out["empty"].count("disabled"))

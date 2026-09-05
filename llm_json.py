@@ -311,6 +311,10 @@ CAPABILITY_BUDGET_SECONDS = {"chat": 120.0}
 # could not arrive in time, and asking for it costs money on a paid endpoint.
 MIN_ATTEMPT_SECONDS = 15
 
+# Is this budget's source an environment variable, or a place a person goes?
+# See `_with_clock` — the two get different sentences.
+_ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
+
 # How much of a broken answer is quoted back in the repair call: enough to mend a
 # truncated object, not so much that the repair costs more than the original.
 MAX_REPAIR_CHARS = 8000
@@ -410,6 +414,26 @@ class JsonRequest:
     # the same pictures too — but the bytes themselves must not go into the
     # digest input, because that would hash a megabyte to compare two calls.
     images: tuple = ()
+    # ⚠ THE CALLER'S OWN CLOCK, WHEN SOMEBODY ELSE OWNS THE NUMBER. Zero means
+    # "resolve it from the environment as always" and is what every call in this
+    # app used until the ✨ AI Editor's budget became an ADMIN PANEL field: an
+    # operator types the seconds, the route reads the row, and the number has to
+    # reach `complete_json` from ABOVE. It cannot be read from below — this module
+    # is imported by the worker and by tests with no database, and giving it a
+    # settings store would make one outbound call to a model depend on Mongo
+    # being up.
+    #
+    # ⚠ **IT OVERRIDES EVERYTHING, INCLUDING `DIRECTOR_BUDGET_SECONDS`.** That
+    # is the whole point of E138: the operator's number is enforced exactly, or
+    # it is not a setting. `budget_source` travels with it so the sentence the
+    # user reads names the ADMIN PANEL rather than a `.env` line they were never
+    # going to open — see `_with_clock`.
+    #
+    # ⚠ **AND IT IS NOT IN `fingerprint()`**: how long an answer was allowed to
+    # take does not change what was asked, and two identical briefs on two
+    # different clocks are still the same brief.
+    budget_seconds: float = 0.0
+    budget_source: str = ""
 
     def fingerprint(self) -> str:
         """A stable digest of exactly what will be sent."""
@@ -1237,7 +1261,16 @@ def complete_json(request: JsonRequest) -> dict:
     # ⚠ AND IT IS THE CAPABILITY'S CLOCK, NOT ALWAYS THE DIRECTOR'S. A chat turn
     # gets less than a plan does, because the tab waiting for it waits less. See
     # `CAPABILITY_BUDGET_SECONDS`.
-    budget, budget_env = budget_seconds(request.capability)
+    # ⚠ THE CALLER'S NUMBER WINS WHEN IT HAS ONE. See `JsonRequest.budget_seconds`
+    # — the ✨ AI Editor's clock is an admin-panel field, and a setting that loses
+    # to a `.env` default is the "I changed it and nothing happened" bug D5 was
+    # written about. Clamped only against zero: the bounds belong to whoever owns
+    # the setting, and a second opinion here would be a ceiling nobody can see.
+    if request.budget_seconds and request.budget_seconds > 0:
+        budget = float(request.budget_seconds)
+        budget_env = request.budget_source or "the admin panel"
+    else:
+        budget, budget_env = budget_seconds(request.capability)
     clock = _deadline.set(time.monotonic() + budget)
 
     try:
@@ -1485,8 +1518,20 @@ def _with_clock(reason: str, budget: float, budget_env: str = "DIRECTOR_BUDGET_S
     """
     if not out_of_time and _time_left() > MIN_ATTEMPT_SECONDS:
         return reason
+    where = budget_env or "DIRECTOR_BUDGET_SECONDS"
+    # ⚠ A `.env` LINE AND A SETTINGS FIELD ARE NOT THE SAME SENTENCE. Naming a
+    # variable is the right answer when the only way to change the number is to
+    # edit a file and restart — and it is the wrong one now that the ✨ AI
+    # Editor's clock is a box in the admin panel, because "(CHAT_BUDGET_SECONDS)"
+    # sends the person who CAN fix it to a file they do not need to open. An
+    # ALL-CAPS source is a variable; anything else is prose and is read as prose.
+    if not _ENV_NAME.match(where):
+        return (
+            f"{reason} It ran out of time — one message gets {budget:.0f}s. Ask for "
+            f"one thing at a time, or raise the limit in {where}."
+        )
     return (
         f"{reason} It ran out of time — {budget:.0f}s is all one call gets "
-        f"({budget_env or 'DIRECTOR_BUDGET_SECONDS'}). A model this slow needs a "
+        f"({where}). A model this slow needs a "
         "bigger budget, or a smaller board."
     )

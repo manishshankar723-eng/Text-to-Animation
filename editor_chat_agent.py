@@ -803,6 +803,16 @@ def chat(
         # `llm_json` — the string must be a key of that table or it silently
         # falls back to the shared text settings.
         capability=CAPABILITY,
+        # ⚠ THE OPERATOR'S CLOCK, NOT THE MODULE'S. `llm_json` resolves a budget
+        # from the environment for everything else in this app; this one call is
+        # governed by a field in the admin panel (`turn_seconds`), because the
+        # person who hits the ceiling is the person who owns the deployment and
+        # they hit it with a real request — *"sound effects and background music
+        # lago pura story pe aur transition and effects ke saath"*, three jobs on
+        # a full film, 504. 0 here means "resolve it as usual", which is what a
+        # caller with no settings row (a test, the worker) gets.
+        budget_seconds=float(settings.get("turn_seconds") or 0),
+        budget_source="the admin panel → Chat",
     )
 
     try:

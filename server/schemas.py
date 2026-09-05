@@ -3870,5 +3870,12 @@ class EditorChatConfig(BaseModel):
     greeting: str = ""
     max_turns_per_session: int = 0
     transcript_keep: int = 20
+    # ⚠ HOW LONG THE TAB WAITS FOR ONE TURN, IN MILLISECONDS — and it is SENT
+    # rather than hard-coded because the operator can now change the model's
+    # clock from the admin panel, and these two numbers must never come apart.
+    # The browser keeps its own constant as the floor for the moment before this
+    # response has arrived; see `CHAT_TURN_TIMEOUT_MS` in `client/src/api.js`.
+    # Derived, never typed: `chat_settings.wire_wait_seconds()`.
+    turn_timeout_ms: int = 150_000
     turns_used: int = 0
     turns_limit: int | None = None

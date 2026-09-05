@@ -84,6 +84,22 @@ const NUMBERS = [
       "Past this, a long film is summarised instead of listed shot by shot. The " +
       "single biggest lever on what one message costs on a feature-length project.",
   },
+  // ⚠ THE ONE CLOCK IN THIS PANEL, AND IT WAS A `.env` LINE UNTIL SOMEBODY HIT
+  // IT. A real 504 on a real board — sound effects, music and transitions asked
+  // for in one message on a full film — and the answer named `CHAT_BUDGET_SECONDS`
+  // at a person with no shell: *"kya tum admin panel mai banaye ho limit set karne
+  // wala"*. It is the operator's number now. The note says what it buys AND what
+  // it costs, because both are real: a longer clock finishes the expensive turns
+  // and it also means a broken one takes longer to admit it.
+  {
+    id: "turn_seconds",
+    label: "Seconds one message may take",
+    note:
+      "The model's clock for a single reply. The browser and the server wait 30s " +
+      "longer than this on their own — you never set those. Raise it if big " +
+      "requests (“sound, music and transitions on the whole film”) time out; a " +
+      "look at the board alone is 27–35s and a mended answer is a second call.",
+  },
 ];
 
 // ⚠ THE SAVED CONVERSATIONS, AND THESE ARE THE OPERATOR'S NUMBERS. Not model
@@ -465,6 +481,8 @@ export default function AdminChat() {
             <p className="muted tiny admin-group-blurb">
               Every one of these decides how big the prompt is, and the prompt is
               the bill. Applying an edit is free — only the answer is paid for.
+              The last one is a clock rather than a size: how long the model gets
+              before a message is given up on.
             </p>
           </div>
         </div>

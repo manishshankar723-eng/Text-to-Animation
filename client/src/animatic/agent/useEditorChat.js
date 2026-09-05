@@ -375,6 +375,11 @@ export default function useEditorChat({
         // the pictures are being read has to drop the second call too, and a
         // fresh controller per leg would leave the slowest one running.
         signal: abortRef.current?.signal,
+        // ⚠ THE TAB WAITS AS LONG AS THE OPERATOR SAID THE MODEL MAY TAKE, plus
+        // the wire. Derived on the server from the admin panel's `turn_seconds`
+        // — see `wire_wait_seconds`. 0 while the config is still loading, which
+        // `editorChatTurn` reads as "use the shipped floor".
+        timeoutMs: config?.turn_timeout_ms || 0,
       });
       // ⚠ NORMALISED AGAINST THE PROJECT, NOT JUST AGAINST ITSELF. "Shot 61" is a
       // well-formed step and a nonsense one on a 48-shot film, so any plan on the

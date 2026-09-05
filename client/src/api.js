@@ -347,6 +347,14 @@ const PLAN_TIMEOUT_MS = 300000;
 // out of their own files:
 //
 //     llm_json 120s  <  API_CHAT_TURN_TIMEOUT_S 150s  ==  this 150000
+//
+// ⚠ AND IT IS NOW THE FLOOR, NOT THE ANSWER. The model's clock became an ADMIN
+// PANEL field (`turn_seconds`), so the tab's patience has to follow whatever the
+// operator typed — `/editor-chat/config` returns `turn_timeout_ms`, already
+// derived from it, and `editorChatTurn` prefers that. This constant is what the
+// browser waits for in the moment BEFORE that response has arrived, and it is
+// deliberately still a literal: `tests/director_timeout_check.py` reads this
+// line out of this file to prove the three numbers are in order at rest.
 const CHAT_TURN_TIMEOUT_MS = 150000;
 
 /**
@@ -2275,7 +2283,7 @@ export function editorChatConfig() {
 // up every turn. `wireMessages` trims it before it gets here.
 export function editorChatTurn(
   id,
-  { messages, board, capabilities, language = "", look = [], signal } = {}
+  { messages, board, capabilities, language = "", look = [], signal, timeoutMs = 0 } = {}
 ) {
   return request(`/editor-chat/${id}/turn`, {
     method: "POST",
@@ -2294,7 +2302,14 @@ export function editorChatTurn(
         data: row.data || "",
       })),
     },
-    timeoutMs: CHAT_TURN_TIMEOUT_MS,
+    // ⚠ THE OPERATOR'S NUMBER WHEN WE HAVE IT, AND NEVER LESS THAN THE FLOOR.
+    // `timeoutMs` comes off `/editor-chat/config`, which derives it from the
+    // admin panel's `turn_seconds`; a caller that has not loaded the config yet
+    // passes 0 and gets the constant. `Math.max` rather than a plain fallback
+    // because a config that somehow answers with a small number must not make
+    // the tab give up BEFORE the server does — that is the exact fault this
+    // pair has already produced twice.
+    timeoutMs: Math.max(CHAT_TURN_TIMEOUT_MS, Number(timeoutMs) || 0),
     // ⚠ THE ONE CALL IN THIS FILE THE USER CAN STOP BY HAND, and it is the one
     // they sit and watch. The abort is real — the request is dropped, not just
     // ignored — but the TURN IS NOT: the server has already been asked and will

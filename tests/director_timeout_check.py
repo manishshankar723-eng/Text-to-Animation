@@ -474,6 +474,123 @@ def main():
           over == (llm_json.DEFAULT_BUDGET_SECONDS, "DIRECTOR_BUDGET_SECONDS"), str(over))
 
     # ---------------------------------------------------------------------
+    # ⚠ AND THE CHAT'S CLOCK IS THE OPERATOR'S NUMBER NOW, NOT A `.env` LINE.
+    #
+    #   Everything above this line is about a constant three files had to agree
+    #   on. It stayed a constant one report too long: a real 504 on a real board
+    #   — *"sound effects and background music lago pura story pe aur transition
+    #   and effects ke saath"*, three jobs in one message on a full film — and
+    #   the answer it produced named `CHAT_BUDGET_SECONDS` at somebody with no
+    #   shell: *"kya tum admin panel mai banaye ho limit set karne wala"*. No.
+    #
+    #   ⚠ SO THE BOUNDS ARE ASSERTED AGAINST THE MEASUREMENTS AND THE OTHER
+    #   CLOCKS, never against themselves. Every value inside them has to be one
+    #   the app can really honour — that is what makes them the width of the
+    #   input rather than a second opinion about the answer (RULEBOOK E138).
+    # ---------------------------------------------------------------------
+    print()
+    print("⚠ THE OPERATOR OWNS THE CHAT'S CLOCK, AND EVERY VALUE IN RANGE WORKS")
+    print()
+    from server import chat_settings
+
+    spec = chat_settings.LIMITS.get("turn_seconds") or {}
+    check("the chat's clock is an admin-panel field", bool(spec), str(spec))
+    check("...and it is editable, or the panel would show a box that saves nothing",
+          "turn_seconds" in chat_settings.EDITABLE, str(sorted(chat_settings.EDITABLE)))
+    check("...whose default is exactly the constant it replaced",
+          spec.get("default") == llm_json.CAPABILITY_BUDGET_SECONDS["chat"],
+          f"{spec.get('default')} vs {llm_json.CAPABILITY_BUDGET_SECONDS['chat']}")
+
+    # ⚠ THE FLOOR. An operator who types the smallest number allowed must still
+    # get a working feature — and the worst attempt is a look plus the repair of
+    # its own answer, which is the slowest measured call TWICE.
+    check("⚠ THE SMALLEST SETTABLE CLOCK STILL FITS THE SLOWEST ATTEMPT",
+          spec.get("min", 0) > slow_attempt,
+          f"floor {spec.get('min')}s vs {slow_attempt}s (look {SLOWEST_MEASURED_CALL_S}s x 2)")
+    check("...and 70 — the number that failed live — is below it, not inside it",
+          spec.get("min", 0) > 70, f"floor {spec.get('min')}s")
+
+    # ⚠ THE CEILING, AND THIS IS THE TRAP. `call_timeout()` hands the SDK the
+    # SMALLER of `DIRECTOR_TIMEOUT_SECONDS` and what is left of the budget, so a
+    # budget above that ceiling is a number the socket quietly ignores — the
+    # operator would type 240, watch it save, and get 180.
+    check("⚠ THE BIGGEST SETTABLE CLOCK IS ONE THE SOCKET WILL ACTUALLY ALLOW",
+          spec.get("max", 0) <= llm_json.DEFAULT_TIMEOUT_SECONDS,
+          f"max {spec.get('max')}s vs socket {llm_json.DEFAULT_TIMEOUT_SECONDS}s")
+
+    # ⚠ THE PAIR THAT USED TO BE RAISED BY HAND. The tab's wait is DERIVED now,
+    # so it cannot be left behind — asserted at BOTH ends of the range, because a
+    # rule that only holds at the default is a rule that breaks the day somebody
+    # actually uses the setting.
+    for seconds in (spec.get("min"), spec.get("default"), spec.get("max")):
+        waited = chat_settings.wire_wait_seconds({"turn_seconds": seconds})
+        check(f"⚠ at {seconds}s the tab still outlasts the model, with the wire's share",
+              waited >= seconds + 15, f"model {seconds}s vs tab {waited}s")
+
+    derived_default = chat_settings.wire_wait_seconds({"turn_seconds": spec.get("default")})
+    check("⚠ AND A FRESH DEPLOYMENT'S TAB CONSTANT IS EXACTLY THE DERIVED DEFAULT",
+          derived_default == tab_s, f"derived {derived_default}s vs api.js {tab_s}s")
+
+    # ⚠ A NUMBER OUTSIDE THE BOUNDS IS CLAMPED, NOT OBEYED — a row written by an
+    # older build, or straight into Mongo by hand, has never been through the
+    # panel, and 5s there would be a chat that can never answer at all.
+    low = chat_settings.turn_budget_seconds({"turn_seconds": 5})
+    high = chat_settings.turn_budget_seconds({"turn_seconds": 9999})
+    check("...and a stored value outside the bounds is clamped on the way out",
+          low == spec["min"] and high == spec["max"], f"{low} / {high}")
+
+    # ---------------------------------------------------------------------
+    # ⚠ AND THE OPERATOR'S NUMBER REACHES THE MODEL CALL, EXACTLY. A setting
+    #   that loses to a `.env` default is the "I changed it and nothing
+    #   happened" bug — D5's, one feature over.
+    # ---------------------------------------------------------------------
+    os.environ["DIRECTOR_BUDGET_SECONDS"] = "40"
+    seen = {}
+
+    def note_budget(request):
+        seen["left"] = llm_json._time_left()
+        return '{"ok": true}'
+
+    asked = llm_json.JsonRequest(
+        system="s", prompt="p", schema={"type": "object"}, purpose="editor chat",
+        capability="chat", budget_seconds=170, budget_source="the admin panel",
+    )
+    llm_json.use_adapter(note_budget)
+    try:
+        llm_json.complete_json(asked)
+    finally:
+        llm_json.use_adapter(None)
+        os.environ.pop("DIRECTOR_BUDGET_SECONDS", None)
+    check("⚠ THE ADMIN'S SECONDS BEAT A SHORTER `DIRECTOR_BUDGET_SECONDS`",
+          160 <= seen.get("left", 0) <= 170, f"{seen.get('left')}s left of 170s")
+
+    # ⚠ AND THE SENTENCE SENDS THEM SOMEWHERE THEY CAN GO. "(CHAT_BUDGET_SECONDS)"
+    # is the right answer for a `.env` line and the wrong one for a settings box.
+    spent = llm_json._deadline.set(time.monotonic() - 1)
+    try:
+        panel_said = llm_json._with_clock("It failed.", 120, "the admin panel", True)
+    finally:
+        llm_json._deadline.reset(spent)
+    check("⚠ A TIMEOUT NAMES THE ADMIN PANEL, NOT A VARIABLE NOBODY CAN REACH",
+          "admin panel" in panel_said and "SECONDS" not in panel_said, panel_said)
+    check("...and still says what to do about it right now",
+          "one thing at a time" in panel_said, panel_said)
+
+    # ⚠ THE WIRING ITSELF, READ OUT OF THE FILES. Every check above would pass on
+    # an app that computed all of this and then sent the model a constant anyway.
+    agent_src = (ROOT / "editor_chat_agent.py").read_text(encoding="utf-8")
+    check("⚠ the agent really hands the setting to the model call",
+          'budget_seconds=float(settings.get("turn_seconds")' in agent_src,
+          "editor_chat_agent.py does not pass turn_seconds")
+    route_src = (ROOT / "server" / "editor_chat.py").read_text(encoding="utf-8")
+    check("⚠ ...and the config route really sends the derived wait to the tab",
+          "wire_wait_seconds" in route_src, "server/editor_chat.py does not derive it")
+    hook = ROOT / "client" / "src" / "animatic" / "agent" / "useEditorChat.js"
+    check("⚠ ...and the browser really uses it instead of its own floor",
+          "turn_timeout_ms" in hook.read_text(encoding="utf-8"),
+          "useEditorChat.js ignores it")
+
+    # ---------------------------------------------------------------------
     # ⚠ AND A SLOW CALL HAS TO BE READABLE OFF THE LOG — the open question
     #   that the two sections above could NOT answer.
     #

@@ -381,6 +381,41 @@ export default function EditorChat({
     if (open) inputRef.current?.focus();
   }, [open]);
 
+  // ⚠ THE BOX GROWS WITH WHAT IS TYPED, UPWARDS INTO THE PANEL. Asked for
+  //   outright after a four-line instruction was typed into it: *"text user jaha
+  //   likh raha hai usko bada karo, only 2 line dikh raha hai"*. A fixed two-row
+  //   textarea put the middle of a longer instruction behind an inner scrollbar,
+  //   so the one thing a person most needs to re-read before pressing Send — what
+  //   they actually asked for — was the one thing they could not see. It grows to
+  //   45% of the panel's OWN height, whatever that panel has been resized to, and
+  //   only then starts scrolling; the log above gives way, which is the right
+  //   trade while typing and undone the moment the box is emptied.
+  //
+  // ⚠ AND THE HEIGHT MATHS IS `GrowTextarea`'s, TO THE PIXEL — this app already
+  //   paid for it twice and it is not a detail. `scrollHeight` alone is short by
+  //   the BORDER (`box-sizing: border-box` is global, so a height of exactly
+  //   `scrollHeight` gives the text a content box smaller than the text) and
+  //   short again by the SUB-PIXEL the integer threw away (a 13px line at 1.5 is
+  //   19.5px; two lines measure 39 and need 39.5). Under the `overflow: hidden`
+  //   this box sets while it fits, either one eats the bottom of the last line —
+  //   which is the very fault the growing was asked for. Measured rather than
+  //   guessed, so it survives a border or line-height change: see the long note
+  //   in `GrowTextarea.jsx`, whose only reason for not being used here is that
+  //   it has no cap and this box must stop at the panel.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!open || !el) return;
+    el.style.height = "auto";
+    const max = Math.max(120, Math.round((panelRef.current?.clientHeight || 480) * 0.45));
+    const needed = el.scrollHeight + (el.offsetHeight - el.clientHeight) + 1;
+    el.style.height = `${Math.min(needed, max)}px`;
+    // ⚠ THE SCROLLBAR IS THE CAP'S, NOT THE BOX'S. Hidden while the text fits —
+    // an inner scrollbar on a box that is already tall enough is exactly what
+    // made the old two-row composer look broken — and handed back the moment the
+    // text passes the cap, or the overflow would be text nobody can reach.
+    el.style.overflowY = needed > max ? "auto" : "hidden";
+  }, [draft, open, box.h]);
+
   // ====================================================== the chats themselves
   // ⚠ THE STATE HERE IS ONLY WHAT IS ON SCREEN — which popover is showing, what
   // is half-typed in the rename box, which row is being asked about. The chats,
@@ -860,8 +895,8 @@ export default function EditorChat({
       <div className={`sc-composer ec-composer ${busy ? "is-busy" : ""}`}>
         <textarea
           ref={inputRef}
-          className="sc-composer-input"
-          rows={2}
+          className="sc-composer-input ec-composer-input"
+          rows={3}
           value={draft}
           disabled={busy || Boolean(chat.blocked)}
           placeholder="Add music, cut the slow bit, put a title on shot 3…"
@@ -876,24 +911,27 @@ export default function EditorChat({
           }}
         />
         <div className="sc-composer-foot">
-          <span className="tiny muted sc-composer-hint">
-            {/* ⚠ IT USED TO SAY "nothing changes until you press Apply" ON EVERY
-                TURN, INCLUDING AN EMPTY CHAT — a reassurance that points at a
-                button which is not on screen, and which most turns never grow.
-                Caught by `editor_chat_render_check.py`, which asserted that an
-                answer draws no Apply and found the word down here. The promise
-                is the same and it is now true whatever is on screen. */}
-            {chat.running
-              ? "Making the edit…"
-              : chat.sending
-                ? `Thinking… ${chat.elapsed}s`
-                : "Enter to send · I'll show you any edit before it happens"}
-          </span>
+          {/* ⚠ THE RESTING LINE IS GONE, AND ITS ROW WITH IT. It used to read
+              "Enter to send · I'll show you any edit before it happens" under
+              every single turn — a sentence nobody reads twice, sitting on the
+              only strip of panel the typing box wanted: *"ye text hatao … is
+              text ke jagah ko chat mai use karo, send button hi rahne do"*. The
+              promise it made is not dropped, it moved onto the button's own
+              tooltip, which is where this app puts helper text; the button is
+              what the promise is about. What is still shown here is only what
+              is TRUE RIGHT NOW — a turn in flight — because that is a state,
+              not a caption, and it disappears again when the turn lands. */}
+          {busy && (
+            <span className="tiny muted sc-composer-hint ec-composer-status">
+              {chat.running ? "Making the edit…" : `Thinking… ${chat.elapsed}s`}
+            </span>
+          )}
           <button
             type="button"
             className="btn primary small"
             onClick={submit}
             disabled={busy || !draft.trim() || Boolean(chat.blocked)}
+            title="Enter to send · Shift+Enter for a new line. I'll show you any edit before it happens."
           >
             {busy ? (
               <>
@@ -1205,9 +1243,17 @@ function Plan({ turn, chat, readCtx, busy }) {
 
   if (turn.stale) {
     return (
-      <p className="tiny muted ec-plan-stale">
-        This plan was from before the page reloaded, so it can't be applied now —
-        the shot numbers may mean something else. Ask again and I'll rewrite it.
+      // ⚠ FOUR WORDS ON SCREEN, THE REASON ON HOVER. It said the whole thing
+      //   inline — three lines of explanation under a plan the person had already
+      //   moved on from: *"thora short mai rakho, information itna bara achha nahi
+      //   lag raha hai"*. A note about something you CANNOT do must not be bigger
+      //   than the thing you can; the sentence is unchanged, it is just in the
+      //   tooltip now, beside ↩ "Put back" which is the same shape.
+      <p
+        className="tiny muted ec-plan-stale"
+        title="This plan was from before the page reloaded, so it can't be applied now — the shot numbers may mean something else."
+      >
+        ⏳ Old plan — ask again.
       </p>
     );
   }

@@ -95,6 +95,7 @@ Backend follows the USER STORE (`API_USER_STORE`), like every other panel store.
 
 import json
 import logging
+import os
 import threading
 import time
 from datetime import datetime, timezone
@@ -169,6 +170,40 @@ LIMITS = {
     # How many shots of the film are described to the model before the read-model
     # is summarised instead. A 500-shot project must not put 500 shots in a prompt.
     "shot_detail_limit": {"min": 10, "max": 200, "default": 60},
+    # ⚠ HOW LONG ONE MESSAGE MAY TAKE, IN SECONDS — and it was an environment
+    # variable (`CHAT_BUDGET_SECONDS`) until an operator hit it and could not
+    # move it: *"see error kya bol raha hai — kya tum admin panel mai banaye ho
+    # limit set karne wala"*. No. The screenshot was a real 504 on a real board:
+    # *"sound effects and background music lago pura story pe aur transition and
+    # effects ke saath"* — three jobs in one turn on a full film, which is the
+    # most expensive shape this feature has, and 120s was not enough clock for it.
+    # E138's rule again: a number only an SSH session can change is not a number
+    # an operator owns.
+    #
+    # ⚠ **THE FLOOR IS 90, AND 70 IS THE NUMBER IT IS KEEPING PEOPLE AWAY FROM.**
+    # The slowest attempt this feature can produce is a look (27–35s measured)
+    # whose answer needs mending — a repair is a SECOND paid call inside the same
+    # attempt — so 2 × 35 = 70 is the floor under the floor, and 70 EXACTLY is the
+    # budget that shipped, failed live, and was raised. A bound an operator can
+    # set to a known-broken value is not a bound. 90 leaves twenty seconds over
+    # the worst measured attempt; `tests/director_timeout_check.py` asserts it
+    # against those same measurements rather than against this comment.
+    #
+    # ⚠ **AND THE CEILING IS 180 BECAUSE THE SOCKET STOPS THERE.**
+    # `llm_json.DEFAULT_TIMEOUT_SECONDS` is 180 and `call_timeout()` hands the SDK
+    # the SMALLER of that and what is left of the budget — so a 240 typed here
+    # would have been cut off at 180 by the connection, and the operator's number
+    # would have been a number the app quietly ignored. That is precisely the
+    # failure E138 is about, one layer down. **Raise this only by raising
+    # `DEFAULT_TIMEOUT_SECONDS` with it**; `tests/director_timeout_check.py`
+    # reads both and fails if they come apart.
+    #
+    # ⚠ **AND IT IS THE ONLY NUMBER THEY TYPE.** Three clocks have to move
+    # together — the model call, the server's wait, the browser's wait — and the
+    # other two are DERIVED from this one (`wire_wait_seconds` below), because
+    # this pair has already been raised twice by hand and the hand-raise is what
+    # billed turns the tab had already abandoned.
+    "turn_seconds": {"min": 90, "max": 180, "default": 120},
     # ⚠ HOW SOLID THE PANEL IS, AS A PERCENTAGE — 100 is the panel this app has
     # always had, and anything lower lets the film show through it. Asked for
     # outright: *"admin panel mai ai editor se chatbot panel ko transparent kar
@@ -247,6 +282,7 @@ EDITABLE = frozenset({
     "transcript_keep",
     "max_turns_per_session",
     "shot_detail_limit",
+    "turn_seconds",
     "opacity",
     "blur",
     "max_chats_per_project",
@@ -263,6 +299,47 @@ GREETING_MAX_CHARS = 240
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+# ⚠ WHAT THE WIRE COSTS ON TOP OF THE MODEL, IN SECONDS. The tab is not waiting
+# for the model, it is waiting for the whole round trip: building the prompt, a
+# look's pictures coming up, the reply going back down. Thirty seconds is not
+# slack — it is the measured difference between "the model took 118s" and "the
+# user sat there for 143s", and it is why the browser must never be given the
+# model's number. `tests/director_timeout_check.py` reads it.
+WIRE_HEADROOM_S = 30
+
+
+def _env_turn_seconds() -> int:
+    """The shipped default, honouring the env var this field replaced."""
+    spec = LIMITS["turn_seconds"]
+    raw = (os.environ.get("CHAT_BUDGET_SECONDS") or "").strip()
+    if not raw:
+        return spec["default"]
+    try:
+        return max(spec["min"], min(spec["max"], int(float(raw))))
+    except ValueError:
+        logger.warning("CHAT_BUDGET_SECONDS=%r is not a number — using %s.", raw, spec["default"])
+        return spec["default"]
+
+
+def turn_budget_seconds(row: dict | None = None) -> int:
+    """How long ONE model call may take. The operator's number, exactly."""
+    spec = LIMITS["turn_seconds"]
+    value = (row or get_settings()).get("turn_seconds")
+    return _clamp_int(value, spec, spec["default"])
+
+
+def wire_wait_seconds(row: dict | None = None) -> int:
+    """How long the SERVER and the BROWSER wait — always longer than the model.
+
+    ⚠ **DERIVED, NEVER TYPED.** These three numbers have been raised by hand
+    twice (70/90 → 120/150) and both times the risk was the same: raise the
+    model's clock alone and the tab starts aborting turns the server is still
+    correctly serving — which bills the customer for an answer they never see.
+    One field moves all three, so that pair cannot come apart again.
+    """
+    return turn_budget_seconds(row) + WIRE_HEADROOM_S
 
 
 def defaults() -> dict:
@@ -285,6 +362,12 @@ def defaults() -> dict:
         "transcript_keep": LIMITS["transcript_keep"]["default"],
         "max_turns_per_session": LIMITS["max_turns_per_session"]["default"],
         "shot_detail_limit": LIMITS["shot_detail_limit"]["default"],
+        # ⚠ SEEDED FROM THE OLD ENVIRONMENT VARIABLE, ONCE. A deployment that
+        # had already raised `CHAT_BUDGET_SECONDS` must not silently drop back to
+        # 120 the day this field appears — that is the same silent downgrade this
+        # change exists to end. After the first save the stored row is the answer
+        # and the env var is not consulted again: the panel owns the number.
+        "turn_seconds": _env_turn_seconds(),
         # Fully solid, which is the panel that shipped. See LIMITS above.
         "opacity": LIMITS["opacity"]["default"],
         # No blur, which is also what is on screen today. See LIMITS above.

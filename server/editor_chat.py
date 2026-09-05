@@ -131,6 +131,13 @@ def config(
         greeting=row.get("greeting") or "",
         max_turns_per_session=int(row.get("max_turns_per_session") or 0),
         transcript_keep=int(row.get("transcript_keep") or 20),
+        # ⚠ THE TAB'S PATIENCE IS DERIVED FROM THE OPERATOR'S NUMBER, HERE, ONCE.
+        # It used to be a constant in three files that had to be raised together
+        # by hand, and both times it was raised the risk was the same: move the
+        # model's clock alone and the browser starts aborting turns the server is
+        # still correctly serving — billed, counted, and reported to the user as
+        # the server being stuck. One admin field moves all three now.
+        turn_timeout_ms=chat_settings.wire_wait_seconds(row) * 1000,
         turns_used=used,
         turns_limit=limit,
     )

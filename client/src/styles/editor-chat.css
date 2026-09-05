@@ -1015,6 +1015,40 @@
      box has to be findable BEFORE it is focused. */
   border-color: var(--ec-stroke-in);
 }
+/* ⚠ THREE LINES AT REST, AND IT GROWS — the height is written by the panel's
+   own autosize effect, so `resize` is off here on purpose: a hand-dragged height
+   and a typed one fight each other, and the grip in the corner was the thing
+   people grabbed instead of simply typing.
+   ⚠ AND `field-sizing: content` IS DELIBERATELY NOT HERE. It was, for one
+   revision, on the reasoning that a native answer costs nothing where it is
+   unsupported — but where it IS supported it is a SECOND mechanism sizing the
+   same box, and the browser's has no idea about the 45%-of-the-panel cap the
+   effect enforces. Two owners for one height is the same mistake as leaving the
+   drag handle on, decided one line further up.
+   ⚠ `overflow-y` IS THE RESTING STATE ONLY — the effect hands the scrollbar back
+   when the text passes the cap, or the overflow is text nobody can reach.
+   ⚠ AND THE LINE-HEIGHT IS STATED, because that is what the measured height is
+   computed from — the same arrangement `.shot-desc` and `.admin-quiet-field`
+   have, and `shot_density_check.py` says why. */
+.ec-composer .ec-composer-input {
+  min-height: 4.4em;
+  resize: none;
+  overflow-y: hidden;
+  line-height: 1.5;
+}
+/* ⚠ THE FOOT IS A ONE-BUTTON ROW NOW. With the resting hint gone there is
+   nothing to sit opposite Send, and `space-between` on a single child parks it
+   hard LEFT — the button has to stay where the thumb already knows it is. The
+   in-flight status pushes itself away with `margin-right: auto` on the turns it
+   exists for, which reproduces the old two-ended row exactly, only while it is
+   true. */
+.ec-composer .sc-composer-foot {
+  justify-content: flex-end;
+  margin-top: 0.3rem;
+}
+.ec-composer-status {
+  margin-right: auto;
+}
 
 /* =========================================================================
    THE RAIL'S OWN BUTTON — ✨ AI Editor, directly above the theme switch
