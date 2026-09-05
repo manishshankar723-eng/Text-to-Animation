@@ -632,6 +632,65 @@ _ARG_TYPES = {
 }
 
 
+# ⚠ THE NAME A MODEL REACHES FOR WHEN IT DOES NOT REACH FOR OURS.
+# `fold_steps` throws away an argument the named verb does not take, which is
+# right — `x: 0` on an `add_text` is a caption silently pinned to the left edge.
+# But "throw it away" is the wrong answer for a SYNONYM: the model knew what it
+# meant, spelled it the way English spells it, and the step arrives holding only
+# a shot number. That is not a dropped argument, it is a dropped EDIT.
+#
+# ⚠ THIS IS THE BUG THAT CAME BACK. `add_effect` takes `kind` — the same name
+# `add_transition` takes — and a batch told to add effects wrote `effect`, which
+# is the obvious word and is not a field. Sixteen effects on a live Ganesh
+# Chaturthi reel became sixteen rows of *"add_effect: the step named no effect to
+# add"*, twice, in two different builds. A prompt cannot be the only thing
+# standing between a synonym and a lost edit (E106/E123 are that lesson twice).
+#
+# ⚠ AN ALIAS ONLY EVER FIRES WHEN THE VERB CANNOT ALREADY USE THAT NAME, so a
+# real argument is never rewritten: `preset` IS `apply_text_preset`'s own
+# argument and is left exactly alone there, while `preset` on an `add_effect` —
+# where no such field exists — is read as the effect being named. And it never
+# overwrites something the model already said properly.
+_ARG_ALIASES = {
+    "kind": ("effect", "fx", "transition", "motion", "style", "type",
+             "preset", "effect_id", "effect_name", "kind_id", "id"),
+    "shot": ("clip", "frame", "shot_index", "shot_number", "shot_no",
+             "at_shot", "on_shot"),
+    "cut": ("after_shot", "after_frame", "cut_index", "after", "between"),
+    "ms": ("duration_ms", "duration", "length_ms", "length", "time_ms",
+           "milliseconds", "durationMs"),
+    "text": ("caption", "words", "content", "string", "line"),
+    "track": ("lane", "track_index"),
+    "index": ("at", "effect_index", "slot"),
+    "param": ("parameter", "property", "prop"),
+    "value": ("amount", "to_value", "setting"),
+    "volume": ("level", "gain"),
+    "opacity": ("alpha",),
+    "params": ("parameters", "options", "settings"),
+}
+
+
+def _canonical_args(raw: dict, allowed: set) -> dict:
+    """`raw`, with a synonym the verb cannot use renamed to the one it can.
+
+    Pure and conservative: a name the verb already takes is never touched, and an
+    alias never overwrites a value the model wrote under the right name.
+    """
+    out = dict(raw)
+    for canon, spellings in _ARG_ALIASES.items():
+        if canon not in allowed or out.get(canon) not in (None, ""):
+            continue
+        for wrong in spellings:
+            if wrong in allowed or wrong not in out:
+                continue
+            value = out.pop(wrong)
+            if value is None or (isinstance(value, str) and not value.strip()):
+                continue
+            out[canon] = value
+            break
+    return out
+
+
 def plan_schema(vocabulary: dict) -> dict:
     """The edit plan's shape, built from the manifest the client sent.
 
@@ -747,13 +806,25 @@ def fold_steps(raw: Any, vocabulary: dict) -> tuple[list[dict], list[dict]]:
             continue
         allowed = known[verb]
         raw_args = step.get("args") if isinstance(step.get("args"), dict) else {}
+        # ⚠ SYNONYM FIRST, FILTER SECOND. See `_ARG_ALIASES`: the filter below is
+        # what keeps another verb's argument out, and on its own it also threw
+        # away the right argument under the wrong name.
+        raw_args = _canonical_args(raw_args, allowed)
         args: dict = {}
         for name in sorted(raw_args):
             if name not in allowed:
                 continue
             value = raw_args[name]
             if name == "params":
+                # ⚠ A PLAIN OBJECT IS ACCEPTED TOO. The schema asks for pairs
+                # because it must (see `plan_schema`), but `{"amount": "0.4"}` is
+                # what a model writes half the time and it is unambiguous —
+                # refusing it dropped the dial and kept the effect at its default.
                 folded = {}
+                if isinstance(value, dict):
+                    for key, val in value.items():
+                        if str(key or "").strip():
+                            folded[str(key).strip()] = val
                 for pair in value if isinstance(value, list) else []:
                     if isinstance(pair, dict) and str(pair.get("name") or "").strip():
                         folded[str(pair["name"]).strip()] = pair.get("value")

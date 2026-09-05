@@ -51,6 +51,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 os.environ["API_JOB_STORE"] = "memory"
 os.environ.setdefault("API_LOCAL_USAGE_PATH", str(ROOT / ".pytest-usage.json"))
 
+import director  # noqa: E402
 import editor_chat_agent as agent  # noqa: E402
 import llm_json  # noqa: E402
 
@@ -170,7 +171,13 @@ try:
 finally:
     llm_json.use_adapter(None)
 
-picture_prompts = [p for p in seen if "SHOTS" in p and "ONLY" in p]
+# ⚠ THE SHOT BATCHES, PICKED OUT BY THE ONE LINE ONLY THEY HAVE. A sound task
+# is told "every shot in this film" and has no window, so it fails every check
+# below for a good reason. This used to sniff for the words "SHOTS" and "ONLY"
+# anywhere in the prompt and silently swallowed the sound batch the day someone
+# wrote "ONLY" into an unrelated paragraph — five checks then went red for a
+# prompt edit that was correct. Match the RANGE line itself.
+picture_prompts = [p for p in seen if "YOUR PART OF IT: shots " in p]
 check("every batch was really called", len(seen) == len(units), f"{len(seen)} of {len(units)}")
 check("⚠ A BATCH IS GIVEN THE SHOTS' OWN DESCRIPTIONS, not just their numbers",
       all("lights the" in p for p in picture_prompts))
@@ -190,6 +197,105 @@ check("⚠ A BATCH RUNS ON THE SAME SYSTEM PROMPT AS A CONVERSATION",
 edges = [p for p in picture_prompts if "context only, not yours" in p]
 check("⚠ A BATCH SEES ONE SHOT PAST ITS EDGE — a cut is about TWO shots",
       len(edges) == len(picture_prompts), f"{len(edges)} of {len(picture_prompts)}")
+
+# --- the batch may only reach for ITS OWN arguments ---------------------------
+# ⚠ PAID FOR ON THE FIRST LIVE RUN, AND THEN AGAIN ON THE SECOND. *"transition
+# and effects ke saath"* on a 14-shot reel produced perfect transitions and
+# **eight effects with no effect named** — `add_effect: the step named no effect
+# to add`, every one thrown away; the next build lost **sixteen** the same way.
+# `args` is a FLAT UNION of every verb's argument names, so a batch is offered
+# every other verb's names beside its own; narrowing the schema to this batch's
+# verbs removes most of them.
+#
+# ⚠ **AND THE SECOND LOSS WAS CAUSED BY THE FIX FOR THE FIRST.** The batch prompt
+# was written saying *"an `add_effect` needs `effect`"* — and it does not, it
+# needs **`kind`**, the same name `add_transition` takes. This test had the same
+# wrong name typed into its fixture, so it stayed green while the app threw every
+# effect away. **THE ARGUMENT NAMES ARE READ OFF `actions.js` NOW**, which is the
+# only place they are real, and the checks below fail if the prompt contradicts
+# it. Never type one of these names by hand again — not here, not in a prompt.
+ACTIONS_JS = (ROOT / "client" / "src" / "animatic" / "agent" / "actions.js").read_text(
+    encoding="utf-8"
+)
+
+
+def manifest_args(verb: str) -> list[str]:
+    """`verb`'s argument names, read out of the client registry that implements it."""
+    at = ACTIONS_JS.find('verb: "%s",' % verb)
+    assert at > 0, "no %s in actions.js" % verb
+    block = re.search(r"args:\s*\[(.*?)\]", ACTIONS_JS[at:at + 1200], re.S)
+    assert block, "no args for %s" % verb
+    return re.findall(r'"([A-Za-z_]+)"', block.group(1))
+
+
+REAL_FX_ARGS = manifest_args("add_effect")
+FX_SIGNATURE = "add_effect(%s)" % ", ".join(REAL_FX_ARGS)
+check("⚠ THE MANIFEST IS THE ONLY SOURCE OF ARGUMENT NAMES — `add_effect` really takes `kind`",
+      "kind" in REAL_FX_ARGS and "shot" in REAL_FX_ARGS, str(REAL_FX_ARGS))
+# ⚠ THE PROMPT MAY NOT CONTRADICT THE MANIFEST. One sentence naming the wrong
+# field is the whole regression — it told the model to write one that isn't there.
+batch_prompt = agent.prompts()["batch"]
+check("⚠ AND THE BATCH PROMPT DOES NOT NAME AN add_effect ARGUMENT THAT ISN'T THERE",
+      "needs `effect`" not in batch_prompt, "the prompt names a field the editor has no such field")
+check("…it shows the signature the manifest really has", FX_SIGNATURE in batch_prompt,
+      FX_SIGNATURE)
+
+FX_VOCAB = {"verbs": [
+    {"id": "add_transition", "label": "a transition", "args": manifest_args("add_transition")},
+    {"id": "add_effect", "label": "an effect", "args": REAL_FX_ARGS},
+    {"id": "delete_shot", "label": "remove a shot", "args": manifest_args("delete_shot")},
+]}
+fx_schema = agent.batch_schema(FX_VOCAB, {"verbs": ["add_effect"]})
+fx_args = sorted(fx_schema["properties"]["steps"]["items"]["properties"]["args"]["properties"])
+check("⚠ AN EFFECTS BATCH IS NARROWED TO ITS OWN ARGUMENTS — `cut` is not in its schema",
+      "cut" not in fx_args, str(fx_args))
+check("…and it still has every argument it actually needs",
+      all(name in fx_args for name in REAL_FX_ARGS), str(fx_args))
+check("⚠ …AND NO VERB IT WAS NOT GIVEN",
+      fx_schema["properties"]["steps"]["items"]["properties"]["verb"]["enum"] == ["add_effect"])
+card = agent._verb_card(FX_VOCAB, {"verbs": ["add_effect"]})
+check("⚠ AND THE PROMPT NAMES ITS VERBS WITH THEIR EXACT ARGUMENTS, on their own line",
+      FX_SIGNATURE in card and "add_transition" not in card, card)
+check("…which the batch prompt really has a slot for", "<<VERBS>>" in batch_prompt)
+
+# ⚠ AND THE FLOOR UNDER ALL OF IT: A SYNONYM IS RENAMED, NOT DROPPED. Neither
+# the schema nor the prompt can be the last line of defence — both were, twice,
+# and both failed. `effect` is the word English uses; the step keeps its meaning.
+salvaged, thrown = director.fold_steps(
+    [{"verb": "add_effect", "args": {"shot": 3, "effect": "vignette"}},
+     {"verb": "add_effect", "args": {"shot": 4, "kind": "grain"}},
+     {"verb": "apply_text_preset", "args": {"ref": "t1", "preset": "pop"}}],
+    {"verbs": [
+        {"id": "add_effect", "args": REAL_FX_ARGS},
+        {"id": "apply_text_preset", "args": manifest_args("apply_text_preset")},
+    ]},
+)
+check("⚠ A STEP THAT SAID `effect` INSTEAD OF `kind` IS SAVED, NOT THROWN AWAY",
+      len(salvaged) > 0 and salvaged[0]["args"].get("kind") == "vignette", str(salvaged[:1]))
+check("…and a step that said it properly is untouched",
+      len(salvaged) > 1 and salvaged[1]["args"].get("kind") == "grain", str(salvaged[1:2]))
+check("⚠ …AND A REAL ARGUMENT IS NEVER REWRITTEN — `preset` IS `apply_text_preset`'s own",
+      len(salvaged) > 2 and salvaged[2]["args"].get("preset") == "pop", str(salvaged[2:3]))
+check("…and not one of the three was dropped", not thrown, str(thrown))
+# ⚠ `params` AS A PLAIN OBJECT IS ALSO ACCEPTED — refusing it kept the effect
+# at its default, which reads as the AI ignoring the instruction.
+dialled, _ = director.fold_steps(
+    [{"verb": "add_effect", "args": {"shot": 2, "kind": "blur", "params": {"amount": "0.4"}}}],
+    {"verbs": [{"id": "add_effect", "args": REAL_FX_ARGS}]},
+)
+check("⚠ AND `params` WRITTEN AS AN OBJECT IS READ, not silently dropped",
+      len(dialled) > 0 and dialled[0]["args"].get("params") == {"amount": "0.4"}, str(dialled))
+# ⚠ A TASK WITH NO VERB LIST IS NOT NARROWED, and must not be: the model is then
+# choosing from the whole editor on purpose, and an empty allow-list silently
+# meaning "nothing" would produce a batch that can write no steps at all.
+wide_args = sorted(agent.batch_schema(FX_VOCAB, {})["properties"]["steps"]["items"]
+                   ["properties"]["args"]["properties"])
+check("⚠ A TASK THAT NAMED NO VERBS KEEPS THE WHOLE VOCABULARY",
+      "kind" in wide_args and "cut" in wide_args, str(wide_args))
+# ⚠ AND THE TURN PROMPT SAYS TO SPLIT THEM, which is the cheaper half of the same
+# fix: two tasks also run at the same time, where one combined task runs once.
+check("⚠ THE TURN PROMPT SAYS TRANSITIONS AND EFFECTS ARE TWO JOBS",
+      "TRANSITIONS AND EFFECTS ARE TWO JOBS" in agent.prompts()["turn"])
 
 # ===========================================================================
 print("\n3 · THE MERGE — one plan, in order, with nothing written twice\n")
@@ -299,6 +405,107 @@ check("⚠ …AND THE REPLY SAYS WHAT WAS MISSED, rather than quietly doing less
       "did not come back" in partial["reply"], partial["reply"])
 check("…and says those shots were left alone",
       "left alone" in partial["reply"], partial["reply"])
+
+# --- the failure a fan-out INVENTS, and the retry that answers it -------------
+# ⚠ PAID FOR ON THE SECOND LIVE RUN: *"2 parts did not come back, so those shots
+# were left alone"* — on a FOURTEEN-shot film, which is not a hard job. `llm_json`
+# already retries a call three times, so a batch that still failed did not fail
+# for its own reasons: it failed because three other calls were in the air at the
+# same moment. **That is the one failure mode a fan-out creates and a single
+# request never had**, and the answer is the SHAPE of the retry, not more of
+# them — serially, after the wave, when the burst is over.
+inflight = 0
+burst_lock = threading.Lock()
+
+
+def burst(request):
+    global inflight
+    with burst_lock:
+        inflight += 1
+        busy = inflight
+    try:
+        if busy > 2:
+            raise RuntimeError("429 too many requests")
+        m = re.search(r"SHOTS (\d+)–(\d+) ONLY", request.prompt)
+        if not m:
+            return json.dumps({"steps": []})
+        lo, hi = int(m.group(1)), int(m.group(2))
+        return json.dumps({"steps": [
+            {"verb": "add_transition", "args": {"shot": n, "kind": "cut"}}
+            for n in range(lo, hi + 1)
+        ]})
+    finally:
+        with burst_lock:
+            inflight -= 1
+
+
+llm_json.use_adapter(burst)
+try:
+    rescued = agent.run_work(
+        work=agent._coerce_work(
+            {"tasks": [{"goal": "transitions", "verbs": ["add_transition"]}]}, 60),
+        board=board(60), vocabulary=VOCAB, settings={"turn_seconds": 120},
+    )
+finally:
+    llm_json.use_adapter(None)
+saved = [s["args"]["shot"] for s in (rescued.get("plan") or {}).get("steps") or []]
+check("⚠ A BATCH THAT ONLY FAILED BECAUSE THE WAVE WAS BUSY IS RESCUED",
+      set(saved) == set(range(1, 61)), f"{len(saved)} steps, missing "
+      f"{sorted(set(range(1, 61)) - set(saved))[:6]}")
+check("…and the person is never told a part was lost, because none was",
+      "did not come back" not in rescued["reply"], rescued["reply"])
+
+# ⚠ AND WHEN IT REALLY IS LOST, THE REASON REACHES THE SCREEN. "2 parts did not
+# come back" and nothing else tells the person something broke and gives them
+# nothing to do about it — and tells whoever must fix it nothing at all. The
+# reason rides on `dropped`, which the panel already draws.
+reasons = [d for d in (partial.get("dropped") or []) if d.get("verb") == "part"]
+check("⚠ A LOST PART'S REASON IS ON THE PANEL, not only in the log",
+      len(reasons) >= 1, str(partial.get("dropped"))[:200])
+check("…and it names the shots it was for",
+      any("shots 13" in (d.get("why") or "") for d in reasons), str(reasons)[:200])
+check("…and the reply points at where that reason is",
+      "under the plan" in partial["reply"], partial["reply"])
+
+# --- the reply counts the way the panel counts -------------------------------
+# ⚠ SEEN LIVE: the reply said "13 edits" over a button that said "Apply 27
+# edits". A `note` is not an edit — the preview's own chips have always excluded
+# it — and the reply was counting it. Two numbers for one thing, neither of them
+# obviously wrong, is worse than either.
+NOTE_VOCAB = {"verbs": [
+    {"id": "add_transition", "label": "t", "args": ["shot", "kind"]},
+    {"id": "note", "label": "n", "args": ["text"]},
+]}
+
+
+def with_note(request):
+    m = re.search(r"SHOTS (\d+)–(\d+) ONLY", request.prompt)
+    if not m:
+        return json.dumps({"steps": []})
+    lo, hi = int(m.group(1)), int(m.group(2))
+    rows = [{"verb": "add_transition", "args": {"shot": n, "kind": "cut"}}
+            for n in range(lo, hi + 1)]
+    rows.append({"verb": "note", "args": {"text": "why I did this"}})
+    return json.dumps({"steps": rows})
+
+
+llm_json.use_adapter(with_note)
+try:
+    counted = agent.run_work(
+        work=agent._coerce_work(
+            {"tasks": [{"goal": "transitions", "verbs": ["add_transition", "note"]}]}, 24),
+        board=board(24), vocabulary=NOTE_VOCAB, settings={"turn_seconds": 120},
+    )
+finally:
+    llm_json.use_adapter(None)
+rows = (counted.get("plan") or {}).get("steps") or []
+real = len([s for s in rows if s.get("verb") != "note"])
+notes = len(rows) - real
+check("the batches really wrote notes as well as edits", notes > 0 and real == 24, f"{real}/{notes}")
+check("⚠ THE REPLY COUNTS EDITS THE WAY THE PANEL'S CHIPS DO — notes excluded",
+      f"{real} edits" in counted["reply"], counted["reply"])
+check("⚠ …SO IT CANNOT DISAGREE WITH THE APPLY BUTTON BESIDE IT",
+      f"{len(rows)} edits" not in counted["reply"], counted["reply"])
 
 # ===========================================================================
 print("\n6 · A SMALL JOB IS STILL A PLAIN TURN — no bar, no job, no extra call\n")

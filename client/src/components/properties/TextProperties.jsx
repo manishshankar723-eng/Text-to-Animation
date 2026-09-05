@@ -7,7 +7,14 @@
 
 import Icon from "../Icon.jsx";
 import KeyframeControls from "../KeyframeControls.jsx";
-import { FONTS } from "../../animatic/fonts.js";
+import {
+  FONTS,
+  bestFontForText,
+  fontEntry,
+  fontGroups,
+  missingScripts,
+  scriptEntry,
+} from "../../animatic/fonts.js";
 import { TEXT_PRESETS, applyTextPreset } from "../../animatic/text_presets.js";
 import { backdropHasFill, backdropPatch, textBackdrop } from "../../animatic/scene.js";
 import { PropGroup, PropRow, NumField, PropSlider, PropNote } from "./PropGroup.jsx";
@@ -147,6 +154,13 @@ export default function TextProperties({
   // the value you can actually see.
   const off = (field) => (clip[field] ?? CAPTION_DEFAULTS[field]) !== CAPTION_DEFAULTS[field];
   const keyed = (prop) => (clip.keyframes?.[prop] || []).length > 0;
+  // The writing systems this caption's own words need that its face has not
+  // got, and the face to offer instead. Measured against the .ttf's cmap by
+  // `tools/fonts_sync.py`, so this is a fact about the file rather than a guess
+  // from its name — see `fonts.js`. Recomputed on every keystroke on purpose:
+  // the warning has to arrive while the text is being typed, not after.
+  const gaps = missingScripts(clip.font, clip.text || "");
+  const suggestion = bestFontForText(clip.text || "", clip.font);
   // A ↺ on an animatable row clears that property's keys as well — see the note
   // in `FrameProperties`. Reading the keyframe map off `stored` rather than off
   // `clip` for the same reason the presets do: `clip` is resolved, and a preset
@@ -340,18 +354,49 @@ export default function TextProperties({
           changed={off("font")}
           resetTo={FONTS.find((f) => f.id === CAPTION_DEFAULTS.font)?.label || "the default"}
         >
+          {/* ⚠ GROUPED BY WRITING SYSTEM, and derived — `fontGroups()` builds
+              the shelves off the font list itself, so a face added to
+              `fonts.js` appears here without this file being touched. Fifty-six
+              faces in one flat list is not something anyone can read, and the
+              shelf label is also the answer to "which of these does my
+              language": it is written in the language. */}
           <select
             className="an-select"
             value={clip.font || "inter"}
             onChange={(e) => onChange(clip.id, { font: e.target.value })}
           >
-            {FONTS.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.label}
-              </option>
+            {fontGroups().map((group) => (
+              <optgroup key={group.id} label={group.note ? `${group.label} — ${group.note}` : group.label}>
+                {group.fonts.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.label}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
         </PropRow>
+        {/* ⚠ THE ONE FAILURE A PICKER CANNOT SHOW BY ITSELF. Every face in the
+            list draws SOMETHING, so a Hindi title set in Anton looks like a
+            valid choice right up until the render, where it comes out ▯▯▯ —
+            and the customer has paid for that render. The caption's own text is
+            checked against the face's measured coverage, and the fix is offered
+            rather than described: `bestFontForText` already knows which face to
+            reach for. */}
+        {gaps.length > 0 && (
+          <PropNote tone="warn">
+            {fontEntry(clip.font).label} cannot draw{" "}
+            {gaps.map((id) => (scriptEntry(id) || {}).label || id).join(" or ")} — the
+            video would show empty boxes.{" "}
+            <button
+              type="button"
+              className="an-tp-btn"
+              onClick={() => set({ font: suggestion })}
+            >
+              Use {fontEntry(suggestion).label}
+            </button>
+          </PropNote>
+        )}
         <PropRow
           label="Size"
           reset={() => set({ size: CAPTION_DEFAULTS.size })}

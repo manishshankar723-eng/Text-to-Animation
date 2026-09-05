@@ -48,6 +48,7 @@ import animatic
 import animatic_fonts
 import animatic_render
 import captions
+import text_shaping
 import tts
 from server.schemas import AnimaticTextClip
 
@@ -69,9 +70,49 @@ def check(label, good, detail=""):
 print("The font list — animatic_fonts.py vs client/src/animatic/fonts.js\n")
 
 HARNESS = """
-import { FONTS, DEFAULT_FONT } from %(fonts)s;
-process.stdout.write(JSON.stringify({ fonts: FONTS, default: DEFAULT_FONT }));
+import { FONTS, SCRIPTS, DEFAULT_FONT, bestFontForText, scriptsOf, missingScripts } from %(fonts)s;
+const SAMPLES = %(samples)s;
+process.stdout.write(JSON.stringify({
+  fonts: FONTS,
+  scripts: SCRIPTS,
+  default: DEFAULT_FONT,
+  // ⚠ THE FUNCTIONS, NOT JUST THE TABLES. Two identical lists read by two
+  // different resolvers still disagree, and the resolver is where the
+  // interesting logic is — script priority, the `any_of` fallback, and the
+  // shelf ranking that decides Urdu gets nastaliq rather than the first naskh
+  // face that happens to fit.
+  picked: SAMPLES.map((t) => bestFontForText(t)),
+  classified: SAMPLES.map((t) => scriptsOf(t)),
+  gaps: SAMPLES.map((t) => missingScripts("inter", t)),
+}));
 """
+
+# One caption per writing system the app claims to support, in the language it
+# is actually written in. Both sides classify and resolve these.
+SAMPLES = [
+    "Hello world",
+    "Grüße aus Köln",
+    "Pozdrowienia — Łódź, Gdańsk",
+    "Tiếng Việt",
+    "Привет мир",
+    "Καλημέρα",
+    "हिन्दी सिनेमा — क्षत्रिय की कहानी",
+    "ਪੰਜਾਬੀ ਫ਼ਿਲਮ",
+    "বাংলা ছবি",
+    "ગુજરાતી ફિલ્મ",
+    "ଓଡ଼ିଆ ଚଳଚ୍ଚିତ୍ର",
+    "தமிழ் திரைப்படம்",
+    "తెలుగు సినిమా",
+    "ಕನ್ನಡ ಚಲನಚಿತ್ರ",
+    "മലയാളം സിനിമ",
+    "السينما العربية",
+    "اردو فلم — لاہور کی کہانی",
+    "קולנוע ישראלי",
+    "ภาพยนตร์ไทย",
+    "中文电影",
+    "日本の映画",
+    "한국 영화",
+]
 
 
 def _file_url(path: str) -> str:
@@ -90,7 +131,13 @@ def read_js_fonts() -> dict:
     try:
         path = os.path.join(tmp, "harness.mjs")
         with open(path, "w", encoding="utf-8") as fh:
-            fh.write(HARNESS % {"fonts": json.dumps(_file_url(FONTS_JS))})
+            fh.write(
+                HARNESS
+                % {
+                    "fonts": json.dumps(_file_url(FONTS_JS)),
+                    "samples": json.dumps(SAMPLES, ensure_ascii=False),
+                }
+            )
         proc = subprocess.run(
             ["node", path], capture_output=True, text=True, encoding="utf-8", timeout=60
         )
@@ -103,11 +150,33 @@ def read_js_fonts() -> dict:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _plain(value):
+    """A list/dict tree with every tuple flattened to a list.
+
+    Python spells an immutable sequence `("a", "b")` and JSON spells it
+    `["a","b"]`; without this the twin check would fail on the language rather
+    than on a difference. Exactly the same accommodation as `true` vs `True`.
+    """
+    if isinstance(value, (tuple, list)):
+        return [_plain(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _plain(v) for k, v in value.items()}
+    return value
+
+
 js = read_js_fonts()
-py_fonts = [dict(f) for f in animatic_fonts.FONTS]
+py_fonts = _plain([dict(f) for f in animatic_fonts.FONTS])
+py_scripts = _plain([dict(s) for s in animatic_fonts.SCRIPTS])
 check("the two font lists are identical, element for element",
       js["fonts"] == py_fonts,
       f"\n    js: {js['fonts']}\n    py: {py_fonts}")
+# ⚠ THE SECOND TWIN, and the one that decides what a caption is ALLOWED to be
+# set in. If the two SCRIPTS tables drift, the browser and the exporter disagree
+# about which writing system a string is in — and the disagreement surfaces as
+# the editor saying a font is fine and the render drawing ▯▯▯.
+check("the two script tables are identical, element for element",
+      js["scripts"] == py_scripts,
+      f"\n    js: {js['scripts']}\n    py: {py_scripts}")
 check("both default to the same font",
       js["default"] == animatic_fonts.DEFAULT_FONT,
       f"(js={js['default']} py={animatic_fonts.DEFAULT_FONT})")
@@ -136,6 +205,133 @@ check("every font's line_ratio is what its file actually measures",
       all(abs(declared - measured) <= 0.02 for _, declared, measured in drift),
       "".join(f"\n    {i}: list says {d}, file says {m}" for i, d, m in drift
               if abs(d - m) > 0.02))
+
+# ---------------------------------------------------------------------------
+# 1b. What a font says it can draw, against what it can draw
+# ---------------------------------------------------------------------------
+# ⚠ THE OTHER MEASURED FIELD, and the one whose staleness is expensive.
+# `line_ratio` going stale spaces a caption slightly wrong. `scripts` going
+# stale offers a Punjabi title in a face with no Gurmukhi in it, and the
+# customer finds out from the finished MP4. Re-read off the cmap here for the
+# same reason the ratio is re-measured: the list is a reading of the file, and a
+# reading has to be repeatable or it is just a claim.
+print("\nWhat each font can actually draw\n")
+
+unknown = [
+    (f["id"], s)
+    for f in animatic_fonts.FONTS
+    for s in f["scripts"]
+    if s not in animatic_fonts.SCRIPT_IDS
+]
+check("every script a font declares is one the SCRIPTS table knows",
+      not unknown, f"unknown: {unknown}")
+
+shelves = [f["id"] for f in animatic_fonts.FONTS if f["group"] not in animatic_fonts.SCRIPT_IDS]
+check("every font is shelved under a script the table knows", not shelves, f"stray: {shelves}")
+
+# ⚠ A SCRIPT WITH NO RANGES CAN NEVER BE REQUIRED, so a font shelved under one
+# would be unreachable from any caption — except for the three regional Han
+# shelves, which `any_of` reaches on `han`'s behalf. Anything else in that state
+# is a shelf nobody can ever be sent to.
+reachable = {s["id"] for s in animatic_fonts.SCRIPTS if s["ranges"]}
+reachable |= {alt for s in animatic_fonts.SCRIPTS for alt in s["any_of"]}
+stranded = [f["id"] for f in animatic_fonts.FONTS if f["group"] not in reachable]
+check("no font sits on a shelf no caption can reach", not stranded, f"stranded: {stranded}")
+
+try:
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    from fonts_sync import SCRIPT_PROBES, cmap_of  # noqa: E402
+
+    wrong: list[str] = []
+    for font in animatic_fonts.FONTS:
+        path = animatic_fonts.font_path(font["id"])
+        if not path:
+            continue
+        with open(path, "rb") as fh:
+            covered = cmap_of(fh.read())
+        for script, probe in SCRIPT_PROBES.items():
+            gaps = {c for c in probe if not c.isspace() and ord(c) not in covered}
+            declares = script in font["scripts"]
+            if declares and gaps:
+                wrong.append(f"{font['id']} claims {script} but cannot draw {''.join(sorted(gaps))}")
+            elif not declares and not gaps:
+                wrong.append(f"{font['id']} can draw {script} and does not say so")
+    check("every font's declared scripts match its cmap, both ways",
+          not wrong, "\n    " + "\n    ".join(wrong[:20]))
+except ImportError as exc:
+    print(f"  fontTools is not installed ({exc}) — cannot re-read the cmaps.")
+    print("  A skip here means nothing checks that a font offered for Hindi has")
+    print("  any Devanagari in it.  pip install -r requirements-dev.txt")
+    failures.append("script coverage could not be re-measured")
+
+# ---------------------------------------------------------------------------
+# 1c. Shaping, without which half the list is a lie
+# ---------------------------------------------------------------------------
+# ⚠ THIS IS A HARD FAILURE, NOT A WARNING. Devanagari, Gurmukhi, Bengali,
+# Gujarati, Odia, Tamil, Telugu, Kannada, Malayalam, Arabic, Urdu, Hebrew and
+# Thai do not survive being drawn in typed order — हिन्दी comes out as हनि्दी —
+# and the browser shapes them correctly, so the preview looks RIGHT while the
+# MP4 is wrong. A machine that cannot shape can still run the app; it must not
+# be able to pass the suite, because the videos it makes are not shippable.
+print("\nComplex-script shaping\n")
+check("HarfBuzz shaping is available to the exporter",
+      text_shaping.AVAILABLE,
+      f"\n    {text_shaping.report()}"
+      f"\n    FriBiDi was not found. See vendor/fribidi/README.md — on Linux"
+      f"\n    that is `apt-get install -y libfribidi0`.")
+
+if text_shaping.AVAILABLE:
+    # The proof rather than the flag: an unshaped Devanagari render puts the
+    # i-matra after its consonant, which changes the ink. Comparing the two
+    # widths would be fragile; comparing the PIXELS is not, and the two orders
+    # cannot coincide.
+    from PIL import ImageDraw  # noqa: E402
+
+    def _ink(text: str, font_id: str) -> bytes:
+        image = Image.new("L", (900, 160), 0)
+        ImageDraw.Draw(image).text(
+            (10, 10), text, font=ImageFont.truetype(animatic_fonts.font_path(font_id), 90), fill=255
+        )
+        return image.tobytes()
+
+    check("a shaped Devanagari caption is not drawn in typed order",
+          _ink("हिन्दी", "noto-devanagari") != _ink("हनि्दी", "noto-devanagari"))
+    check("the shaped form is what the correct spelling produces",
+          _ink("कि", "noto-devanagari") != _ink("कि"[::-1], "noto-devanagari"))
+
+# ---------------------------------------------------------------------------
+# 1d. The resolver, on both sides
+# ---------------------------------------------------------------------------
+# ⚠ IDENTICAL TABLES ARE NOT IDENTICAL BEHAVIOUR. `best_font_for_text` is where
+# the judgement lives — script priority, the `any_of` fallback for Han, and the
+# shelf ranking that gives Urdu nastaliq instead of the first naskh face that
+# fits — and all of it is written twice. Run the same captions through both.
+print("\nPicking a font for a caption — Python vs JavaScript\n")
+
+py_picked = [animatic_fonts.best_font_for_text(t) for t in SAMPLES]
+py_classified = [animatic_fonts.scripts_of(t) for t in SAMPLES]
+py_gaps = [animatic_fonts.missing_scripts("inter", t) for t in SAMPLES]
+for label, mine, theirs in (
+    ("which writing systems a caption needs", py_classified, js["classified"]),
+    ("which font a caption is set in", py_picked, js["picked"]),
+    ("which writing systems a face is missing", py_gaps, js["gaps"]),
+):
+    differ = [
+        f"{SAMPLES[i]!r}: py={mine[i]} js={theirs[i]}"
+        for i in range(len(SAMPLES))
+        if mine[i] != theirs[i]
+    ]
+    check(f"both sides agree on {label}", not differ, "\n    " + "\n    ".join(differ))
+
+# And that the answer is USABLE, not merely agreed on: a caption must never be
+# handed a font that cannot draw it.
+undrawable = [t for t in SAMPLES if not animatic_fonts.covers(animatic_fonts.best_font_for_text(t), t)]
+check("every sample caption resolves to a font that can draw it",
+      not undrawable, f"\n    {undrawable}")
+check("an explicit choice is kept when it fits",
+      animatic_fonts.best_font_for_text("हिन्दी", prefer="poppins") == "poppins")
+check("an explicit choice that cannot draw the text is replaced",
+      animatic_fonts.best_font_for_text("हिन्दी", prefer="anton") != "anton")
 
 
 # ---------------------------------------------------------------------------

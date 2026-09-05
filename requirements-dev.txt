@@ -2,3 +2,10 @@
 # Browser end-to-end tests: see tests/e2e_animatic.py
 playwright>=1.40
 requests>=2.28.0
+
+# Reading and cutting font files: `tools/fonts_sync.py` uses it to freeze a
+# variable font to one static weight and to read each face's cmap, and
+# `tests/captions_check.py` uses it to re-read those cmaps and fail if a font
+# claims a writing system it cannot actually draw. Dev-only — nothing at
+# request time opens a font with it.
+fonttools>=4.50

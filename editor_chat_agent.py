@@ -1457,11 +1457,44 @@ def batch_schema(vocabulary: dict, task: dict) -> dict:
     allowed = [v for v in (task.get("verbs") or []) if v]
     if allowed:
         steps = ((plan.get("properties") or {}).get("steps") or {})
-        verb = ((steps.get("items") or {}).get("properties") or {}).get("verb")
+        item_props = (steps.get("items") or {}).get("properties") or {}
+        verb = item_props.get("verb")
         known = set(verb.get("enum") or []) if isinstance(verb, dict) else set()
         keep = [v for v in allowed if not known or v in known]
         if keep and isinstance(verb, dict):
             verb["enum"] = keep
+        # ⚠ **AND THE ARGUMENTS ARE NARROWED WITH THE VERBS — THIS IS THE HALF THAT
+        # WAS MISSING, AND IT COST A WHOLE JOB.** Seen live on the first real run:
+        # *"transition and effects ke saath"* on a 14-shot reel came back with the
+        # transitions perfect and **every single effect dropped** — eight rows of
+        # *"add_effect: the step named no effect to add"*. `args` is a FLAT UNION
+        # of every verb's argument names (there are no unions in this schema), so
+        # a batch writing transitions AND effects is offered every other verb's
+        # argument names beside its own and reaches for the wrong one. Narrowed to
+        # what THIS batch's verbs really take, most of those names are not in its
+        # schema at all.
+        #
+        # ⚠ **AND NARROWING IS NOT ENOUGH ON ITS OWN — READ THIS BEFORE YOU TRUST
+        # IT.** `add_effect` takes **`kind`**, the very same name `add_transition`
+        # takes, so for THESE two verbs narrowing removes nothing and the fix has
+        # to live elsewhere. It cost the bug a second time: the batch prompt was
+        # written saying *"an `add_effect` needs `effect`"*, which is not a field
+        # this editor has, and sixteen effects on a live reel were thrown away
+        # again. **Never type an argument name into a prompt or a test** — read it
+        # off `verbVocab()` in `client/src/animatic/agent/actions.js`, which is
+        # the only place it is real. `director._ARG_ALIASES` is the floor under
+        # all of it: a synonym is now renamed rather than dropped.
+        args = item_props.get("args")
+        wanted = {
+            name
+            for v in (vocabulary.get("verbs") or [])
+            if isinstance(v, dict) and v.get("id") in set(keep)
+            for name in (v.get("args") or [])
+        }
+        if wanted and isinstance(args, dict) and isinstance(args.get("properties"), dict):
+            args["properties"] = {
+                name: spec for name, spec in args["properties"].items() if name in wanted
+            }
     return {
         "type": "object",
         "properties": {
@@ -1476,6 +1509,42 @@ def batch_schema(vocabulary: dict, task: dict) -> dict:
         },
         "required": ["steps"],
     }
+
+
+def _verb_card(vocabulary: dict, task: dict) -> str:
+    """The batch's OWN verbs, with their exact argument names, on their own line.
+
+    ⚠ **THE MANIFEST ALREADY CARRIES THIS AND THAT WAS NOT ENOUGH.** `<<VOCABULARY>>`
+    is the whole editor — every verb in the app — and a batch that has been told
+    to do one job has to find its two verbs in fifty. What it reached for instead
+    was a name from another verb, or the English word for the thing, and either
+    one is dropped and shows up as "the step named no effect to add". Seen live
+    on the first real run, eight times in one job, and again on the next build.
+
+    ⚠ **THIS CARD IS THE ONE TRUE COPY, AND IT IS GENERATED.** Every name on it
+    comes from the manifest the client sent, so it cannot disagree with the
+    validator that will read the step. The prompt around it must therefore never
+    name an argument itself — the last time it did it said `add_effect` needs
+    `effect`, and it does not; it needs `kind`.
+
+    ⚠ The SCHEMA is what makes that impossible (see `batch_schema`); this is what
+    makes it obvious. Both, because a model that is only constrained writes valid
+    steps that do the wrong thing, and a model that is only told writes the wrong
+    field.
+    """
+    allowed = {v for v in (task.get("verbs") or []) if v}
+    rows = [
+        v for v in (vocabulary.get("verbs") or [])
+        if isinstance(v, dict) and v.get("id") and (not allowed or v["id"] in allowed)
+    ]
+    if not rows:
+        return "Any verb in the list above."
+    lines = []
+    for v in rows[:12]:
+        args = ", ".join(v.get("args") or []) or "no arguments"
+        label = _clip(v.get("label"), 90)
+        lines.append(f"· {v['id']}({args})" + (f" — {label}" if label else ""))
+    return "\n".join(lines)
 
 
 def _batch_call(*, unit: dict, board: dict, vocabulary: dict, settings: dict,
@@ -1506,6 +1575,7 @@ def _batch_call(*, unit: dict, board: dict, vocabulary: dict, settings: dict,
                 sort_keys=True, indent=1,
             ),
             "GOAL": task.get("goal") or "",
+            "VERBS": _verb_card(vocabulary or {}, task),
             "RANGE": (
                 "every shot in this film" if task.get("sound")
                 else f"shots {first} to {last}"
@@ -1575,9 +1645,12 @@ def run_work(*, work: dict, board: dict, vocabulary: dict, settings: dict | None
     sfx: list[dict] = []
     music: dict | None = None
     failures: list[str] = []
+    # ⚠ THE UNITS THAT FAILED, NOT JUST THE COUNT — they are tried once more when
+    # the parallel wave is over. See the retry block below.
+    lost_units: list[tuple[dict, str]] = []
     stopped = False
 
-    def one(index: int, unit: dict):
+    def one(index: int, unit: dict, retry: bool = False):
         nonlocal done, music, stopped
         if cancelled and cancelled():
             with lock:
@@ -1595,10 +1668,13 @@ def run_work(*, work: dict, board: dict, vocabulary: dict, settings: dict | None
             # all away would charge the person for every call and hand them
             # nothing. What was missed is named in the reply instead.
             with lock:
-                failures.append(f"shots {unit['first']}–{unit['last']}: {e}")
-                done += 1
-                if on_progress:
-                    on_progress(done, total, f"{label} — that part failed")
+                if retry:
+                    failures.append(f"shots {unit['first']}–{unit['last']}: {e}")
+                else:
+                    lost_units.append((unit, str(e)))
+                    done += 1
+                    if on_progress:
+                        on_progress(done, total, f"{label} — retrying that part")
             return
         got, lost = fold_steps(raw.get("steps"), vocabulary or {})
         # ⚠ THE BATCH IS TOLD ITS RANGE AND THE MERGE ENFORCES IT. Every prompt in
@@ -1641,6 +1717,28 @@ def run_work(*, work: dict, board: dict, vocabulary: dict, settings: dict | None
                             thread_name_prefix="chatwork") as pool:
         list(pool.map(lambda pair: one(*pair), list(enumerate(units))))
 
+    # ⚠ **THE PARTS THAT FELL OVER GET ONE MORE GO, ONE AT A TIME.** Seen live on
+    # the second real run: *"2 parts did not come back, so those shots were left
+    # alone"* — on a fourteen-shot film, which is not a hard job. `llm_json`
+    # already retries a call three times, so a batch that still failed did not
+    # fail for its own reasons: it failed because THREE OTHER CALLS WERE IN THE
+    # AIR AT THE SAME MOMENT. That is the one failure a fan-out creates and a
+    # single request never had, and the fix is the shape of the retry, not the
+    # number of them — **serially**, after the wave, when the burst is over and
+    # the provider is answering again.
+    #
+    # ⚠ AND ONLY ONE PASS OF IT, so a genuinely broken job cannot double its own
+    # bill trying to talk itself better. Anything still failing after this is
+    # named in the reply and left alone.
+    if lost_units and not (cancelled and cancelled()):
+        retrying = list(lost_units)
+        lost_units.clear()
+        logger.info("[editor-chat] work — retrying %d part(s) serially", len(retrying))
+        if on_progress:
+            on_progress(done, total, f"retrying {len(retrying)} part(s)")
+        for unit, _why in retrying:
+            one(0, unit, retry=True)
+
     if stopped and not steps and not sfx:
         raise EditorChatError("Stopped before anything was written.")
     if not steps and not sfx and failures:
@@ -1650,7 +1748,21 @@ def run_work(*, work: dict, board: dict, vocabulary: dict, settings: dict | None
     # FINISHED IN. The preview is read top to bottom against a timeline that runs
     # left to right, and a plan whose steps jump about is one nobody can check.
     steps.sort(key=lambda s: _step_shot(s) if _step_shot(s) is not None else 10_000)
-    sfx.sort(key=lambda c: int(c.get("shot") or 0))
+    # ⚠ ONE CUE PER SHOT. A sound job is one call, so this cannot come from two
+    # batches disagreeing — it is one model listing the same shot twice, which it
+    # does on a film where two shots are alike. The client refuses the second
+    # ("shot 14 already has a sound cued") and reports it as something it could
+    # not use, which reads to the person as the app failing rather than as the
+    # duplicate it is. Cheaper and quieter to keep the first here.
+    seen_shots: set[int] = set()
+    unique_sfx = []
+    for cue in sorted(sfx, key=lambda c: int(c.get("shot") or 0)):
+        at = int(cue.get("shot") or 0)
+        if at in seen_shots:
+            continue
+        seen_shots.add(at)
+        unique_sfx.append(cue)
+    sfx = unique_sfx
 
     sound = None
     if sfx or music:
@@ -1658,13 +1770,34 @@ def run_work(*, work: dict, board: dict, vocabulary: dict, settings: dict | None
         if music:
             sound["music"] = music
 
+    # ⚠ **WHY IT FAILED REACHES THE SCREEN, NOT ONLY THE LOG.** The first version
+    # said "2 parts did not come back" and stopped there — which tells the person
+    # something went wrong and gives them nothing to do about it, and tells
+    # whoever has to fix it nothing at all. The reason rides on `dropped`, which
+    # the panel already draws under "things I couldn't use", so a rate limit and a
+    # broken key stop looking like the same event.
+    for why in failures:
+        dropped.append({"index": 0, "verb": "part", "why": why})
+
+    if failures:
+        logger.warning("[editor-chat] work — %d part(s) failed: %s",
+                       len(failures), " | ".join(failures[:4]))
     logger.info(
         "[editor-chat] work DONE — %d batch(es), %d step(s), %d cue(s), %d failed",
         total, len(steps), len(sfx), len(failures),
     )
     return {
         "kind": "plan" if (steps or sound) else "answer",
-        "reply": _work_reply(total, len(steps), len(sfx), bool(music), failures, stopped),
+        # ⚠ COUNTED THE WAY THE PANEL COUNTS, or the two disagree in front of the
+        # person. A `note` is not an edit — the plan preview has always excluded
+        # it from its chips — and the first version counted it, so the reply said
+        # "13 edits" above a button that said "Apply 27 edits". Two numbers for
+        # one thing, and neither of them obviously wrong, is worse than either.
+        "reply": _work_reply(
+            total,
+            len([s for s in steps if (s.get("verb") or "") != "note"]),
+            len(sfx), bool(music), failures, stopped,
+        ),
         "ask": None,
         "look": None,
         "passes": [],
@@ -1704,8 +1837,13 @@ def _work_reply(batches: int, steps: int, cues: int, music: bool,
         return f"Stopped. {made.capitalize()} had been written by then — apply it or discard it."
     line = f"Done — {made}, written in {batches} pass{'es' if batches != 1 else ''}."
     if failures:
+        # ⚠ AND IT POINTS AT WHERE THE REASON IS. "2 parts did not come back" with
+        # no reason anywhere reads as the app shrugging; the reasons are on the
+        # panel under "things I couldn't use", and saying so is the difference
+        # between a dead end and a next step.
         line += (
-            f" {len(failures)} part{'s' if len(failures) != 1 else ''} did not come back, "
-            "so those shots were left alone. Ask again for just those."
+            f" {len(failures)} part{'s' if len(failures) != 1 else ''} still did not come "
+            "back after a retry, so those shots were left alone — the reason is under "
+            "the plan. Ask again for just those."
         )
     return line

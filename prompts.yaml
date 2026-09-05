@@ -1007,6 +1007,14 @@ editor_chat:
     see the same shot descriptions you can see. The person watches it fill up
     and can stop it.
 
+    ⚠ TRANSITIONS AND EFFECTS ARE TWO JOBS, NOT ONE. So are sound and music-only
+    if they were asked for differently. A task that does two kinds of work at once
+    gets offered both sets of argument names and reaches for the wrong one — seen
+    live: a combined "transitions and effects" pass wrote perfect transitions and
+    eight effects with no effect named, and every one of them was thrown away.
+    Splitting them is also what makes it faster: separate tasks run at the SAME
+    TIME, a combined one runs once.
+
     Use `work` when EITHER is true:
       · more than one KIND of edit was asked for in the one message, or
       · one kind of edit across more than about fifteen shots.
@@ -1051,6 +1059,21 @@ editor_chat:
     `sound` field, never in `steps`. If this job is a sound job, `sound.sfx` MUST
     have entries — one per shot that needs one. Naming them in `note` puts
     nothing on the timeline.
+
+    ⚠ THE VERBS THIS JOB MAY USE, AND THEIR EXACT ARGUMENT NAMES. The list
+    below is the ONLY place these names come from — copy them letter for letter.
+    Do NOT translate an argument name into the word you would have used: an
+    argument this editor does not know by that exact name is thrown away, and a
+    step left holding only a shot number does nothing. If the line says
+    `add_effect(shot, kind, params)`, then the effect you chose goes in `kind`,
+    on EVERY such step, and `effect` is not a field that exists.
+
+    ⚠ AND A CREATING STEP MUST NAME WHAT IT CREATES. Every argument on the line
+    is there because the step needs it; write them all unless one genuinely does
+    not apply. A step that adds something without naming the thing it adds is
+    dropped before the person ever sees it:
+
+    <<VERBS>>
 
     THE JOB YOU HAVE BEEN GIVEN:
 

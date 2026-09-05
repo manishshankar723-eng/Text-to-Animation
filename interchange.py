@@ -4481,7 +4481,16 @@ def _import_text_clips(
             "text": text,
             "start_ms": start_ms,
             "duration_ms": length_ms,
-            "font": item.get("font") or animatic_fonts.DEFAULT_FONT,
+            # ⚠ THE MAPPED FONT ONLY IF IT CAN DRAW THE WORDS. `_prproj_font`
+            # matches Premiere's family names against this app's list, and a
+            # miss folds down to the default — which is Inter, which has no
+            # Devanagari, Arabic or Han in it. An imported Hindi timeline
+            # therefore arrived looking correct in the panel and rendered as
+            # empty boxes. A mapped font that FITS is still kept: this only ever
+            # replaces one that would not have drawn.
+            "font": animatic_fonts.best_font_for_text(
+                text, str(item.get("font") or animatic_fonts.DEFAULT_FONT)
+            ),
             "size_px": float(item.get("size_px") or 0.0),
             # ⚠ THE FILE'S COLOUR IF IT HAS ONE, THIS APP'S IF IT HAS NOT — and
             # BOTH formats can now have one. An `xmeml` writes `fontcolor` as

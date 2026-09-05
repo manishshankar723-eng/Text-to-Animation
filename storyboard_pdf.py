@@ -11,6 +11,12 @@ import logging
 import os
 import textwrap
 
+# ⚠ ABOVE PIL, for the same reason `animatic.py` does it: this is what turns
+# complex-script SHAPING on, and it only works if it happens before Pillow's
+# font module is imported. A board printed with Hindi captions is as wrong
+# without it as an MP4 is. See `text_shaping.py`.
+import text_shaping  # noqa: F401  (imported for the side effect, before PIL)
+
 from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger(__name__)

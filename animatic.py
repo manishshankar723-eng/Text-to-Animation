@@ -54,6 +54,17 @@ import shutil
 import subprocess
 import threading
 
+# ⚠ ABOVE PIL ON PURPOSE, AND THE ONLY IMPORT IN THIS FILE THAT HAS AN ORDER.
+# This is what turns SHAPING on — the step that makes `हिन्दी` four correctly
+# joined glyphs instead of six characters drawn in typed order. libraqm asks for
+# FriBiDi exactly once, while `PIL.ImageFont` is being imported, and if the
+# answer is "not here" it switches itself off for the life of the process. Move
+# this line below the next one and every Devanagari, Gurmukhi, Arabic, Tamil,
+# Bengali and Thai caption silently starts exporting malformed again — silently,
+# because the browser shapes correctly and the preview would still look right.
+# Read `text_shaping.py`.
+import text_shaping  # noqa: F401  (imported for the side effect, before PIL)
+
 from PIL import Image, ImageDraw, ImageFont
 
 import animatic_fonts
@@ -2971,6 +2982,36 @@ def build_animatic(
         raise AnimaticError(
             "None of the frames could be read — their images may have been deleted."
         )
+
+    # ⚠ REFUSED, NOT DEGRADED, AND BEFORE A FRAME IS DRAWN. Without HarfBuzz the
+    # exporter draws Devanagari, Gurmukhi, Bengali, Gujarati, Odia, Tamil,
+    # Telugu, Kannada, Malayalam, Arabic, Urdu, Hebrew and Thai in typed order —
+    # हिन्दी comes out as हनि्दी — while the browser, which always shapes, shows
+    # the preview correctly. So the one failure mode this whole project is built
+    # to prevent comes back in its worst form: a video that is wrong in a way
+    # nobody reviewing on screen can see, delivered to a customer who paid for
+    # the render. An export that stops with a sentence naming the fix costs a
+    # support ticket. One that finishes costs the client.
+    #
+    # Only ever raised for a project that actually contains such a caption, so
+    # an English or Chinese timeline is unaffected either way. See
+    # `text_shaping.py`, and `vendor/fribidi/README.md` for the install.
+    if not text_shaping.AVAILABLE:
+        unshapeable = [
+            str(t.get("text") or "")
+            for t in (texts or [])
+            if text_shaping.needs_shaping(str(t.get("text") or ""))
+        ]
+        if unshapeable:
+            shutil.rmtree(build_dir, ignore_errors=True)
+            raise AnimaticError(
+                "This server cannot draw the writing system used in "
+                f"“{unshapeable[0][:40]}” — the letters would come out in the "
+                "wrong order in the video, so the export was stopped rather "
+                "than finished wrongly. FriBiDi is missing: on Linux install it "
+                "with `apt-get install -y libfribidi0` and restart, or see "
+                "vendor/fribidi/README.md."
+            )
 
     # Which planner: see this module's docstring. `is_animated` errs toward True
     # — being wrong the other way would silently drop every animation from the

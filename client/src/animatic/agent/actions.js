@@ -57,6 +57,7 @@ import {
   entryFor,
   isKnown,
 } from "./capabilities.js";
+import { DEFAULT_FONT, bestFontForText } from "../fonts.js";
 import { EASINGS, TEXT_BACKDROPS, TEXT_PLACES, frameTrack } from "../scene.js";
 import { applyTextPreset } from "../text_presets.js";
 import { MAX_TRANSITION_MS, MIN_TRANSITION_MS } from "../transitions.js";
@@ -1024,6 +1025,15 @@ export const ACTIONS = {
       const text = str(args.text);
       if (!text) return fail("a text clip with no words in it");
       const out = { shot: i + 1, text, ref: str(args.ref) || "", patch: {} };
+      // ⚠ THE FONT IS RESOLVED FROM THE WORDS, NOT ASKED FOR. The planner
+      // writes captions in whatever language the film is in and has no way to
+      // know which of fifty-six faces has Gurmukhi in it — and adding a `font`
+      // argument would only move the problem, because a model that guesses
+      // "poppins" for Tamil produces ▯▯▯ just as surely as the default does.
+      // `bestFontForText` keeps the default whenever it fits, so an English
+      // caption is untouched and nothing about the vocabulary changes.
+      const font = bestFontForText(text, DEFAULT_FONT);
+      if (font !== DEFAULT_FONT) out.patch.font = font;
       const position = oneOf(args.position, TEXT_POSITIONS);
       if (position) out.patch.position = position;
       const align = oneOf(args.align, TEXT_ALIGNS);
@@ -1102,7 +1112,19 @@ export const ACTIONS = {
     describe: (args) => `${args.ref}: ${Object.keys(args.patch).join(", ")}`,
     run: ({ api, args, ctx, refs }) => {
       const clip = byRef(args.ref, ctx.texts, refs);
-      if (clip) api.patchText(clip.id, args.patch);
+      if (!clip) return;
+      // ⚠ REWORDING A CAPTION CAN CHANGE WHAT ITS FACE HAS TO CONTAIN, which
+      // `add_text` cannot foresee: an English title translated into Hindi in a
+      // follow-up turn is still sitting in the Latin face it was created with.
+      // Done in `run` rather than in `validate` because only here is the clip's
+      // CURRENT font known, and it is that font — not the default — that gets
+      // to stay if it still fits.
+      const patch = { ...args.patch };
+      if (patch.text) {
+        const font = bestFontForText(patch.text, clip.font || DEFAULT_FONT);
+        if (font !== (clip.font || DEFAULT_FONT)) patch.font = font;
+      }
+      api.patchText(clip.id, patch);
     },
   },
 

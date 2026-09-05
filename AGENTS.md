@@ -308,7 +308,11 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-09-05 — **A BIG MESSAGE IS A JOB NOW: IT RUNS IN PARALLEL, SHOWS A PROGRESS BAR, CAN BE STOPPED, AND CANNOT TIME OUT.** *"isko production level pe tez banao aur bada kaam … progress dikha kar, kabhi timeout nahi, kabhi problem na aaye"*. E142 made the chat's clock an admin field and that was right as far as 180 seconds — past which the socket, the proxy and the browser each cut the call anyway. ⚠ **SO THE FIX IS NOT A LONGER REQUEST.** A turn that is really four jobs over sixty shots now returns a BRIEF (`kind: "work"`), the route starts a job (`server/editor_chat_work.py`, new `JobKind.EDITOR_CHAT`) and comes back immediately; the panel polls `/editor-chat/work/{id}`, draws a real bar, and **Stop here** stops the spend rather than the wait. *Unlimited means unlimited MESSAGES, not one message allowed to run for ever* — so the turn is billed **once**, never per batch. ⚠ **AND THE SPEED IS SPLITTING, NOT COMPRESSING.** The operator caught the wrong design before it was built: *"1 niyam likhne do to har clip pe dissolve hi laga dega na — magar mujhe to chahiye ki do shot ke bich ko samajh kar jo jaruri hai wo lage"*. Right, and a blanket rule would have undone 2026-09-05's own per-cut transition work. **Nothing is compressed**: every batch reads real shot descriptions, runs the SAME system prompt (the craft rules travel with the work), and decides cut by cut — it is simply asked about twelve cuts instead of sixty, four batches at a time. ⚠ **THE TRAP THE TEST CAUGHT BEFORE A MODEL EVER RAN**: the window a batch SEES is not the range it WRITES FOR — a cut is about two shots — and conflating them gave 40 steps on a 36-shot film. The digest now marks context rows "not yours" AND the merge refuses an out-of-range step, because a prompt is a request and only the merge is a guarantee. Also: sound is ONE call (five batches would choose five music beds), one batch failing still returns the rest **and names what was missed**, and a record left RUNNING with no runner reports as `lost` in words rather than as a bar that never moves. ⚠ **THE MERGED ANSWER IS AN ORDINARY TURN** — same `normaliseTurn`, `validatePlan`, preview, Apply, Undo. Files: `editor_chat_agent.py` (`work` brief, `work_batches`, `run_work`, `sound_schema` lifted out, `board_digest(window, writing)`), `prompts.yaml` (new `batch` prompt + the when-to-hand-over rule), `server/editor_chat_work.py` (new), `server/editor_chat.py`, `server/schemas.py`, `client/src/api.js`, `useEditorChat.js`, `EditorChat.jsx`, `editor-chat.css`. New **`tests/editor_chat_work_check.py` — 60 checks, green four runs in a row, no model called**; `editor_chat_check` extended; `editor_chat_render_check`, `editor_chat_doors_check`, `director_timeout_check`, `chat_provider_check`, `chat_sessions_check`, `admin_check`, `admin_fields_check`, `interchange_check` and `npm run build` all pass. New **RULEBOOK E144**. ⚠ **NOT ONE REAL MODEL CALL HAS BEEN MADE THROUGH THIS PATH AND IT HAS NOT BEEN OPENED IN A BROWSER** (G2/G7) — every test drives it through `use_adapter`. What is unproven live: whether the model actually CHOOSES `work` on a big message, and whether twelve-shot batches read as well as one long answer did. Top of Next Steps.
+**Last updated:** 2026-09-06 — **THE EFFECTS WERE THROWN AWAY A SECOND TIME, AND IT WAS THE FIX FOR THE FIRST TIME THAT DID IT.** *"is shorts/reel ke hisaab se sound effects and background music lago pura story pe aur transition and effects ke saath"* — the same message as before, on a Ganesh Chaturthi reel — came back **9 transitions, 9 sound cues, a music bed, and 16 rows of `add_effect: the step named no effect to add`**, which is the exact screen E144 was already paid for. ⚠ **THE CAUSE WAS ONE FALSE SENTENCE IN A PROMPT.** E144's repair added to `prompts.yaml`: *"an `add_effect` needs `effect`; `kind` belongs to a transition and on an effect it names nothing"*. **`add_effect` takes `kind`** — the very same name `add_transition` takes — so the app was ordering the model to fill a field that does not exist, `fold_steps` dropped it as another verb's argument, and every effect reached the client holding a shot number and nothing else. The schema narrowing E144 also added is correct and removes nothing *for this pair*, because both verbs really do take `kind`. ⚠ **AND THE TEST AGREED WITH THE PROMPT, WHICH IS WHY THE SUITE STAYED GREEN THROUGH A TOTAL FAILURE** — `tests/editor_chat_work_check.py` typed its own fixture, `add_effect(shot, effect, params)`, and asserted the wrong contract was being honoured. A test that invents its own copy of a contract cannot catch the contract being wrong. **It reads `client/src/animatic/agent/actions.js` now** and fails if the prompt contradicts the manifest. ⚠ **THE FLOOR UNDER BOTH IS NEW AND IS THE REAL FIX**: `director._ARG_ALIASES` **renames** a synonym the named verb cannot use to the one it can — `effect`/`fx`/`style`/`preset` → `kind`, `clip`/`frame` → `shot`, `duration_ms` → `ms` — instead of silently dropping it. An alias only ever fires when the verb has no such field of its own (so `preset` on an `apply_text_preset` is untouched) and never overwrites what the model already wrote properly. **A dropped synonym is not a dropped argument, it is a dropped EDIT**, and neither a prompt nor a schema may be the last line of defence — both were, twice, and both failed. Same visit: `params` written as a plain object (`{"amount": "0.4"}`) is now read rather than ignored, which had been leaving effects at their default and reading as the AI not listening. Files: `prompts.yaml` (the false sentence replaced with a manifest-neutral one), `director.py` (`_ARG_ALIASES`, `_canonical_args`, `params`-as-object), `editor_chat_agent.py` (the comments that recorded the wrong argument name), `tests/editor_chat_work_check.py` (reads the manifest; +10 checks; its shot-batch filter was itself fragile — it sniffed for the words "SHOTS" and "ONLY" anywhere in the prompt and swallowed the sound batch the moment a correct paragraph used "ONLY", turning five checks red for no reason — it matches the `YOUR PART OF IT: shots` line now). `editor_chat_work_check`, `editor_chat_check`, `editor_chat_doors_check`, `editor_chat_render_check`, `editor_director_check`, `director_plan_check`, `director_actions_check`, `director_contract_check`, `director_language_check` and `director_guardrails_check` all pass. New **RULEBOOK E147**. ⚠ **NOT RUN LIVE (G7)** — no model has been called since the change, so whether the effects actually land on the timeline is unproven; the alias fold is PAKKA and the prompt wording is GUZARISH. Top of Next Steps.
+
+**Previously:** 2026-09-06 — **THE APP CAN NOW SET TYPE IN TWENTY WRITING SYSTEMS — AND THE FIRST THING THAT HAD TO BE FIXED WAS THAT IT COULD NOT SET TYPE IN THE ONE IT ALREADY OFFERED.** *"mujhe aur font family chahiye … google ka, OFL ke saath … sabhi user ke liye production level ka setup"*. Asked for more fonts; found, before adding any, that **every Hindi caption this app has ever exported was malformed.** ⚠ **THE PREVIEW WAS RIGHT AND THE MP4 WAS WRONG, WHICH IS WHY NOBODY SAW IT.** `हिन्दी` is six characters and four glyphs *in a different order* — turning one into the other is SHAPING, the browser has always done it, and the exporter never did: Pillow shapes through **libraqm**, its wheel already carries libraqm and HarfBuzz, and libraqm looks for **FriBiDi** by name while `PIL.ImageFont` is first imported and, not finding it, **switches itself off silently with a working Pillow left behind**. So `draw.text` kept drawing, in typed order, unjoined — `हिन्दी` → `हनि्दी`, `क्षत्रिय` → `क् षत् रयि` — and the Program monitor showed it correctly throughout. This is the exact bug `animatic_fonts.py` was written to kill, arriving through a door it did not watch: **the same .ttf drawn by two different text engines is two different pictures**, so bundling the font was never sufficient and bundling the *engine* is. New **`text_shaping.py`** pulls FriBiDi in with `ctypes` (never PATH — this app spawns ffmpeg and PATH is inherited) and **must be imported above `PIL.ImageFont`**; libraqm asks once and the answer is final for the process. `vendor/fribidi/libfribidi-0.dll` ships for Windows (LGPL-2.1+, unmodified, hash + source recorded); Linux needs `apt-get install -y libfribidi0` and that is **not optional**. ⚠ **THEN THE FONTS: 14 → 56**, all OFL from `github.com/google/fonts`, ~59 MB, covering Devanagari (हिन्दी/मराठी/नेपाली/भोजपुरी), Gurmukhi, Bengali, Gujarati, Odia, Tamil, Telugu, Kannada, Malayalam, Arabic, **Urdu in nastaliq**, Hebrew, Thai, Simplified and Traditional Chinese, Japanese, Korean, Vietnamese, Greek and more Cyrillic. New **`tools/fonts_sync.py`** fetches them, **freezes a variable font to one static weight** (the browser would pick an instance via CSS and Pillow via `set_variation_by_name` — two mechanisms agreeing by luck), measures `line_ratio`, and **reads each face's `scripts` out of its own cmap**. ⚠ **NOTHING ABOUT COVERAGE IS TYPED BY HAND, because every font in the picker draws SOMETHING** — a Hindi title in Anton looks like a valid choice right up to the render, where it is ▯▯▯ in a video the customer paid for. Two readings were wrong before they were right: a cmap entry is not proof of ink (fonts map characters to blank outlines), and **an empty glyph is not proof of absence** — in Noto Nastaliq Urdu *every* Arabic letter is an empty stub that GSUB substitutes before anything is drawn, so the first version concluded the best Urdu font in the world contains no Urdu. The walk reads GSUB/GPOS coverage **recursively**, because Nastaliq wraps its lookups in extension subtables. ⚠ **AND THE FONT IS RESOLVED FROM THE WORDS, NOT ASKED FOR.** `best_font_for_text` / `bestFontForText` (a twin, like the lists) is called by `caption_clips`, by `add_text`/`set_text` in the agent, and by the interchange importer, and it **keeps an explicit choice whenever that choice fits**. The worst instance was the quietest: `caption_clips` hard-coded `"font": "inter"`, so subtitles transcribed from a **Hindi voiceover** were burnt into the MP4 as empty boxes with nobody having chosen a font at any point. "Fits" alone is not enough to choose by either — Rubik contains Arabic and sits near the top of the list, so a first-that-fits walk set every Arabic title in a Latin face; the REQUIRED SCRIPTS are walked most-specific-first, which is why Urdu gets nastaliq (naskh reads as *wrong* to an Urdu reader, not as a style) and Japanese gets the Japanese face rather than the Simplified Chinese one that also covers its kana. ⚠ **THE PICKER IS GROUPED AND DERIVED** — `fontGroups()` builds the shelves off the font list itself, labelled in the language (`Devanagari — हिन्दी, मराठी…`), and a `PropNote tone="warn"` under the row names the writing system the chosen face is missing and offers the fix as a button. ⚠ **IT FAILS LOUD IN TWO PLACES**: `tests/captions_check.py` fails outright if shaping is off, and **`build_animatic` refuses to render** a project containing such a caption rather than finishing it wrongly. Files: **new** `text_shaping.py`, `tools/fonts_sync.py`, `vendor/fribidi/`; rewritten `animatic_fonts.py` and `client/src/animatic/fonts.js` (both gain a twinned `SCRIPTS` table and the resolver); `animatic.py`, `storyboard_pdf.py`, `captions.py`, `interchange.py`, `client/src/animatic/agent/actions.js`, `client/src/components/properties/TextProperties.jsx`, `client/public/fonts/` (+42 .ttf, rewritten README), `requirements-dev.txt`. `tests/captions_check.py` gains **~20 checks** — both twin tables, cmap-vs-declaration in both directions, shaping present, shaping actually changing the ink, and the resolver run through 22 captions in 22 languages on both sides. `captions_check`, `render_parity`, `interchange_check`, `director_actions_check`, `capability_check`, `chat_layers_check`, `editor_chat_check` and `npm run build` all pass. New **RULEBOOK E145 and E146**. ⚠ **NOT OPENED IN A BROWSER (G2/G7)** — the grouped picker and the coverage warning have been built and type-checked but never clicked, and no full MP4 has been exported end to end with a Devanagari caption (a real frame through `draw_texts` was rendered and read, in Hindi, Punjabi and Urdu, and is correct). Top of Next Steps.
+
+**Previously:** 2026-09-05 — **A BIG MESSAGE IS A JOB NOW: IT RUNS IN PARALLEL, SHOWS A PROGRESS BAR, CAN BE STOPPED, AND CANNOT TIME OUT.** *"isko production level pe tez banao aur bada kaam … progress dikha kar, kabhi timeout nahi, kabhi problem na aaye"*. E142 made the chat's clock an admin field and that was right as far as 180 seconds — past which the socket, the proxy and the browser each cut the call anyway. ⚠ **SO THE FIX IS NOT A LONGER REQUEST.** A turn that is really four jobs over sixty shots now returns a BRIEF (`kind: "work"`), the route starts a job (`server/editor_chat_work.py`, new `JobKind.EDITOR_CHAT`) and comes back immediately; the panel polls `/editor-chat/work/{id}`, draws a real bar, and **Stop here** stops the spend rather than the wait. *Unlimited means unlimited MESSAGES, not one message allowed to run for ever* — so the turn is billed **once**, never per batch. ⚠ **AND THE SPEED IS SPLITTING, NOT COMPRESSING.** The operator caught the wrong design before it was built: *"1 niyam likhne do to har clip pe dissolve hi laga dega na — magar mujhe to chahiye ki do shot ke bich ko samajh kar jo jaruri hai wo lage"*. Right, and a blanket rule would have undone 2026-09-05's own per-cut transition work. **Nothing is compressed**: every batch reads real shot descriptions, runs the SAME system prompt (the craft rules travel with the work), and decides cut by cut — it is simply asked about twelve cuts instead of sixty, four batches at a time. ⚠ **THE TRAP THE TEST CAUGHT BEFORE A MODEL EVER RAN**: the window a batch SEES is not the range it WRITES FOR — a cut is about two shots — and conflating them gave 40 steps on a 36-shot film. The digest now marks context rows "not yours" AND the merge refuses an out-of-range step, because a prompt is a request and only the merge is a guarantee. Also: sound is ONE call (five batches would choose five music beds), one batch failing still returns the rest **and names what was missed**, and a record left RUNNING with no runner reports as `lost` in words rather than as a bar that never moves. ⚠ **THE MERGED ANSWER IS AN ORDINARY TURN** — same `normaliseTurn`, `validatePlan`, preview, Apply, Undo. Files: `editor_chat_agent.py` (`work` brief, `work_batches`, `run_work`, `sound_schema` lifted out, `board_digest(window, writing)`), `prompts.yaml` (new `batch` prompt + the when-to-hand-over rule), `server/editor_chat_work.py` (new), `server/editor_chat.py`, `server/schemas.py`, `client/src/api.js`, `useEditorChat.js`, `EditorChat.jsx`, `editor-chat.css`. New **`tests/editor_chat_work_check.py` — 60 checks, green four runs in a row, no model called**; `editor_chat_check` extended; `editor_chat_render_check`, `editor_chat_doors_check`, `director_timeout_check`, `chat_provider_check`, `chat_sessions_check`, `admin_check`, `admin_fields_check`, `interchange_check` and `npm run build` all pass. New **RULEBOOK E144**. ⚠ **AND IT WAS THEN RUN LIVE, WHICH ANSWERED THE TWO OPEN QUESTIONS AND FOUND A THIRD FAULT.** *"is shorts/reel ke hisaab se sound effects and background music lago pura story pe aur transition and effects ke saath"* — the message that produced E142's 504 — now returns **"Done — 22 edits, 10 sound effects, a music bed, written in 5 passes"**, with the progress bar and **Stop here** on screen throughout. ✅ The model DOES choose `work`. ✅ **And the judgement survived the split**, which was the whole worry: twelve transitions came back **varied and reasoned** — dissolve, split, diamond, slide, dip — not thirteen dissolves, and the sound is the film's own (temple bell, anklet bells, oil lamp crackle, puja aarti bell, river water, "sitar tabla devotional bhajan"). ❌ **But every EFFECT was thrown away** — eight rows of *"add_effect: the step named no effect to add"*. `plan_schema`'s `args` is a FLAT UNION of every verb's argument names, so a batch holding `add_transition` and `add_effect` was offered `kind` and `effect` together and reached for the one it had just used a dozen times. E106/E123's lesson again — the prompt cannot fix this. **`batch_schema` now narrows `args` to the task's own verbs**, so `kind` is not in an effects batch's schema at all; the batch prompt names its verbs with their exact arguments; the turn prompt says transitions and effects are TWO tasks (also faster — they then run at the same time). Duplicate sound cues are merged rather than reported. `tests/editor_chat_work_check.py` is now 67 checks, green. ⚠ **AND THE SECOND LIVE RUN CONFIRMED THE EFFECTS FIX AND FOUND TWO MORE THINGS.** The drops are gone (no "things I couldn't use" at all), the sound is one cue per shot across all fourteen and the transitions are still varied — but: **(1)** *"2 parts did not come back"* on a fourteen-shot film. `llm_json` retries three times already, so those batches did not fail for their own reasons — **they failed because three other calls were in the air at once**, which is the one failure mode a fan-out invents and a single request never had. Lost units are now retried **once, serially, after the parallel wave**, and a burst-only failure is fully rescued (proved by a fake adapter that fails whenever more than two calls are live). **(2)** The reply said *"13 edits"* over a button saying *"Apply 27 edits"* — it counted a `note` as an edit, which the preview's chips never have. The reply now counts the way the panel counts, and a failed part's REASON rides on `dropped` so it is on screen rather than only in the log. `tests/editor_chat_work_check.py` is now 79 checks, green. ⚠ **STILL UNPROVEN: APPLY HAS NEVER BEEN PRESSED ON A FAN-OUT PLAN** — nothing from this path has reached a timeline yet, and the retry has not been seen live. Top of Next Steps.
 
 **Previously:** 2026-09-05 — **THE ✨ CHAT'S CLOCK IS AN ADMIN-PANEL FIELD, AND IT MOVES ALL THREE TIMEOUTS AT ONCE.** *"see error kya bol raha hai — kya tum admin panel mai banaye ho limit set karne wala"*, over a screenshot of a real **504** on a real board: *"is shorts/reel ke hisaab se sound effects and background music lago pura story pe aur transition and effects ke saath"* — three jobs in one message on a full film, which is the most expensive shape this feature has. The answer named **`CHAT_BUDGET_SECONDS`** at somebody with no shell. ⚠ **THE FIX IS E138'S RULE, ONE FEATURE OVER**: it is **Admin → Chat → "Seconds one message may take"** now (`chat_settings.turn_seconds`, **90–180, default 120**). ⚠ **AND THE OPERATOR TYPES ONE NUMBER, NOT THREE.** The model's clock, the server's wait and the browser's wait had been raised **by hand twice** (70/90 → 120/150), and the hand-raise is the actual danger: raise the model's alone and the tab aborts turns the server is still correctly serving — **billed, counted, and shown to the customer as the server being stuck**. The other two are derived now (`wire_wait_seconds` = `turn_seconds + 30`) and the tab is TOLD its number on `/editor-chat/config`; `CHAT_TURN_TIMEOUT_MS` in `api.js` survives only as the floor before that response lands. ⚠ **THE BOUNDS ARE ASSERTED AGAINST THE MEASUREMENTS, NOT CHOSEN.** The floor is **90 because 70 is the number that failed live** — a look is 27–35s measured and a repair is a second paid call inside the same attempt, so 2 × 35 = 70 exactly, with nothing left over; the ceiling is **180 because `llm_json.DEFAULT_TIMEOUT_SECONDS` is 180** and `call_timeout()` hands the SDK the smaller of that and the budget — a 240 typed in the panel would have saved and then been quietly ignored by the socket, the same bug one layer down. ⚠ **THE NUMBER REACHES THE MODEL FROM ABOVE**: new `JsonRequest.budget_seconds` / `budget_source`, because `llm_json` is imported by the worker and by tests with no database and must not learn to read a settings store — and it **beats `DIRECTOR_BUDGET_SECONDS`**, or it would be D5's *"I set it and nothing happened"*. ⚠ **AND THE TIMEOUT SENTENCE NOW NAMES A PLACE THEY CAN GO** — an ALL-CAPS source still prints as a variable, anything else prints as prose. `CHAT_BUDGET_SECONDS` survives as the **seed for a fresh deploy's default only**, read once, so an already-raised deployment does not silently drop to 120. Files: `server/chat_settings.py`, `server/editor_chat.py`, `server/schemas.py`, `server/config.py`, `llm_json.py`, `editor_chat_agent.py`, `client/src/api.js`, `client/src/animatic/agent/useEditorChat.js`, `client/src/admin/AdminChat.jsx`, `.env.example`. `tests/director_timeout_check.py` gains a whole section (18 checks) that verifies the derived pair **at both ends of the range** and reads the agent, the route and the hook to prove the wiring is real; `editor_chat_check`, `editor_chat_render_check`, `editor_chat_doors_check`, `chat_provider_check`, `chat_sessions_check`, `admin_check`, `admin_fields_check` and `npm run build` all pass. New **RULEBOOK E142**. ⚠ **AND OPENING THE FIELD FOUND A SECOND FAULT, IN EVERY NUMBER BOX ON THAT TAB** — *"dekho yaha pe change karna hai, kya mai sahi jagah hun"* (yes) — they autosaved on every KEYSTROKE, so a half-typed number was a real save, clamped by the server and written straight back into a controlled input: typing `150` into the new 90–180 field saves `1`, clamps to `90`, and you are then editing "90". *Characters kept per conversation* (floor **20,000**) could never be typed at all. Invisible until now because every other floor was 0, 4 or 10. All eight boxes commit on **blur** now (Enter blurs), uncontrolled and `key`ed on the stored value so a clamp still shows — the manners the Model field in the same panel always had — and an empty box is put back rather than saved as `0`, which is a real setting on two of those rows. New **RULEBOOK E143**. ⚠ **NOT OPENED IN A BROWSER, AND NO MODEL CALL HAS RUN AGAINST THE NEW FIELD** (G2/G7) — the admin box has not been typed into on a live server, and the 504 that started this has not been reproduced at a raised setting. Top of Next Steps.
 
@@ -3667,7 +3671,85 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-09-05 (latest) — ＋ OPENED A CHAT THE PROJECT HAD NO ROOM FOR
+### 2026-09-06 (latest) — THE SAME SIXTEEN EFFECTS, THROWN AWAY BY THEIR OWN FIX
+
+    "please fix karo isko jab mai ye promat daal raha hun to effects kyun nhi aa
+     raha hai — kuchh der pahle v isko fix kiye the tum magar fir v yahi error"
+
+Right, and the reason it came back is that the previous fix was built on a fact
+that was not true.
+
+**What the user saw.** *"is shorts/reel ke hisaab se sound effects and background
+music lago pura story pe aur transition and effects ke saath"* on a Ganesh
+Chaturthi reel returned **19 edits — 9 transitions, 1 note, 9 sound cues and a
+music bed** — over a red block reading **"16 things I couldn't use"**, sixteen
+identical rows of `add_effect: the step named no effect to add`. Every effect in
+the film, gone. This is E144's screen, exactly.
+
+**What was wrong.** E144's repair had two halves. The first — narrowing each
+batch's schema to its own verbs' arguments — is right and stays. The second was a
+sentence written into `prompts.yaml`:
+
+> *"An `add_effect` needs `effect`; `kind` belongs to a transition and on an
+> effect it names nothing, so the step is thrown away."*
+
+**`add_effect` takes `kind`.** Same name `add_transition` takes — read it off
+`ACTIONS` in `client/src/animatic/agent/actions.js`, which is the only place
+these names are real. So the prompt was instructing the model to fill a field
+this editor does not have; `fold_steps` dropped it as another verb's argument (it
+is right to do that — `x: 0` on an `add_text` is a caption silently pinned to the
+left edge); the step arrived at the client holding a shot number and nothing
+else; and the validator said, correctly, that it named no effect. The narrowing
+could not save it either, because for *these two verbs* there is nothing to
+narrow — both really do take `kind`.
+
+**Why the suite stayed green through a total failure.** `tests/editor_chat_work_check.py`
+built its fixture by hand, `add_effect(shot, effect, params)`, and then asserted
+the app honoured it. A test that invents its own copy of a contract cannot catch
+the contract being wrong; it can only confirm that both copies of the mistake
+agree.
+
+**What was changed.**
+
+- `prompts.yaml` — the false sentence is gone. The batch prompt now names **no**
+  argument by hand; it points at the generated `<<VERBS>>` card (which is built
+  from the manifest and therefore cannot disagree with the validator) and says to
+  copy the names letter for letter, plus a line that a creating step must name
+  the thing it creates.
+- `director.py` — **new `_ARG_ALIASES` / `_canonical_args`, and this is the real
+  fix.** A synonym the named verb cannot use is now **renamed** to the one it
+  can: `effect`, `fx`, `style`, `type`, `preset` → `kind`; `clip`, `frame` →
+  `shot`; `duration_ms`, `length` → `ms`; and so on. An alias fires **only** when
+  the verb has no field of that name itself, so `preset` on an
+  `apply_text_preset` is untouched, and it never overwrites a value the model
+  wrote under the right name. A dropped synonym is not a dropped argument, it is
+  a dropped **edit**. Also: `params` written as a plain object
+  (`{"amount": "0.4"}`) is now read instead of ignored — refusing it left the
+  effect at its default, which reads to the user as the AI not listening.
+- `editor_chat_agent.py` — the comments in `batch_schema` and `_verb_card` said
+  the wrong argument name in capitals, which is how the next agent inherits the
+  bug. They now record what actually happened and point at the manifest.
+- `tests/editor_chat_work_check.py` — **reads `actions.js`** for every argument
+  name and fails if the batch prompt contradicts it; asserts the alias fold saves
+  a step that said `effect`, leaves a correct step alone, and never rewrites
+  `apply_text_preset`'s own `preset`. Its shot-batch filter was fragile in the
+  same family and is fixed too: it picked out batches by sniffing for the words
+  `SHOTS` and `ONLY` **anywhere** in the prompt, so writing "ONLY" into a correct
+  paragraph pulled the sound batch into the list and turned five unrelated checks
+  red. It matches the `YOUR PART OF IT: shots` line now.
+
+**Tests.** `editor_chat_work_check` (now ~89 checks), `editor_chat_check`,
+`editor_chat_doors_check`, `editor_chat_render_check`, `editor_director_check`,
+`director_plan_check`, `director_actions_check`, `director_contract_check`,
+`director_language_check`, `director_guardrails_check` — all green. No model was
+called and nothing was spent.
+
+⚠ **NOT RUN LIVE (G7).** The alias fold is enforced in code (**PAKKA**); the
+prompt wording is a request (**GUZARISH**) and is unproven until the same message
+is sent on a real board. New **RULEBOOK E147**.
+
+
+### 2026-09-05 — ＋ OPENED A CHAT THE PROJECT HAD NO ROOM FOR
 
     "maine admin panel mai ek likha to yaha pe new chat open hua — kya yah sahi
      hai? dekho"
@@ -28922,7 +29004,113 @@ still occasionally be safety-filtered.
 
 ## 🎯 Current State / Next Steps
 
-### 🟠 NEWEST: TRANSITION AB HAR CUT PAR SOCH KAR CHUNA JAYEGA (2026-09-05)
+### 🟠 NEWEST: EFFECTS DOBARA GAYAB — AUR GALTI PICHHLE FIX MEIN HI THI (2026-09-06)
+
+    "jab mai ye prompt daal raha hun to effects kyun nhi aa raha hai — kuchh der
+     pahle v isko fix kiye the tum magar fir v yahi error aa raha hai"
+
+**Kya ho raha tha.** Aapne ek hi message mein 4 kaam maange — sound effects,
+background music, transitions aur effects. Wapas aaya: **9 transitions, 9 sound
+effects, 1 music bed** — sab sahi. Lekin neeche laal mein **"16 things I couldn't
+use"**, aur sologon rows ek jaisi: `add_effect: the step named no effect to add`.
+Matlab: film ka **ek bhi effect nahi laga**.
+
+**Kyun ho raha tha (asli wajah).** Ek editor ke har kaam ka apna "form" hota hai,
+aur us form ke khaano ke naam fixed hain. Effect lagane wale form mein jis khaane
+mein effect ka naam likhna hota hai, uska naam hai **`kind`**.
+
+Pichhli baar jab ye fix hua tha, AI ko instruction likha gaya tha:
+
+> "effect ka naam `effect` khaane mein likhna, `kind` mein nahi."
+
+**Ye baat galat thi.** Aisa koi khaana hai hi nahi. To AI har baar `effect`
+naam ke khaane mein likhta raha, app ne use "ye khaana to hai hi nahi" kehkar
+phenk diya, aur form khali pahunchta raha — sirf shot number ke saath. Isliye
+error aata tha "koi effect naam hi nahi diya".
+
+**Aur test ne pakda kyun nahi.** Kyunki test mein bhi wahi galat naam haath se
+likha hua tha. Do jagah ek hi galti likhi ho to test khush rehta hai — bug chalu
+rehta hai.
+
+**Ab kya kiya hai (teen parat)**
+
+- ✅ **Galat line hata di** — ab prompt khud koi khaane ka naam nahi bolta. Wo
+  sirf app se banayi hui asli list dikhata hai, jo kabhi galat ho hi nahi sakti.
+- ✅ **Asli suraksha: naam ka tarjuma ab hota hai, phenka nahi jata.** Agar AI
+  `effect`, `fx`, `style` ya `preset` likh de, to app use samajh kar `kind` bana
+  deti hai. `clip`/`frame` → `shot`, `duration_ms` → `ms`, waise hi. Ye sirf tab
+  hota hai jab us kaam ka waisa koi khaana ho hi na — yaani sahi jagah kabhi
+  badalti nahi.
+- ✅ **Effect ki setting bhi ab padhi jati hai** — pehle "kitna tez" jaisi value
+  chup-chaap gir jati thi aur effect default par reh jata tha, jo aapko lagta tha
+  ki AI ne baat hi nahi maani.
+- ✅ **Test ab app ki asli list padhta hai** — agar prompt aur app ki list mein
+  farak hua, test **fail** hoga. Ye galti dobara chhup nahi sakti.
+
+**Kitna pakka hai.** Naam ka tarjuma **code mein pakka** hai. Prompt ki nayi
+wording sirf AI se ek **guzarish** hai — isliye:
+
+- [ ] ⚠ **Ek baar wahi message dobara chalakar dekhein** (`sound effects and
+      background music lago pura story pe aur transition and effects ke saath`).
+      Dekhna hai ki ab "16 things I couldn't use" nahi aata aur effect chips
+      dikhte hain. Ye abhi tak **live nahi chalaya gaya** — koi model call nahi
+      ki gayi.
+- [ ] Uske baad **Apply** dabakar timeline par effects sach mein aaye ya nahi, wo
+      dekhna (fan-out plan par Apply abhi tak kabhi nahi dabaya gaya).
+
+
+### 🟢 PICHHLA: 56 FONT, 20 LIPI — AUR JO HINDI PEHLE SE THI WO GALAT BAN RAHI THI (2026-09-06)
+
+    "mujhe aur font family chahiye … google ka font family le sakte ho, OFL ke
+     saath … sabhi user ke liye production level ka setup karo"
+
+**Pehle wo baat jo maangi nahi gayi thi, par sabse zaroori nikli.**
+
+App abhi tak Hindi title **galat** export kar rahi thi. Screen par (preview mein)
+sahi dikhta tha — video mein matra apni jagah se hat jati thi:
+
+- `हिन्दी` → `हनि्दी`
+- `क्षत्रिय` → `क् षत् रयि`
+
+*Kya ho raha tha:* Hindi, Punjabi, Urdu, Tamil jaisi lipiyon mein akshar **jud
+kar** aur **jagah badal kar** bante hain. Isko "shaping" kehte hain. Browser ye
+hamesha karta tha. Server (jo asli MP4 banata hai) **kabhi nahi kar raha tha** —
+uske text engine ka ek chhota hissa (`FriBiDi`) missing tha, aur wo **bina koi
+error diye** chup-chaap band ho jata tha.
+
+*Isiliye kisi ko pata nahi chala:* preview sahi tha. Jo galat tha wo sirf final
+video mein tha — yaani customer ke paas.
+
+**Ab kya hai**
+
+- ✅ Shaping ON — `text_shaping.py` + `vendor/fribidi/` (Windows ki file repo
+  mein hai; Linux server par `apt-get install -y libfribidi0` **zaroori** hai)
+- ✅ Agar kisi server par ye band ho, to export **ruk jayega** ek saaf message ke
+  saath — galat video banegi hi nahi
+- ✅ **14 → 56 fonts**, sab Google Fonts se, sab OFL: Hindi/Marathi, Punjabi,
+  Bangla, Gujarati, Odia, Tamil, Telugu, Kannada, Malayalam, Arabic, **Urdu
+  (nastaliq)**, Hebrew, Thai, Chinese (simplified + traditional), Japanese,
+  Korean, Vietnamese, Greek, aur zyada Cyrillic
+- ✅ **Font khud chun'ta hai** — subtitle, AI chat ka text, Premiere import: text
+  ki bhasha dekh kar sahi font lagta hai. Aapka chuna hua font tabhi badalta hai
+  jab wo likh hi nahi sakta
+- ✅ **Picker bhasha ke hisaab se grouped hai**, aur galat font par turant warning
+  + "Use …" button
+- ✅ Har font ki coverage **file se naap kar** likhi gayi hai, guess nahi — test
+  fail ho jata hai agar koi font jhooth bole
+
+**Ab isme se kya baaki hai (top of Next Steps)**
+
+- ⬜ **Browser mein khol kar dekhna** (G2/G7) — naya grouped picker aur warning
+  banaye gaye hain par ek baar bhi click nahi kiye gaye
+- ⬜ **Pura MP4 export karke dekhna** ek Hindi caption ke saath — abhi tak sirf
+  ek frame banakar dekha gaya hai (Hindi, Punjabi, Urdu — teeno sahi the)
+- ⬜ Emoji (😀) abhi bhi kisi font mein nahi hai — Noto Color Emoji alag mamla
+  hai, usme rang wale glyph hote hain
+- ⬜ Chinese ka ek imaandaar gap: simplified vs traditional font ka farak app
+  automatic nahi pakad sakti (README mein likha hai)
+
+### 🟡 TRANSITION AB HAR CUT PAR SOCH KAR CHUNA JAYEGA (2026-09-05)
 
     "Dissolve on the cut hi use kar raha hai … in do shot ke bich mai konsa
      badhiyan transition rahega waisa set kare"

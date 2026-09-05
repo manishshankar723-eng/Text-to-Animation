@@ -55,6 +55,7 @@ import sys
 
 from google.genai import types
 
+import animatic_fonts
 import script_breakdown
 
 logger = logging.getLogger(__name__)
@@ -1042,6 +1043,18 @@ def caption_clips(lines: list[dict], *, layer_id: str = "", style: dict | None =
         duration = max(100, int(line["end_ms"]) - int(line["start_ms"]))
         clips.append({
             **base,
+            # ⚠ PER LINE, NOT PER RUN, AND THE MOST IMPORTANT FIELD HERE.
+            # Subtitles are transcribed from the VOICEOVER, so they are in
+            # whatever language the film was spoken in — and this used to hand
+            # every one of them to Inter, which has no Devanagari, no Gurmukhi,
+            # no Arabic and no Han in it. A Hindi film's subtitles came out as a
+            # row of empty boxes, burnt into the MP4, with nobody having chosen
+            # a font at any point. `best_font_for_text` keeps `base["font"]`
+            # whenever it fits, so an English film and a style someone set by
+            # hand are both left exactly as they were.
+            "font": animatic_fonts.best_font_for_text(
+                str(line.get("text") or ""), str(base.get("font") or "")
+            ),
             # PREFIXED, so a second captions run can find and replace its own
             # clips instead of piling a second copy of every subtitle on top of
             # the first — the server drops every `cap…` clip before adding
