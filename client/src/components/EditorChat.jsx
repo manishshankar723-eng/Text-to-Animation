@@ -863,7 +863,11 @@ export default function EditorChat({
                   shape of wait people report as a hang. Saying what it is doing,
                   and why, is the difference between a pause and a fault. */}
               <span className="spinner-inline" />{" "}
-              {chat.looking || "Thinking…"}
+              {chat.work
+                ? chat.work.total
+                  ? `Writing the edits — ${chat.work.done} of ${chat.work.total} parts done`
+                  : "Reading the film…"
+                : chat.looking || "Thinking…"}
               {/* ⚠ THE SECOND HAND. A spinner says "something is happening"; only
                   a number says "and it is still happening". Without it a healthy
                   40s turn and a wedged one look identical, which is what made
@@ -871,19 +875,65 @@ export default function EditorChat({
                   seconds because a counter on every quick answer is noise. */}
               {chat.elapsed > 5 && <span className="ec-elapsed"> {chat.elapsed}s</span>}
             </div>
+            {/* ⚠ A BAR ONLY WHEN THERE IS SOMETHING TO MEASURE. A big message is
+                minutes of real work split into parts, and a spinner alone cannot
+                tell "it is a third of the way through" from "it has hung" — which
+                is the difference the whole job design exists to show. An ordinary
+                turn has no parts and gets no bar: a progress bar over a single
+                unmeasurable call would be a decoration that lies. */}
+            {chat.work && chat.work.total > 0 && (
+              <div className="ec-work">
+                <div
+                  className="ec-work-bar"
+                  role="progressbar"
+                  aria-valuenow={chat.work.percent}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                >
+                  <span style={{ width: `${Math.max(2, chat.work.percent)}%` }} />
+                </div>
+                {/* WHAT is being done, not just how much of it. The brief's own
+                    words, so "transitions, then sound" is on screen while it
+                    runs rather than a bar with no label. */}
+                {chat.work.tasks?.length > 0 && (
+                  <div className="tiny muted ec-work-jobs">
+                    {chat.work.tasks.join(" · ")}
+                  </div>
+                )}
+              </div>
+            )}
             {/* ⚠ IT STOPS THE WAIT, NOT THE SPEND — and the line it writes when
                 pressed says so, because a Stop button most people would read as
                 "cancel the charge" has to correct that itself. Only offered once
                 the wait is long enough to be worth escaping. */}
-            {chat.elapsed > 10 && (
+            {/* ⚠ TWO DIFFERENT STOPS, AND THE LABEL HAS TO BE HONEST ABOUT WHICH
+                ONE THIS IS. On an ordinary turn nothing can be called off: the
+                model was already asked and will be paid for, so the button can
+                only end the WAIT and says so. On a big job most of the spend is
+                in batches that have not started, so the same button really does
+                stop the work — and what was written by then still comes back as
+                a plan they can apply. Offering "Stop waiting" on that would be
+                the panel underselling the one button that saves real money. */}
+            {chat.work ? (
               <button
                 type="button"
                 className="btn ghost small ec-stop"
                 onClick={chat.stop}
-                title="Stop waiting for this reply. The AI was already asked, so this turn still counts."
+                title="Stop after the parts already running. Everything written so far still comes back as a plan you can apply."
               >
-                Stop waiting
+                Stop here
               </button>
+            ) : (
+              chat.elapsed > 10 && (
+                <button
+                  type="button"
+                  className="btn ghost small ec-stop"
+                  onClick={chat.stop}
+                  title="Stop waiting for this reply. The AI was already asked, so this turn still counts."
+                >
+                  Stop waiting
+                </button>
+              )
             )}
           </div>
         )}

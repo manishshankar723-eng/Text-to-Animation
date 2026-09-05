@@ -45,6 +45,7 @@ TURNS, which is the unit the tier actually sells (`limits["chat_turns"]`). If
 import json
 import logging
 import os
+import threading
 from typing import Any
 
 import yaml
@@ -153,6 +154,63 @@ LOOK_SYSTEM = (
 # How many offers one turn may carry. Four doors exist, and a turn that offers
 # more than two of them has stopped answering the question and started selling.
 MAX_PASSES = 2
+
+# ===========================================================================
+# BIG WORK — one message that is really five jobs over sixty shots
+# ===========================================================================
+# ⚠ **THE PROBLEM IS THE LENGTH OF THE ANSWER, NOT THE DIFFICULTY OF THE JOB.**
+# A text model is slowest at WRITING, and "sound effects, music, transitions and
+# effects, on the whole film" makes it write a line per shot per job — three
+# hundred lines in one answer. That is what produced the live 504 (E142), and
+# raising the clock only moves where it breaks: a single HTTP request cannot be
+# made reliable at ten minutes, because the browser, the proxy and the load
+# balancer all cut it long before the model is finished.
+#
+# ⚠ **SO THE WORK IS SPLIT AND RUN AT THE SAME TIME — AND THE THINKING IS NOT
+# TOUCHED.** This was the operator's own objection, and it was the right one:
+# *"1 niyam likhne do to har clip pe dissolve hi laga dega na — magar mujhe to
+# chahiye ki do shot ke bich ko samajh kar jo jaruri hai wo lage"*. Exactly so.
+# Compressing sixty judgements into one rule would undo the whole of the
+# per-cut transition work. What is compressed here is nothing: each batch still
+# looks at real shot descriptions and still decides cut by cut. It simply looks
+# at TWELVE cuts instead of sixty, and five batches look at their twelve at the
+# same time.
+#
+#   before   1 call  × 300 lines            ≈ the length of the answer
+#   after    N calls × 12 lines, together   ≈ the length of the LONGEST answer
+#
+# ⚠ **AND A SHORTER ANSWER IS A MORE ACCURATE ONE.** `llm_json` already measures
+# what long answers cost: they arrive malformed and buy a SECOND paid repair call
+# inside the same attempt. Twelve steps is a length this model gets right.
+#
+# How many shots one batch writes for. Twelve because that is `MAX_LOOK_SHOTS` —
+# the number this feature already decided a model can hold in mind at once — and
+# because twelve steps is comfortably inside the length that comes back valid.
+BATCH_SHOTS = 12
+# ⚠ ONE SHOT OF CONTEXT EITHER SIDE, AND IT IS NOT OPTIONAL. A transition lives
+# BETWEEN two shots, so the cut at a batch's edge is a decision about a shot the
+# batch would otherwise never see — and "I cannot tell what changed here" is
+# exactly the case the prompt tells it to answer with a plain cut. Without the
+# overlap every twelfth cut would be judged blind.
+BATCH_OVERLAP = 1
+# How many model calls run at once. ⚠ NOT "all of them": every provider rate
+# limits, and forty simultaneous calls is a 429 storm that fails the whole job to
+# save a few seconds. Four is fast enough to turn a five-minute job into one
+# minute and polite enough to survive a free key.
+MAX_PARALLEL_CALLS = 4
+# ⚠ THE CEILING ON ONE MESSAGE'S FAN-OUT, and it is a MONEY guard, not a
+# performance one. Every batch is a paid call, so an unbounded split turns one
+# sentence into a bill nobody approved. Past this the job is refused with a
+# sentence that says how to make it smaller — which is an honest answer, and
+# quietly doing half the work is not.
+MAX_WORK_BATCHES = 48
+# At most four jobs in one message. More than that is not a request, it is a
+# wish, and the honest reply is to ask which of them matters.
+MAX_WORK_TASKS = 4
+# ⚠ BELOW THIS, THERE IS NOTHING TO SPLIT. A job of eight steps is one short
+# answer — a fan-out would spend an extra planning call and be SLOWER, on top of
+# putting a progress bar in front of work that finishes before it is drawn.
+WORK_MIN_SHOTS = 14
 WHY_CHARS = 120
 SOUND_QUERY_CHARS = 60
 
@@ -170,12 +228,17 @@ def prompts(reload: bool = False) -> dict:
     except OSError as e:
         raise EditorChatError(f"Could not read {PROMPTS_PATH} ({e}).") from None
     block = config.get("editor_chat") or {}
-    missing = [k for k in ("system", "turn") if not (block.get(k) or "").strip()]
+    # ⚠ `batch` IS REQUIRED, NOT OPTIONAL, and it is required here rather than
+    # discovered when a big job runs. A missing prompt that only breaks the
+    # expensive path breaks it in front of a customer who has already waited;
+    # asked for on the first turn of the process, it breaks in the log at boot.
+    wanted = ("system", "turn", "batch")
+    missing = [k for k in wanted if not (block.get(k) or "").strip()]
     if missing:
         raise EditorChatError(
             f"{PROMPTS_PATH} is missing the editor_chat prompt block(s): {', '.join(missing)}."
         )
-    _prompt_cache = {k: str(block[k]).strip() for k in ("system", "turn")}
+    _prompt_cache = {k: str(block[k]).strip() for k in wanted}
     return _prompt_cache
 
 
@@ -204,8 +267,26 @@ def _ms(value: Any) -> str:
 # ===========================================================================
 # THE BOARD — the timeline as the model sees it
 # ===========================================================================
-def board_digest(board: dict, detail_limit: int = 60) -> str:
+def board_digest(board: dict, detail_limit: int = 60, window: tuple | None = None,
+                 writing: tuple | None = None) -> str:
     """The timeline, as compact prose-and-numbers.
+
+    ⚠ **`window` IS HOW A BATCH SEES ITS OWN SLICE WITHOUT LOSING THE NUMBERS.**
+    `(first, last)`, 1-based and inclusive: those shots are listed in FULL and
+    every other shot is collapsed to a count. It exists for `run_work`, which
+    splits one big job into batches that run at the same time — and the one thing
+    a batch must never do is renumber the film. Slicing `board["shots"]` would
+    hand batch three a list starting at "1", and every step it wrote would land
+    twenty-four shots early. So the window narrows what is DESCRIBED and leaves
+    the numbering exactly as the person sees it.
+
+    ⚠ **`writing` IS A DIFFERENT RANGE FROM `window`, AND CONFLATING THEM WROTE
+    EVERY EDGE STEP TWICE.** A cut is a decision about two shots, so a batch has
+    to SEE one shot past each end — but it must not write for it, or the batch
+    next door writes that same cut at the same moment and the person gets two
+    transitions on one edit. Caught by the fan-out's own test before it ever ran
+    against a model: 36 shots came back with 40 steps and four duplicates.
+    Defaults to `window` for a caller that really does own everything it sees.
 
     ⚠ **PROSE, NOT THE RAW DOCUMENT.** The editor's document is deeply nested and
     most of it is render state a model cannot act on. Sending it would spend
@@ -344,7 +425,35 @@ def board_digest(board: dict, detail_limit: int = 60) -> str:
 
     lines.append("")
     lines.append("SHOTS (numbered as the person sees them, 1-based):")
-    if total <= max(10, detail_limit):
+    if window:
+        # ⚠ THE BATCH'S OWN SLICE, IN FULL, WITH THE REAL NUMBERS — and the rest
+        # of the film named as a count rather than dropped, because "there are 48
+        # more shots after this" is what stops a batch treating its last shot as
+        # the end of the film and putting a fade-out on it.
+        first, last = int(window[0]), int(window[1])
+        first, last = max(1, first), min(total, last)
+        mine_first, mine_last = (first, last) if not writing else (
+            max(first, int(writing[0])), min(last, int(writing[1]))
+        )
+        if first > 1:
+            lines.append(f"… {first - 1} earlier shot(s), handled elsewhere in this same job.")
+        for n in range(first, last + 1):
+            # ⚠ THE CONTEXT SHOTS ARE MARKED IN THE LIST ITSELF, not only in the
+            # sentence below it. A rule stated once at the bottom is a rule about
+            # a list; a mark on the row is a fact about that shot, and the row is
+            # what the model is looking at when it decides to write a step.
+            mark = "" if mine_first <= n <= mine_last else "   ← context only, not yours"
+            lines.append(row(n, shots[n - 1]) + mark)
+        if last < total:
+            lines.append(f"… {total - last} later shot(s), handled elsewhere in this same job.")
+        lines.append("")
+        lines.append(
+            f"⚠ YOU ARE WRITING THE STEPS FOR SHOTS {mine_first}–{mine_last} ONLY. The rows "
+            "marked \"context only\" are there so the cuts at your edges make sense — they "
+            "belong to another pass that is running right now, and a step on one of them "
+            "would be written twice."
+        )
+    elif total <= max(10, detail_limit):
         lines.extend(row(i + 1, s) for i, s in enumerate(shots))
     else:
         head, tail = 6, 4
@@ -418,6 +527,95 @@ def rails_text(settings: dict) -> str:
 # ===========================================================================
 # THE SHAPE OF ONE REPLY
 # ===========================================================================
+def sound_schema() -> dict:
+    """What a `sound` object may be. ⚠ ONE DEFINITION, TWO CALLERS.
+
+    The ordinary turn carries this and so does every batch of a fan-out
+    (`batch_schema`). It was written inline in `reply_schema` while there was
+    only one caller; a copied second version would be a second answer to
+    "what may a cue look like", and the field descriptions below are load
+    bearing — this feature has already proved that a `sound` schema which
+    lets the model skip `sfx` is a `sound` schema the model skips `sfx` in.
+    """
+    return {
+        "type": "object",
+        # ⚠ THE FIELD DESCRIPTIONS ARE THE STRONGEST INSTRUCTION THERE IS ON
+        # THIS PATH, AND ONE OF THEM WAS ARGUING WITH THE PROMPT. The chat runs
+        # on NATIVE structured output (`schema=native` in the llm_json log), so
+        # the model is decoding straight into this shape and reads these lines
+        # while it fills each field. `sfx` used to say "Sparingly." — written
+        # for a model choosing on its own, and quoted at somebody who ASKED.
+        # ⚠ Proved live, 2026-09-05: "add music and sound effects in this
+        # storyboard story wise" on a 14-shot board returned `music` filled,
+        # `sfx: []`, and a `reply` that NAMED the effects it had not sent —
+        # "the lighting of the lamps, the rustle of gifts, and the fireworks".
+        # The model knew what it wanted; the field told it not to. Lifting the
+        # rule in `prompts.yaml` alone did nothing, because this line is closer
+        # to the token being written. See RULEBOOK E106 and E123.
+        "description": "The sound to fetch and lay down. Search TERMS, not prose.",
+        "properties": {
+            "sfx": {
+                "type": "array",
+                "description": "The sound effects to place, one entry per shot "
+                               "that needs one. FILL THIS whenever they asked "
+                               "for sound effects — an empty list is a refusal, "
+                               "and naming the effects in `reply` instead puts "
+                               "nothing on the timeline. If they asked for every "
+                               "shot (\"story wise\", \"each one\"), give every "
+                               "shot an entry. Leave it empty ONLY when they "
+                               "asked for music alone.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "shot": {"type": "integer"},
+                        "query": {
+                            "type": "string",
+                            "description": "Two or three words a stock "
+                                           "library would have tagged.",
+                        },
+                    },
+                    "required": ["shot", "query"],
+                },
+            },
+            "music": {
+                "type": "object",
+                "description": "ONE bed for the whole film, or nothing.",
+                "properties": {
+                    "query": {"type": "string"},
+                    "mood": {"type": "string"},
+                },
+            },
+        },
+        # ⚠ `sfx` IS REQUIRED BECAUSE A PROPERTY THIS MODEL IS NOT ASKED FOR
+        # IS A PROPERTY IT SIMPLY DOES NOT WRITE. This is the whole bug, and
+        # it was proved by changing this one line and nothing else — four
+        # live runs on `gemini-3.5-flash`, native structured output, same
+        # board, same message:
+        #
+        #   before   "sound": {"music": {…}}                 — no `sfx` KEY AT ALL
+        #   after    "sound": {"sfx": [14 cues], "music": {…}}
+        #
+        # ⚠ AND EVERY OTHER FIX FOR IT FAILED FIRST, which is why this comment
+        # is long. Lifting the "sparingly" rule in `prompts.yaml`, rewriting
+        # this field's own description to say "an empty list is a refusal",
+        # putting the rule directly under the verb list in the turn prompt,
+        # and finally naming the field path in the user's own message — all
+        # four left `sfx` empty. Words do not make a model fill a slot the
+        # SCHEMA says it may skip.
+        #
+        # ⚠ IT IS NOT "ALWAYS SEND SOUND": `sound` itself stays optional at the
+        # root, so a turn with no sound simply has no `sound` object. This says
+        # only that a `sound` object which EXISTS must answer about effects —
+        # and `_coerce_sound` still turns an empty list into nothing, so a
+        # music-only turn is unharmed.
+        #
+        # ⚠ `music` IS LEFT OPTIONAL ON PURPOSE. It arrived in all four runs
+        # without being asked for, and requiring it would push the model to
+        # invent a bed for somebody who asked only for a door slam.
+        "required": ["sfx"],
+    }
+
+
 def reply_schema(vocabulary: dict) -> dict:
     """What one turn may be. `plan` is the Director's own schema, not a copy.
 
@@ -434,9 +632,11 @@ def reply_schema(vocabulary: dict) -> dict:
         "properties": {
             "kind": {
                 "type": "string",
-                "enum": ["answer", "ask", "plan"],
+                "enum": ["answer", "ask", "plan", "work"],
                 "description": "answer = words only. ask = a question with options. "
-                               "plan = edits for them to approve.",
+                               "plan = edits for them to approve. work = a BIG job, "
+                               "described in `work` and written by a second pass — "
+                               "see that field.",
             },
             "reply": {
                 "type": "string",
@@ -471,6 +671,81 @@ def reply_schema(vocabulary: dict) -> dict:
                 "required": ["question", "options"],
             },
             "plan": plan_schema(vocabulary),
+            # ⚠ BIG WORK IS DESCRIBED HERE, NOT WRITTEN OUT. See the BIG WORK
+            # block at the top of this module for why. The model's judgement is
+            # not being taken away — it is being asked for LATER, per batch, with
+            # the real shot descriptions in front of it, instead of all at once
+            # in an answer three hundred lines long that arrives malformed or not
+            # at all. What goes here is the SHAPE of the job.
+            "work": {
+                "type": "object",
+                "description": (
+                    "Use this INSTEAD of `plan` when what they asked for is BIG — more "
+                    f"than one kind of edit, or one kind across more than {WORK_MIN_SHOTS} "
+                    "shots. Do NOT write the steps here. Name the jobs; each one is then "
+                    "written properly, a dozen shots at a time, by a pass that sees the "
+                    "same shot descriptions you can see. A progress bar is shown and the "
+                    "person can stop it. ⚠ If the job is small, write a normal `plan` "
+                    "instead — a fan-out over eight steps is slower, not faster."
+                ),
+                "properties": {
+                    "tasks": {
+                        "type": "array",
+                        "description": (
+                            f"One entry per KIND of work, at most {MAX_WORK_TASKS}. "
+                            "\"Sound effects, music and transitions\" is THREE tasks, not "
+                            "one — they are written at the same time, so splitting them is "
+                            "what makes it fast."
+                        ),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "goal": {
+                                    "type": "string",
+                                    "description": (
+                                        "What to do, in a sentence or two, written as an "
+                                        "instruction to another editor who can see the "
+                                        "shots but has NOT read this conversation. Carry "
+                                        "over anything they said that changes the answer — "
+                                        "the format (\"reel\", \"shorts\"), the feel, a "
+                                        "thing they said to avoid. This sentence is the "
+                                        "whole brief; nothing else of theirs is passed on."
+                                    ),
+                                },
+                                "verbs": {
+                                    "type": "array",
+                                    "description": (
+                                        "The verbs this job may use, from the manifest. "
+                                        "Keep it to what the job really needs: a transition "
+                                        "job that may also delete clips is a job that will."
+                                    ),
+                                    "items": {"type": "string"},
+                                },
+                                "sound": {
+                                    "type": "boolean",
+                                    "description": (
+                                        "True for a job that is SOUND — effects or a music "
+                                        "bed. Sound is not a verb (see `sound` below), so "
+                                        "such a job returns cues rather than steps."
+                                    ),
+                                },
+                                "first_shot": {
+                                    "type": "integer",
+                                    "description": "First shot this job covers, 1-based. "
+                                                   "Leave out for the whole film.",
+                                },
+                                "last_shot": {
+                                    "type": "integer",
+                                    "description": "Last shot this job covers, 1-based. "
+                                                   "Leave out for the whole film.",
+                                },
+                            },
+                            "required": ["goal"],
+                        },
+                    },
+                },
+                "required": ["tasks"],
+            },
             # ⚠ SOUND IS NOT A VERB AND CANNOT BE ONE. Every verb in the registry
             # is synchronous — it calls one editor function and returns — and
             # finding a sound is a round trip to a stock library. So a turn carries
@@ -537,83 +812,7 @@ def reply_schema(vocabulary: dict) -> dict:
                     "required": ["door"],
                 },
             },
-            "sound": {
-                "type": "object",
-                # ⚠ THE FIELD DESCRIPTIONS ARE THE STRONGEST INSTRUCTION THERE IS ON
-                # THIS PATH, AND ONE OF THEM WAS ARGUING WITH THE PROMPT. The chat runs
-                # on NATIVE structured output (`schema=native` in the llm_json log), so
-                # the model is decoding straight into this shape and reads these lines
-                # while it fills each field. `sfx` used to say "Sparingly." — written
-                # for a model choosing on its own, and quoted at somebody who ASKED.
-                # ⚠ Proved live, 2026-09-05: "add music and sound effects in this
-                # storyboard story wise" on a 14-shot board returned `music` filled,
-                # `sfx: []`, and a `reply` that NAMED the effects it had not sent —
-                # "the lighting of the lamps, the rustle of gifts, and the fireworks".
-                # The model knew what it wanted; the field told it not to. Lifting the
-                # rule in `prompts.yaml` alone did nothing, because this line is closer
-                # to the token being written. See RULEBOOK E106 and E123.
-                "description": "The sound to fetch and lay down. Search TERMS, not prose.",
-                "properties": {
-                    "sfx": {
-                        "type": "array",
-                        "description": "The sound effects to place, one entry per shot "
-                                       "that needs one. FILL THIS whenever they asked "
-                                       "for sound effects — an empty list is a refusal, "
-                                       "and naming the effects in `reply` instead puts "
-                                       "nothing on the timeline. If they asked for every "
-                                       "shot (\"story wise\", \"each one\"), give every "
-                                       "shot an entry. Leave it empty ONLY when they "
-                                       "asked for music alone.",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "shot": {"type": "integer"},
-                                "query": {
-                                    "type": "string",
-                                    "description": "Two or three words a stock "
-                                                   "library would have tagged.",
-                                },
-                            },
-                            "required": ["shot", "query"],
-                        },
-                    },
-                    "music": {
-                        "type": "object",
-                        "description": "ONE bed for the whole film, or nothing.",
-                        "properties": {
-                            "query": {"type": "string"},
-                            "mood": {"type": "string"},
-                        },
-                    },
-                },
-                # ⚠ `sfx` IS REQUIRED BECAUSE A PROPERTY THIS MODEL IS NOT ASKED FOR
-                # IS A PROPERTY IT SIMPLY DOES NOT WRITE. This is the whole bug, and
-                # it was proved by changing this one line and nothing else — four
-                # live runs on `gemini-3.5-flash`, native structured output, same
-                # board, same message:
-                #
-                #   before   "sound": {"music": {…}}                 — no `sfx` KEY AT ALL
-                #   after    "sound": {"sfx": [14 cues], "music": {…}}
-                #
-                # ⚠ AND EVERY OTHER FIX FOR IT FAILED FIRST, which is why this comment
-                # is long. Lifting the "sparingly" rule in `prompts.yaml`, rewriting
-                # this field's own description to say "an empty list is a refusal",
-                # putting the rule directly under the verb list in the turn prompt,
-                # and finally naming the field path in the user's own message — all
-                # four left `sfx` empty. Words do not make a model fill a slot the
-                # SCHEMA says it may skip.
-                #
-                # ⚠ IT IS NOT "ALWAYS SEND SOUND": `sound` itself stays optional at the
-                # root, so a turn with no sound simply has no `sound` object. This says
-                # only that a `sound` object which EXISTS must answer about effects —
-                # and `_coerce_sound` still turns an empty list into nothing, so a
-                # music-only turn is unharmed.
-                #
-                # ⚠ `music` IS LEFT OPTIONAL ON PURPOSE. It arrived in all four runs
-                # without being asked for, and requiring it would push the model to
-                # invent a bed for somebody who asked only for a door slam.
-                "required": ["sfx"],
-            },
+            "sound": sound_schema(),
         },
         "required": ["kind", "reply"],
     }
@@ -1001,6 +1200,7 @@ def _read_turn(raw: dict, vocabulary: dict, shot_count: int = 0, blind: bool = T
     ask = _coerce_ask(row.get("ask"))
 
     sound = _coerce_sound(row.get("sound"))
+    work = _coerce_work(row.get("work"), shot_count)
 
     steps, dropped = [], []
     plan_row = row.get("plan")
@@ -1054,8 +1254,22 @@ def _read_turn(raw: dict, vocabulary: dict, shot_count: int = 0, blind: bool = T
     # hedging, and honouring the look is the reading that ends with a better
     # answer — the plan it wrote blind is the one it was unsure enough about to
     # ask for the pictures.
+    # ⚠ A BRIEF ONLY WINS WHEN THE MODEL MEANT IT TO. `work` and `steps` on the
+    # same answer is a model hedging, and the two readings are not equal: real
+    # steps are work it has already DONE, and running the fan-out as well would
+    # do that work a second time and charge for it. So the label decides here and
+    # only here — everywhere else in this function the content decides, because
+    # everywhere else the two readings cost the same.
+    wants_work = str(row.get("kind") or "").strip().lower() == "work"
     if look:
         kind, plan = "look", None
+    elif work and (wants_work or not (steps or sound)):
+        # ⚠ NOTHING HAS BEEN CALLED YET. This turn is a PLAN TO DO WORK, and the
+        # route decides whether to run it here and now or hand it to a job with a
+        # progress bar — see `server/editor_chat.py`. The panel must not draw an
+        # Apply button over it: there is nothing to apply until it has run.
+        kind, plan = "work", None
+        steps, sound = [], None
     elif steps or sound:
         kind = "plan"
         summary = plan_row.get("summary") if isinstance(plan_row, dict) else ""
@@ -1098,6 +1312,15 @@ def _read_turn(raw: dict, vocabulary: dict, shot_count: int = 0, blind: bool = T
         logger.info(
             "[editor-chat] …offering %s", ", ".join(p["door"] for p in passes)
         )
+    if work and kind == "work":
+        logger.info(
+            "[editor-chat] …BIG WORK: %d job(s) — %s",
+            len(work["tasks"]),
+            "; ".join(
+                f"{t['goal'][:40]} (shots {t['first_shot']}–{t['last_shot']})"
+                for t in work["tasks"]
+            ),
+        )
     if look:
         logger.info(
             "[editor-chat] …asking to LOOK at shot(s) %s",
@@ -1112,4 +1335,377 @@ def _read_turn(raw: dict, vocabulary: dict, shot_count: int = 0, blind: bool = T
         "plan": plan,
         "sound": sound,
         "dropped": dropped,
+        # The brief, when this turn is one. `None` on every ordinary turn, which
+        # is what keeps the fast path exactly as fast as it was.
+        "work": work if kind == "work" else None,
     }
+
+
+# ===========================================================================
+# THE FAN-OUT — one big job becomes N small ones, run at the same time
+# ===========================================================================
+def _step_shot(step: dict) -> int | None:
+    """Which shot a step lands on, or `None` when it is not about one.
+
+    ⚠ THE ARGUMENT IS NOT ALWAYS CALLED `shot`. A transition goes AFTER a shot,
+    a cut happens AT one, and a reorder names an index — every one of them is
+    "where on the timeline" and the fan-out has to answer that question to sort
+    the merged plan and to refuse a step from outside a batch's range.
+    """
+    args = step.get("args") if isinstance(step.get("args"), dict) else {}
+    for key in ("shot", "after_shot", "at_shot", "index", "from_shot"):
+        if key in args:
+            try:
+                return int(args[key])
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def _coerce_work(raw: Any, shot_count: int) -> dict | None:
+    """The model's work brief, made safe. `None` when there is nothing runnable.
+
+    ⚠ **EVERY NUMBER HERE COMES FROM A MODEL AND IS TREATED AS SUCH.** A brief is
+    not an edit — nothing it says reaches the timeline without a second pass and
+    the person's Apply — but it does decide how many PAID calls get made, so the
+    shot range is clamped to the real film and the task count to `MAX_WORK_TASKS`
+    before any of it is costed.
+    """
+    row = raw if isinstance(raw, dict) else {}
+    tasks: list[dict] = []
+    for item in (row.get("tasks") or [])[:MAX_WORK_TASKS]:
+        if not isinstance(item, dict):
+            continue
+        goal = _clip(item.get("goal"), 600)
+        if not goal:
+            # ⚠ A TASK WITH NO BRIEF IS NOT A TASK. The goal is the ONLY thing
+            # the batch pass is told; without it the call would be a paid request
+            # to guess what the person wanted.
+            continue
+        first = item.get("first_shot")
+        last = item.get("last_shot")
+        try:
+            first = max(1, int(first)) if first is not None else 1
+        except (TypeError, ValueError):
+            first = 1
+        try:
+            last = min(shot_count, int(last)) if last is not None else shot_count
+        except (TypeError, ValueError):
+            last = shot_count
+        if last < first:
+            first, last = 1, shot_count
+        verbs = [
+            v for v in (item.get("verbs") or [])
+            if isinstance(v, str) and v.strip()
+        ][:12]
+        tasks.append({
+            "goal": goal,
+            "verbs": [v.strip() for v in verbs],
+            "sound": bool(item.get("sound")),
+            "first_shot": first,
+            "last_shot": last,
+        })
+    if not tasks:
+        return None
+    return {"tasks": tasks}
+
+
+def work_batches(work: dict, shot_count: int) -> list[dict]:
+    """The brief, cut into the units that will really be called. Pure — no model.
+
+    ⚠ **SPLIT HERE AND NOWHERE ELSE**, because this is the list the progress bar
+    counts, the ceiling is enforced against, and the tests can check without
+    spending a penny. A fan-out whose size is only known once it is running is a
+    fan-out nobody can put a number in front of.
+
+    ⚠ **A SOUND TASK IS ONE UNIT, NOT A DOZEN.** Its answer is a short cue per
+    shot — two or three words each — so the length that forces the split
+    everywhere else simply is not there, and one call keeps the music bed a
+    single decision about the whole film instead of five batches each inventing
+    their own.
+    """
+    out: list[dict] = []
+    for task in (work or {}).get("tasks") or []:
+        first = max(1, int(task.get("first_shot") or 1))
+        last = min(shot_count, int(task.get("last_shot") or shot_count))
+        if last < first:
+            continue
+        if task.get("sound"):
+            out.append({"task": task, "first": first, "last": last})
+            continue
+        start = first
+        while start <= last:
+            stop = min(last, start + BATCH_SHOTS - 1)
+            out.append({"task": task, "first": start, "last": stop})
+            start = stop + 1
+    return out
+
+
+def batch_schema(vocabulary: dict, task: dict) -> dict:
+    """What ONE batch may return: steps, or sound cues. Never a conversation.
+
+    ⚠ **THE VERBS ARE NARROWED TO THE TASK'S OWN.** The manifest is the whole
+    editor; a batch asked for transitions has no business deleting a clip, and
+    the cheapest place to make that true is the schema — a verb that is not in
+    the enum is a verb the model cannot decode. `fold_steps` still runs after
+    this, so a verb that slips through a provider without enum support is still
+    dropped rather than trusted.
+    """
+    from director import plan_schema
+
+    plan = plan_schema(vocabulary)
+    allowed = [v for v in (task.get("verbs") or []) if v]
+    if allowed:
+        steps = ((plan.get("properties") or {}).get("steps") or {})
+        verb = ((steps.get("items") or {}).get("properties") or {}).get("verb")
+        known = set(verb.get("enum") or []) if isinstance(verb, dict) else set()
+        keep = [v for v in allowed if not known or v in known]
+        if keep and isinstance(verb, dict):
+            verb["enum"] = keep
+    return {
+        "type": "object",
+        "properties": {
+            "steps": plan.get("properties", {}).get("steps", {"type": "array", "items": {}}),
+            "sound": sound_schema(),
+            "note": {
+                "type": "string",
+                "description": "At most one short line, ONLY if you did something the "
+                               "person would be surprised by — a shot you deliberately "
+                               "left alone, say. Usually empty.",
+            },
+        },
+        "required": ["steps"],
+    }
+
+
+def _batch_call(*, unit: dict, board: dict, vocabulary: dict, settings: dict,
+                language: str) -> dict:
+    """One batch: one model call, its own clock, its own slice of the film."""
+    from llm_json import JsonRequest, LLMJsonError, complete_json
+
+    task = unit["task"]
+    first, last = unit["first"], unit["last"]
+    total = len((board or {}).get("shots") or [])
+    detail = int(settings.get("shot_detail_limit") or 60)
+    # ⚠ THE OVERLAP IS ON THE DIGEST, NOT ON THE RANGE IT IS TOLD TO WRITE FOR.
+    # A cut is a decision about two shots, so the batch has to SEE one past each
+    # end — and must not write for it, or the same cut is written twice by two
+    # batches running at the same time. `board_digest`'s window states both.
+    window = None if task.get("sound") else (
+        max(1, first - BATCH_OVERLAP), min(total, last + BATCH_OVERLAP)
+    )
+    # ⚠ SEE ONE PAST EACH END, WRITE FOR NEITHER. See `board_digest`.
+    writing = None if window is None else (first, last)
+    block = prompts()
+    prompt = _fill(
+        block["batch"],
+        {
+            "BOARD": board_digest(board or {}, detail, window, writing),
+            "VOCABULARY": json.dumps(
+                _vocabulary_for_prompt(vocabulary or {}), ensure_ascii=False,
+                sort_keys=True, indent=1,
+            ),
+            "GOAL": task.get("goal") or "",
+            "RANGE": (
+                "every shot in this film" if task.get("sound")
+                else f"shots {first} to {last}"
+            ),
+            "LANGUAGE": language.strip() or "the language they wrote in",
+        },
+    )
+    request = JsonRequest(
+        system=block["system"],
+        prompt=prompt,
+        schema=batch_schema(vocabulary or {}, task),
+        purpose="editor chat batch",
+        capability=CAPABILITY,
+        # Each batch gets the operator's full per-message clock. They run at the
+        # same time, so the JOB is still about as long as one of them — see E142
+        # for why that number is a setting and not a constant.
+        budget_seconds=float(settings.get("turn_seconds") or 0),
+        budget_source="the admin panel",
+    )
+    try:
+        raw = complete_json(request)
+    except LLMJsonError as e:
+        raise EditorChatError(str(e)) from None
+    return raw if isinstance(raw, dict) else {}
+
+
+def run_work(*, work: dict, board: dict, vocabulary: dict, settings: dict | None = None,
+             language: str = "", on_progress=None, cancelled=None) -> dict:
+    """Run a work brief and return ONE turn, exactly shaped like an ordinary one.
+
+    ⚠ **THE ANSWER IS AN ORDINARY PLAN AND THAT IS THE WHOLE POINT.** Everything
+    downstream — `normaliseTurn`, `validatePlan`, `applyGuardrails`, the preview,
+    Apply, Undo — is untouched and does not know a fan-out happened. A big job is
+    not a second kind of edit with a second set of rules; it is the same plan,
+    written faster.
+
+    Args:
+        on_progress: `f(done, total, message)` after each batch lands. The route
+            writes it onto the job record; the panel draws it.
+        cancelled: `f() -> bool`, asked BEFORE each batch is started. Stop cannot
+            un-send a call already in flight — it stops the SPEND on everything
+            after it, which is what the person is actually asking for.
+
+    Raises:
+        EditorChatError: only when nothing usable came back at all.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from director import fold_steps
+
+    settings = settings or {}
+    shots = (board or {}).get("shots") or []
+    units = work_batches(work or {}, len(shots))
+    if not units:
+        raise EditorChatError("There was nothing to do in that.")
+    if len(units) > MAX_WORK_BATCHES:
+        raise EditorChatError(
+            f"That is {len(units)} passes over this film in one message, which is more "
+            "than one request should cost. Ask for one kind of change at a time, or "
+            "name a range of shots."
+        )
+
+    total = len(units)
+    done = 0
+    lock = threading.Lock()
+    steps: list[dict] = []
+    dropped: list[dict] = []
+    sfx: list[dict] = []
+    music: dict | None = None
+    failures: list[str] = []
+    stopped = False
+
+    def one(index: int, unit: dict):
+        nonlocal done, music, stopped
+        if cancelled and cancelled():
+            with lock:
+                stopped = True
+            return
+        label = _clip(unit["task"].get("goal"), 60)
+        try:
+            raw = _batch_call(
+                unit=unit, board=board, vocabulary=vocabulary,
+                settings=settings, language=language,
+            )
+        except EditorChatError as e:
+            # ⚠ ONE BATCH FAILING IS NOT THE JOB FAILING. Fifty-eight good steps
+            # and one timed-out batch is a real, useful, honest plan; throwing it
+            # all away would charge the person for every call and hand them
+            # nothing. What was missed is named in the reply instead.
+            with lock:
+                failures.append(f"shots {unit['first']}–{unit['last']}: {e}")
+                done += 1
+                if on_progress:
+                    on_progress(done, total, f"{label} — that part failed")
+            return
+        got, lost = fold_steps(raw.get("steps"), vocabulary or {})
+        # ⚠ THE BATCH IS TOLD ITS RANGE AND THE MERGE ENFORCES IT. Every prompt in
+        # this file is a request; a model that writes one step past its edge — the
+        # overlap shot it can see — would have that cut written twice, once here
+        # and once by the pass that owns it, and the person would get two
+        # transitions on one edit. Dropped rather than trusted, and named in
+        # `dropped` so it is visible rather than silent.
+        if not unit["task"].get("sound"):
+            inside, outside = [], []
+            for step in got:
+                at = _step_shot(step)
+                (inside if at is None or unit["first"] <= at <= unit["last"] else outside).append(step)
+            for step in outside:
+                lost.append({
+                    "index": 0,
+                    "verb": step.get("verb") or "?",
+                    "why": (
+                        f"shot {_step_shot(step)} is outside this pass's range "
+                        f"({unit['first']}–{unit['last']}) — another pass owns it"
+                    ),
+                })
+            got = inside
+        sound = _coerce_sound(raw.get("sound"))
+        with lock:
+            steps.extend(got)
+            dropped.extend(lost)
+            if sound:
+                sfx.extend(sound.get("sfx") or [])
+                # ⚠ ONE BED FOR THE FILM — the FIRST one wins. Music is a single
+                # decision about the whole thing; two batches each choosing a
+                # different one would lay two beds over each other.
+                if music is None and sound.get("music"):
+                    music = sound["music"]
+            done += 1
+            if on_progress:
+                on_progress(done, total, label)
+
+    with ThreadPoolExecutor(max_workers=MAX_PARALLEL_CALLS,
+                            thread_name_prefix="chatwork") as pool:
+        list(pool.map(lambda pair: one(*pair), list(enumerate(units))))
+
+    if stopped and not steps and not sfx:
+        raise EditorChatError("Stopped before anything was written.")
+    if not steps and not sfx and failures:
+        raise EditorChatError(failures[0])
+
+    # ⚠ SORTED BY SHOT, BECAUSE THE BATCHES FINISHED IN WHATEVER ORDER THEY
+    # FINISHED IN. The preview is read top to bottom against a timeline that runs
+    # left to right, and a plan whose steps jump about is one nobody can check.
+    steps.sort(key=lambda s: _step_shot(s) if _step_shot(s) is not None else 10_000)
+    sfx.sort(key=lambda c: int(c.get("shot") or 0))
+
+    sound = None
+    if sfx or music:
+        sound = {"sfx": sfx[:MAX_SFX_CUES]}
+        if music:
+            sound["music"] = music
+
+    logger.info(
+        "[editor-chat] work DONE — %d batch(es), %d step(s), %d cue(s), %d failed",
+        total, len(steps), len(sfx), len(failures),
+    )
+    return {
+        "kind": "plan" if (steps or sound) else "answer",
+        "reply": _work_reply(total, len(steps), len(sfx), bool(music), failures, stopped),
+        "ask": None,
+        "look": None,
+        "passes": [],
+        "plan": {
+            "version": 1,
+            "summary": "",
+            "mood": "",
+            "steps": steps,
+            # ⚠ FALSE, DELIBERATELY. `asked_for_all` tells the client's guardrails
+            # to EXPAND a plan across the film; these steps were already written
+            # shot by shot, so expanding them again would double every one.
+            "asked_for_all": False,
+        } if steps else None,
+        "sound": sound,
+        "dropped": dropped,
+        "stopped": stopped,
+    }
+
+
+def _work_reply(batches: int, steps: int, cues: int, music: bool,
+                failures: list[str], stopped: bool) -> str:
+    """What the person reads when the job lands. ⚠ COUNTS, NOT ADJECTIVES.
+
+    A fan-out is the one turn where the person cannot see what happened by
+    reading the answer, so the answer says what is really there — including the
+    parts that failed, which is the half a summary is always tempted to drop.
+    """
+    bits = []
+    if steps:
+        bits.append(f"{steps} edit{'s' if steps != 1 else ''}")
+    if cues:
+        bits.append(f"{cues} sound effect{'s' if cues != 1 else ''}")
+    if music:
+        bits.append("a music bed")
+    made = ", ".join(bits) if bits else "nothing"
+    if stopped:
+        return f"Stopped. {made.capitalize()} had been written by then — apply it or discard it."
+    line = f"Done — {made}, written in {batches} pass{'es' if batches != 1 else ''}."
+    if failures:
+        line += (
+            f" {len(failures)} part{'s' if len(failures) != 1 else ''} did not come back, "
+            "so those shots were left alone. Ask again for just those."
+        )
+    return line

@@ -38,6 +38,13 @@ class JobKind(str, Enum):
     PLAN = "plan"              # content plan / script planning session
     # "Animatics to Final Video": per-shot Veo renders, then one assembled cut.
     FINAL_VIDEO = "final_video"
+    # ⚠ A BIG ✨ AI EDITOR MESSAGE, run off the request thread. NOT a workflow and
+    # it produces no media — it is a plan being WRITTEN, in parallel, so that one
+    # message asking for four jobs over sixty shots cannot time out. It is a job
+    # kind rather than a private table for the reason stated at the top of
+    # `jobs.py`: every workflow's metadata belongs in Mongo, and adding the kind
+    # is the whole job. See `server/editor_chat_work.py`.
+    EDITOR_CHAT = "editor_chat"
 
 
 class Job(BaseModel):
@@ -3765,6 +3772,14 @@ class EditorChatResponse(BaseModel):
     # `MAX_LOOK_SHOTS` in `editor_chat_agent.py` for why it is a request rather
     # than something sent on every turn.
     look: dict | None = None
+    # ⚠ A BIG JOB THAT IS NOW RUNNING — not an answer, and NOT something to
+    # draw an Apply button over. `work_id` is the job to poll; `work` is the
+    # brief, so the panel can say WHAT is being done while it waits
+    # ("transitions, then sound") rather than showing a bar with no label on
+    # it. Both are null on every ordinary turn, which is what keeps the fast
+    # path exactly as fast as it was. See `server/editor_chat_work.py`.
+    work_id: str | None = None
+    work: dict | None = None
     # Steps the server could not read, so the panel can say "2 steps couldn't be
     # used" rather than quietly showing a shorter plan. The client adds its own.
     dropped: list[dict] = Field(default_factory=list)
@@ -3803,6 +3818,34 @@ class EditorChatSessionList(BaseModel):
     # The ceiling, sent so the panel can say "40 of 40" rather than only
     # discovering the limit by being refused at the ＋ button.
     limit: int = 0
+
+
+class EditorChatWorkStatus(BaseModel):
+    """GET /editor-chat/work/{id} — how a big job is going, and its answer.
+
+    ⚠ **`turn` IS AN ORDINARY TURN AND THAT IS DELIBERATE.** When the job lands,
+    what comes back here is the same shape `/turn` returns for a small edit, so
+    the panel feeds it to the same `normaliseTurn`, the same `validatePlan`, the
+    same preview and the same Apply. A big job is not a second kind of edit with
+    a second set of rules; it is the same plan, written faster.
+    """
+
+    work_id: str
+    # running | done | failed | lost
+    # ⚠ `lost` IS A REAL ANSWER, NOT AN ERROR CODE. A job whose server restarted
+    # mid-flight has no runner and will never finish, and a progress bar that
+    # never moves again is the worst of the three things this could say.
+    state: str
+    done: int = 0
+    total: int = 0
+    percent: int = 0
+    message: str = ""
+    # Set once `state == "done"`. The finished turn — reply, plan, sound.
+    turn: dict | None = None
+    error: str | None = None
+    # True when the person pressed Stop and the plan is what had been written by
+    # then. Still applicable, and the reply says so.
+    stopped: bool = False
 
 
 class EditorChatSession(BaseModel):
@@ -3870,6 +3913,18 @@ class EditorChatConfig(BaseModel):
     greeting: str = ""
     max_turns_per_session: int = 0
     transcript_keep: int = 20
+    # ⚠ HOW OFTEN THE PANEL SHOULD ASK A RUNNING BIG JOB HOW IT IS GOING, in
+    # milliseconds. Sent rather than hard-coded for the same reason the timeout
+    # above is: a batch takes about as long as the operator's own clock allows,
+    # so a deployment with a slower model should be polled less often, not have
+    # a constant in the browser guess at it.
+    work_poll_ms: int = 1500
+    # ⚠ HOW OFTEN THE PANEL SHOULD ASK A RUNNING BIG JOB HOW IT IS GOING, in
+    # milliseconds. Sent rather than hard-coded for the same reason the timeout
+    # above is: a batch takes about as long as the operator's own clock allows,
+    # so a deployment with a slower model should be polled less often, not have
+    # a constant in the browser guess at it.
+    work_poll_ms: int = 1500
     # ⚠ HOW LONG THE TAB WAITS FOR ONE TURN, IN MILLISECONDS — and it is SENT
     # rather than hard-coded because the operator can now change the model's
     # clock from the admin panel, and these two numbers must never come apart.

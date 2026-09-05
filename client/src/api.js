@@ -2319,6 +2319,34 @@ export function editorChatTurn(
   });
 }
 
+// --- The ✨ AI Editor's BIG jobs ---------------------------------------------
+// ONE MESSAGE THAT IS REALLY FIVE JOBS OVER SIXTY SHOTS.
+//
+// ⚠ NEITHER OF THESE SPENDS A TURN OR CALLS A MODEL. The message was billed when
+// it was sent; these are watching what it is doing. A poll that counted against
+// the allowance would charge somebody for their own progress bar.
+//
+// ⚠ AND NEITHER TAKES `CHAT_TURN_TIMEOUT_MS`. That number is how long to wait for
+// a model to think; this is a status read that answers in milliseconds, and
+// giving it a two-minute patience would hide a dead server for two minutes.
+
+// How the job is going, and its answer once it lands. Poll it at the interval
+// `/editor-chat/config` gives you (`work_poll_ms`) — derived from the model's
+// own clock, so a slower deployment is asked less often.
+export function editorChatWork(workId) {
+  return request(`/editor-chat/work/${workId}`);
+}
+
+// Stop a big job. ⚠ IT STOPS THE SPEND, NOT THE WAIT — the model call already in
+// flight is paid for either way, and what it prevents is every batch that has
+// not started. What HAD been written still comes back as a real, applicable
+// plan, so the caller must keep polling after this rather than throwing the run
+// away: pressing Stop on a job that had done forty of sixty shots and getting
+// nothing would be the panel punishing somebody for changing their mind.
+export function editorChatWorkStop(workId) {
+  return request(`/editor-chat/work/${workId}/stop`, { method: "POST" });
+}
+
 // --- The ✨ AI Editor's saved chats ------------------------------------------
 // ONE PROJECT, MANY CONVERSATIONS, AND THEY OUTLIVE THIS BROWSER.
 //

@@ -495,14 +495,47 @@ export default function AdminChat() {
                   <strong>{field.label}</strong>
                   <span className="muted tiny"> — {field.note}</span>
                 </span>
+                {/* ⚠ IT COMMITS WHEN YOU LEAVE THE BOX, NOT ON EVERY KEYSTROKE —
+                    which is what the Model field below has always done, and what
+                    these should have done from the start. Saving per keystroke
+                    means every HALF-TYPED number is a real save: the server
+                    clamps it to the bound, `setRow` writes the clamped value
+                    straight back into a controlled input, and the box you are
+                    typing in changes under your hands. The fault was invisible
+                    while every floor here was 0, 4 or 10 — a first digit lands
+                    above them — and it became unusable the moment a field with a
+                    TWO-DIGIT floor arrived: typing 150 into "Seconds one message
+                    may take" saves 1, is clamped to 90, and you are now editing
+                    "90". ⚠ UNCONTROLLED AND KEYED ON THE STORED VALUE, so the
+                    box still snaps to what the server really kept — including a
+                    clamp — the moment a save lands. */}
                 <input
+                  key={`${field.id}:${s[field.id]}`}
                   className="admin-search admin-chat-num"
                   type="number"
                   min={bound.min}
                   max={bound.max}
-                  value={s[field.id] ?? ""}
+                  defaultValue={s[field.id] ?? ""}
                   disabled={!!busy}
-                  onChange={(e) => save({ [field.id]: Number(e.target.value) })}
+                  onBlur={(e) => {
+                    const typed = e.target.value.trim();
+                    // ⚠ AN EMPTY BOX IS NOT A ZERO. `Number("")` is 0, and 0 is a
+                    // REAL setting on two of these rows — it means "no ceiling".
+                    // Someone who cleared the field to retype and then clicked
+                    // away has not asked for anything; put it back.
+                    if (typed === "") {
+                      e.target.value = s[field.id] ?? "";
+                      return;
+                    }
+                    const next = Number(typed);
+                    if (!Number.isFinite(next) || next === s[field.id]) return;
+                    save({ [field.id]: next });
+                  }}
+                  // Enter commits without reaching for the mouse — the same
+                  // manners the rest of this panel's text fields have.
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") e.currentTarget.blur();
+                  }}
                 />
                 <span className="muted tiny">
                   {bound.min}–{bound.max}
@@ -572,15 +605,36 @@ export default function AdminChat() {
                   <strong>{field.label}</strong>
                   <span className="muted tiny"> — {field.note}</span>
                 </span>
+                {/* ⚠ COMMITS ON BLUR, for the reason spelled out over the group
+                    above — and this group is where a per-keystroke save hurts
+                    MOST. "Characters kept per conversation" has a floor of
+                    20,000: typing 400000 saves 4, is clamped to 20000, and the
+                    box you are typing in becomes "20000" after the first digit.
+                    Nobody could set that field by typing at all. */}
                 <input
+                  key={`${field.id}:${s[field.id]}`}
                   className="admin-search admin-chat-num"
                   type="number"
                   min={bound.min}
                   max={bound.max}
                   step={field.step || 1}
-                  value={s[field.id] ?? ""}
+                  defaultValue={s[field.id] ?? ""}
                   disabled={!!busy}
-                  onChange={(e) => save({ [field.id]: Number(e.target.value) })}
+                  onBlur={(e) => {
+                    const typed = e.target.value.trim();
+                    // An empty box is not a zero — and 0 is a real setting on
+                    // "Saved chats per project". See the note above.
+                    if (typed === "") {
+                      e.target.value = s[field.id] ?? "";
+                      return;
+                    }
+                    const next = Number(typed);
+                    if (!Number.isFinite(next) || next === s[field.id]) return;
+                    save({ [field.id]: next });
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") e.currentTarget.blur();
+                  }}
                 />
                 <span className="muted tiny">
                   {bound.min}–{bound.max}

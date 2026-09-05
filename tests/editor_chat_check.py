@@ -956,6 +956,14 @@ def server_checks() -> None:
         # unasked, and requiring it would push the model to invent a bed for
         # somebody who asked only for a door slam.
         "sound.music": [],
+        # ⚠ BIG WORK. `tasks` is required because a `work` object without them
+        # is a turn that says "this is a big job" and then names none of it —
+        # the route would start a job with nothing in it. And `goal` is required
+        # on each task for the sharper reason: the goal is the ONLY thing the
+        # batch pass is told (it cannot see the conversation), so a task without
+        # one is a paid call asking a model to guess what the person wanted.
+        "work": ["tasks"],
+        "work.tasks[]": ["goal"],
     }
 
     def objects(node, path=""):

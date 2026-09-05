@@ -104,6 +104,47 @@ const STEP_MS = 90;
 const LOOK_MAX_EDGE = 512;
 
 /**
+ * HOW LONG A BIG JOB MAY RUN BEFORE THE PANEL STOPS BELIEVING IN IT.
+ *
+ * ⚠ A CEILING, NOT A TIMEOUT — nothing is cut off here. The server already
+ * reports a run whose process restarted as `lost`, so the only case left is a
+ * record that quietly stops being updated, and a loop with no end is not a
+ * feature: it is a spinner somebody watches for an hour. Half an hour is far
+ * past any honest fan-out of `MAX_WORK_BATCHES` at the operator's own clock.
+ */
+const WORK_MAX_WAIT_MS = 30 * 60 * 1000;
+
+/**
+ * `setTimeout` as a promise, that a Stop can cut short.
+ *
+ * ⚠ THE LISTENER IS REMOVED WHEN THE WAIT ENDS NORMALLY. A poll loop adds one
+ * of these per tick, and an `abort` listener left on the controller for every
+ * tick of a twenty-minute job is a leak that grows with exactly the runs it
+ * matters on.
+ */
+function pause(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(Object.assign(new Error("Stopped."), { stopped: true }));
+      return;
+    }
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const onAbort = () => {
+      done();
+      reject(Object.assign(new Error("Stopped."), { stopped: true }));
+    };
+    const timer = setTimeout(() => {
+      done();
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/**
  * A blob as bare base64 — no `data:` prefix, because the wire carries the mime
  * type in its own field and the server calls `b64decode` on this.
  *
@@ -203,6 +244,14 @@ export default function useEditorChat({
   // while the model is looking at the pictures — the model's own line about why
   // it needed to see, so a wait nobody asked for at least explains itself.
   const [looking, setLooking] = useState("");
+  // ⚠ A BIG JOB IN FLIGHT, OR `null`. Not a second kind of "sending": `sending`
+  // stays true throughout, because from the person's point of view they are
+  // still waiting for their message to be answered. This is only the DETAIL —
+  // what is being done and how much of it is left — which a spinner alone cannot
+  // say, and which is the whole reason a job exists rather than a longer wait.
+  const [work, setWork] = useState(null);
+  // The id of the run being polled, readable from `stop` without re-rendering.
+  const workRef = useRef(null);
   // ⚠ HOW LONG THIS TURN HAS BEEN GOING, IN WHOLE SECONDS, and it exists because
   // a bare "Thinking…" is indistinguishable from a hang. Paid for live: a turn
   // that was working perfectly took longer than the tab's patience, the spinner
@@ -391,6 +440,63 @@ export default function useEditorChat({
     [animaticId, config, language, soundDigest]
   );
 
+  /**
+   * WATCH A BIG JOB UNTIL IT LANDS, AND RETURN THE TURN IT PRODUCED.
+   *
+   * ⚠ **POLLING, NOT A SOCKET, AND THAT IS THE POINT.** The whole reason a big
+   * message became a job is that no connection can be relied on to stay open for
+   * minutes; replacing one long-lived connection with another would put the bug
+   * back with a different name. Each poll is a request that answers in
+   * milliseconds and is complete in itself, so a dropped wifi costs one tick.
+   *
+   * ⚠ **AND A STOP HERE IS NOT AN ABORT.** `stop` asks the SERVER to stop and
+   * lets this loop run on, because the job answers with whatever it had written
+   * by then and that is a real plan the person can apply. Aborting the poll
+   * instead would throw away forty finished shots to honour a click that meant
+   * "that's enough", not "undo it".
+   */
+  const watchWork = useCallback(
+    async (workId, brief, signal) => {
+      const every = Math.max(1000, Number(config?.work_poll_ms) || 1500);
+      const tasks = (brief?.tasks || []).map((t) => t.goal).filter(Boolean);
+      const started = Date.now();
+      workRef.current = workId;
+      setWork({ id: workId, done: 0, total: 0, percent: 0, message: "", tasks });
+      try {
+        for (;;) {
+          const s = await api.editorChatWork(workId);
+          setWork({
+            id: workId,
+            done: s.done || 0,
+            total: s.total || 0,
+            percent: s.percent || 0,
+            message: s.message || "",
+            tasks,
+          });
+          if (s.state === "done") return s.turn || {};
+          if (s.state === "failed" || s.state === "lost") {
+            throw new Error(s.error || "That job did not finish.");
+          }
+          // ⚠ A CEILING, BECAUSE A LOOP WITH NO END IS NOT A FEATURE. The server
+          // already reports a restarted run as `lost`, so this only catches the
+          // case where the record itself stops being updated — and half an hour
+          // is far past any honest fan-out of `MAX_WORK_BATCHES`.
+          if (Date.now() - started > WORK_MAX_WAIT_MS) {
+            throw new Error(
+              "That job has been running for half an hour, which it should never do. " +
+                "Nothing has changed on your timeline — ask again, or ask for less at once."
+            );
+          }
+          await pause(every, signal);
+        }
+      } finally {
+        workRef.current = null;
+        setWork(null);
+      }
+    },
+    [config]
+  );
+
   const send = useCallback(
     async (text) => {
       const message = String(text || "").trim();
@@ -446,6 +552,20 @@ export default function useEditorChat({
           } finally {
             setLooking("");
           }
+        }
+
+        // ⚠ A BIG MESSAGE IS NOT ANSWERED YET — IT IS RUNNING. The server took the
+        // brief, started a job and came straight back, so what is in hand is an
+        // id and a progress bar rather than a plan. When it lands, what comes
+        // back is an ORDINARY turn and goes through the very same
+        // `normaliseTurn` as everything else: a big job is not a second kind of
+        // edit with a second set of rules. See `server/editor_chat_work.py`.
+        if (answer.work_id) {
+          const finished = await watchWork(answer.work_id, answer.work, controller.signal);
+          const ctx = readCtxRef.current();
+          ({ turn, drops } = normaliseTurn(finished, capabilities(), ctx));
+          // The server counts the batches' drops too; keep both.
+          answer = { ...answer, dropped: finished.dropped || [] };
         }
 
         setQuota({ used: answer.turns_used || 0, limit: answer.turns_limit ?? null });
@@ -535,6 +655,22 @@ export default function useEditorChat({
    * money. The line `send` writes says so in as many words.
    */
   const stop = useCallback(() => {
+    // ⚠ TWO DIFFERENT STOPS, AND TELLING THEM APART IS THE WHOLE OF THIS
+    // FUNCTION. An ordinary turn is one request the server cannot be called off,
+    // so all Stop can do is quit waiting for it — the wait ends, the turn is
+    // still spent, and the line `send` writes says so. A BIG JOB is the opposite:
+    // the server genuinely can stop, most of the spend is in batches that have
+    // not started, and everything already written is a real plan. So this asks
+    // the server and KEEPS WATCHING, rather than aborting and throwing away the
+    // work the person has already paid for.
+    const running = workRef.current;
+    if (running) {
+      api.editorChatWorkStop(running).catch(() => {
+        /* the poll below reports the real state; a failed stop is not an error
+           to shout about, it just means the job finishes on its own. */
+      });
+      return;
+    }
     abortRef.current?.abort();
   }, []);
 
@@ -794,6 +930,8 @@ export default function useEditorChat({
     stop,
     // Whole seconds this turn has been waiting, `0` when nothing is in flight.
     elapsed,
+    // `{id, done, total, percent, message, tasks}` while a big job runs, else null.
+    work,
     choose,
     apply,
     // Opens the priced door an offer names. Spends nothing — see `openPass`.

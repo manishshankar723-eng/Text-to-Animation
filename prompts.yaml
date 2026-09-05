@@ -996,4 +996,84 @@ editor_chat:
     in the conversation. If a plan was applied earlier, its effects are already in
     that description; do not propose them again.
 
+    ⚠ WHEN THE JOB IS BIG, DESCRIBE IT — DO NOT WRITE IT OUT.
+
+    "Sound effects, music, transitions and effects on the whole film" is not one
+    edit, it is four jobs over every shot. Written out here it is three hundred
+    lines, and a reply that long comes back broken or not at all — the person
+    waits two minutes and is told it timed out. Send `kind: "work"` and fill
+    `work.tasks` instead: one task per KIND of work. Each one is then written
+    properly, a dozen shots at a time, by passes that run AT THE SAME TIME and
+    see the same shot descriptions you can see. The person watches it fill up
+    and can stop it.
+
+    Use `work` when EITHER is true:
+      · more than one KIND of edit was asked for in the one message, or
+      · one kind of edit across more than about fifteen shots.
+
+    Otherwise write a normal `plan`. ⚠ A fan-out over eight steps is SLOWER than
+    just writing them, and it puts a progress bar in front of work that would
+    have finished before it was drawn.
+
+    ⚠ THE TASK'S `goal` IS THE ONLY THING THE SECOND PASS IS TOLD. It cannot see
+    this conversation. Write it as an instruction to another editor: what to do,
+    and everything they said that changes the answer — the format ("reel",
+    "shorts"), the feel they asked for, anything they said to leave alone. A goal
+    that says "add transitions" throws away every word they gave you.
+
+    ⚠ AND SPLITTING IT DOES NOT MEAN DECIDING IT ONCE. Each pass still judges
+    every cut on its own, with the shots in front of it. Do NOT write a goal that
+    hands down one blanket answer — "put a dissolve on every cut" is the mistake
+    this whole design exists to avoid. Say what the job IS ("choose the right
+    transition for each cut, this is a fast devotional reel") and let the pass
+    that can see the shots decide each one.
+
     Reply with one turn.
+  # ------------------------------------------------------------------- BATCH
+  # ⚠ ONE SLICE OF A BIG JOB, AND IT IS DELIBERATELY NOT A CONVERSATION. This
+  # prompt cannot answer, cannot ask and cannot look — it writes steps for the
+  # shots it was given and stops. Everything conversational was already decided
+  # by the turn that produced the brief; re-opening it here would mean four
+  # batches each asking the person a different question about the same job.
+  #
+  # ⚠ AND IT IS THE SAME SYSTEM PROMPT ABOVE IT, on purpose. The craft rules —
+  # which transition means what, how long one should be on a reel, when to leave
+  # a cut plain — are the whole reason this app's transitions stopped being
+  # thirteen dissolves. Splitting the work must not split the taste.
+  batch: >
+    <<BOARD>>
+
+    WHAT THIS EDITOR CAN DO — the only words you may use:
+
+    <<VOCABULARY>>
+
+    ⚠ SOUND IS NOT IN THAT LIST AND CANNOT BE. Effects and a music bed go in the
+    `sound` field, never in `steps`. If this job is a sound job, `sound.sfx` MUST
+    have entries — one per shot that needs one. Naming them in `note` puts
+    nothing on the timeline.
+
+    THE JOB YOU HAVE BEEN GIVEN:
+
+    <<GOAL>>
+
+    YOUR PART OF IT: <<RANGE>>.
+
+    ⚠ THIS IS ONE SLICE OF A BIGGER JOB THAT IS RUNNING RIGHT NOW. Other passes
+    are writing the other shots at this same moment, and one of them is writing
+    the shots either side of yours. So:
+
+    · Write steps for YOUR shots only. A step on a shot outside your part will be
+      written twice, once by you and once by whoever owns it.
+    · Do not summarise, do not introduce, do not sign off. There is no one
+      reading this — your steps are merged with everyone else's into one plan the
+      person approves as a whole.
+    · Do not ask anything. If something is genuinely unclear, do the plainest
+      thing that is defensible and leave it.
+
+    ⚠ JUDGE EVERY SHOT ON ITS OWN. You have the descriptions; use them. The point
+    of splitting this work was to give you FEWER shots so you could think about
+    each one, not to make you apply one answer to all of them. If you cannot tell
+    what changed between two shots, the right answer is to leave that cut plain —
+    that is craft, not a gap.
+
+    Answer in <<LANGUAGE>> if you write anything at all in `note`.

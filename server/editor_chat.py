@@ -61,6 +61,7 @@ from .auth import CurrentUser, get_current_user
 from .common import fill_board_words, get_owned_job
 from . import chat_sessions
 from . import chat_settings
+from . import editor_chat_work
 from . import config as app_config
 from .features import require_feature
 from .jobs import Job
@@ -76,7 +77,9 @@ from .schemas import (
     EditorChatSessionList,
     EditorChatSessionSummary,
     EditorChatSessionUpdate,
+    EditorChatWorkStatus,
     JobKind,
+    JobStatus,
 )
 
 logger = logging.getLogger(__name__)
@@ -138,6 +141,13 @@ def config(
         # still correctly serving — billed, counted, and reported to the user as
         # the server being stuck. One admin field moves all three now.
         turn_timeout_ms=chat_settings.wire_wait_seconds(row) * 1000,
+        # ⚠ A THIRD OF THE MODEL'S OWN CLOCK, so a job that fans out into batches
+        # of that length reports about three times per batch — often enough that
+        # the bar visibly moves, rarely enough that a long job is not thousands of
+        # requests. Derived from the operator's number for the same reason the
+        # timeout is: a slower deployment should be asked less often, not have a
+        # constant in the browser guess at it.
+        work_poll_ms=max(1000, chat_settings.turn_budget_seconds(row) * 1000 // 3),
         turns_used=used,
         turns_limit=limit,
     )
@@ -287,11 +297,41 @@ def turn(
         f"{used}/{limit} turns" if limit is not None else f"{used} turns (unlimited)",
     )
 
+    # ⚠ A BIG JOB LEAVES THIS REQUEST BEHIND, AND THAT IS THE POINT. `run_work`
+    # is minutes of model calls; holding the socket open for it is the thing that
+    # cannot be made reliable at any timeout (E142, and the module docstring in
+    # `editor_chat_work.py`). The brief goes to a job, the id comes back now, and
+    # the panel watches it. ⚠ THE TURN IS ALREADY BILLED ABOVE — the batches are
+    # not billed again; the tier sells messages, and this is one message.
+    work_id = None
+    if result.get("kind") == "work" and result.get("work"):
+        try:
+            work_id = editor_chat_work.start(
+                animatic_id=job_id,
+                owner=current.email,
+                work=result["work"],
+                # ⚠ THE SAME BOARD THE TURN READ, NOT A FRESH ONE. Re-deriving it
+                # in the worker would read a store that may have moved on, and the
+                # shot numbers the brief was written against would no longer be
+                # the shot numbers the batches write for.
+                board=fill_board_words(body.board or {}, job),
+                vocabulary=body.capabilities or {},
+                settings=settings,
+                language=body.language or "",
+            )
+        except Exception as e:  # noqa: BLE001 — a job that will not start is a turn
+            logger.exception("[editor-chat %s] could not start the work job", job_id)
+            raise HTTPException(
+                status_code=502, detail=f"Could not start that job: {e}"
+            ) from None
+
     return EditorChatResponse(
         kind=result.get("kind") or "answer",
         reply=result.get("reply") or "",
         ask=ask,
         plan=result.get("plan"),
+        work_id=work_id,
+        work=result.get("work") if work_id else None,
         # ⚠ STILL NOTHING SPENT. Freesound costs no money — it spends the
         # deployment's SHARED rate limit (60 requests a minute for everybody), and
         # not one request is made here. The search happens when the user presses
@@ -312,6 +352,92 @@ def turn(
         turns_used=used,
         turns_limit=limit,
     )
+
+
+# ===========================================================================
+# BIG JOBS — a message that is really five jobs over sixty shots
+# ===========================================================================
+# ⚠ NEITHER OF THESE SPENDS A TURN. The message was billed when it was sent; this
+# is watching what it is doing. A poll that counted against the allowance would
+# charge a person for the progress bar.
+
+
+def _work_status(work_id: str, current: CurrentUser) -> EditorChatWorkStatus:
+    """One running (or finished) big job, read as the panel needs it."""
+    from .jobs import get_store
+
+    row = get_store().get(work_id)
+    # ⚠ OWNERSHIP IS CHECKED ON THE RECORD, AND A MISS IS A 404 RATHER THAN A 403.
+    # "That job exists but is not yours" is a sentence that confirms somebody
+    # else's job id, and there is nothing here worth leaking it for.
+    owner = (getattr(row, "owner", "") or "").strip().lower()
+    if not row or row.kind != JobKind.EDITOR_CHAT or owner != (current.email or "").strip().lower():
+        raise HTTPException(status_code=404, detail="No such job.")
+
+    progress = row.progress or {}
+    base = {
+        "work_id": work_id,
+        "done": int(progress.get("done_parts") or 0),
+        "total": int(progress.get("total_parts") or 0),
+        "percent": int(progress.get("percent") or 0),
+        "message": str(progress.get("message") or ""),
+    }
+    if row.status == JobStatus.SUCCEEDED:
+        turn = row.result if isinstance(row.result, dict) else {}
+        return EditorChatWorkStatus(
+            state="done", turn=turn, stopped=bool(turn.get("stopped")), **base
+        )
+    if row.status == JobStatus.FAILED:
+        return EditorChatWorkStatus(state="failed", error=row.error or "That job failed.", **base)
+    # ⚠ RUNNING, ACCORDING TO THE RECORD — but the record is written by a process
+    # that may not be this one any more. A run with no future in `_runs` is a run
+    # whose server restarted under it, and it will never finish. Saying so is the
+    # only honest answer; the alternative is a bar that never moves again.
+    if not editor_chat_work.is_live(work_id):
+        if editor_chat_work.known(work_id):
+            # It ran here and the thread is gone without writing an ending — a
+            # crash the `except` in the runner could not catch.
+            return EditorChatWorkStatus(
+                state="failed",
+                error="That job stopped without finishing. Ask again.",
+                **base,
+            )
+        return EditorChatWorkStatus(
+            state="lost",
+            error="The server restarted while that was running, so it was lost. "
+                  "Nothing was changed — ask again.",
+            **base,
+        )
+    return EditorChatWorkStatus(state="running", **base)
+
+
+@router.get("/work/{work_id}", response_model=EditorChatWorkStatus)
+def work_status(
+    work_id: str,
+    current: CurrentUser = Depends(get_current_user),
+) -> EditorChatWorkStatus:
+    """How a big job is going, and its answer once it lands. Free — no model call."""
+    return _work_status(work_id, current)
+
+
+@router.post("/work/{work_id}/stop", response_model=EditorChatWorkStatus)
+def work_stop(
+    work_id: str,
+    current: CurrentUser = Depends(get_current_user),
+) -> EditorChatWorkStatus:
+    """Stop a big job. ⚠ IT STOPS THE SPEND, NOT THE WAIT.
+
+    A model call already in flight cannot be un-sent and is paid for either way.
+    What this prevents is every batch that has not started — most of them, on a
+    long film — and what was written by then still comes back as a real plan the
+    person can apply. Ownership is checked before the flag is set, by reading the
+    record: a stop is a write, and an unauthenticated one would be a way to
+    cancel other people's work.
+    """
+    status = _work_status(work_id, current)
+    if status.state == "running":
+        editor_chat_work.stop(work_id)
+    return status
 
 
 # ===========================================================================

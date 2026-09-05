@@ -1006,6 +1006,37 @@
   font-size: 0.82rem;
   color: var(--warn);
 }
+/* ⚠ THE BAR IS THE ONLY THING IN THIS PANEL THAT MEASURES REAL WORK, so it is
+   drawn as a measurement and not as a flourish: a fixed track, a filled span,
+   the app's own accent, no animation of its own. The width is written inline
+   from the job's percent — that is the ONE number the stylesheet cannot know. */
+.ec-work {
+  margin-top: 0.45rem;
+}
+.ec-work-bar {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.ec-work-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+  /* Slow enough to read as progress, quick enough that a batch landing feels
+     like it landed. Not a pulse: a bar that animates on its own says "working"
+     when it may be stuck, which is the one thing this must never say. */
+  transition: width 0.35s ease;
+}
+.ec-work-jobs {
+  margin-top: 0.3rem;
+  /* The brief can be four goals long; it must not push the composer down. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ec-composer {
   flex: 0 0 auto;
   /* ⚠ THE RESTING STATE ONLY. `.sc-composer:focus-within` paints the gold and is
