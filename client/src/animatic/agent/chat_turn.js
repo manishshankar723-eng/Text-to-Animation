@@ -50,11 +50,16 @@
 // an exception in the middle of somebody's conversation.
 
 import { PLAN_VERSION, validatePlan } from "./plan_schema.js";
-// ⚠ THE SOUND PASS'S OWN CEILINGS, READ RATHER THAN RESTATED. `MAX_SFX_SOUNDS`
-// and `MAX_SFX_CLIPS` exist because the Freesound budget is 60 requests a
-// minute for the WHOLE deployment; a second copy of those numbers here would
-// be a preview promising more cues than the pass will actually fetch.
-import { MAX_SFX_CLIPS, MAX_SFX_SOUNDS, cueKey } from "./sound_pass.js";
+// ⚠ THE SOUND PASS'S OWN CEILINGS, READ RATHER THAN RESTATED. A second copy of
+// these numbers here would be a preview promising more cues than the pass will
+// actually fetch — the panel's count and the Apply have to agree.
+//
+// ⚠ AND THE CEILING IS THE PROJECT'S ROOM NOW, WHICH IS WHY `soundRoom` IS
+// HERE TOO. It used to be a flat ten, and a fourteen-shot board was told *"one
+// pass fetches at most 10 different sounds"* four times over — about a project
+// with room for thirty-four more files. The refusal has to be a fact about the
+// user's project, or it is an argument they cannot win.
+import { MAX_SFX_CLIPS, cueKey, soundRoom } from "./sound_pass.js";
 
 /** The three kinds of reply. Anything else is coerced to `answer`. */
 export const TURN_KINDS = ["answer", "ask", "plan"];
@@ -323,6 +328,14 @@ function normaliseSound(raw, ctx, drops) {
   const sfx = [];
   const keys = new Set();
   const onShot = new Set();
+  // How many NEW sounds this project can still hold. Read before the cues are
+  // walked, and a slot is held back for the bed when the turn cues one — the
+  // same arithmetic `scoreTurn` does when Apply is pressed, so the number on
+  // screen is the number that happens.
+  const room = soundRoom({
+    audioTracks: (ctx && ctx.audioTracks) || [],
+    music: Boolean(row.music && typeof row.music === "object" && row.music.query),
+  });
   for (const item of Array.isArray(row.sfx) ? row.sfx : []) {
     const cue = item && typeof item === "object" ? item : {};
     const query = str(cue.query, MAX_OPTION_LABEL_CHARS);
@@ -340,10 +353,12 @@ function normaliseSound(raw, ctx, drops) {
     }
     const key = cueKey(query);
     if (!key) continue;
-    if (!keys.has(key) && keys.size >= MAX_SFX_SOUNDS) {
+    if (!keys.has(key) && keys.size >= room) {
       drops.push({
         what: "sound",
-        why: `“${query}” — one pass fetches at most ${MAX_SFX_SOUNDS} different sounds`,
+        why:
+          `“${query}” — this project can hold ${room} more audio ` +
+          `file${room === 1 ? "" : "s"}, and they are all taken`,
       });
       continue;
     }

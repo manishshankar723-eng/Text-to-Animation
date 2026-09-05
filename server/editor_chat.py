@@ -1,8 +1,21 @@
 """
 editor_chat.py — the "/editor-chat" router: the ✨ AI Editor's one route.
 
-    GET  /editor-chat/config           where the panel opens, and what's left of the quota
-    POST /editor-chat/{job_id}/turn    one message in, one turn out
+    GET    /editor-chat/config                        where the panel opens, and what's left of the quota
+    POST   /editor-chat/{job_id}/turn                 one message in, one turn out
+    GET    /editor-chat/{job_id}/sessions             this project's chats, newest first (no transcripts)
+    POST   /editor-chat/{job_id}/sessions             start a new chat
+    GET    /editor-chat/{job_id}/sessions/{sid}       one whole chat, transcript and all
+    PUT    /editor-chat/{job_id}/sessions/{sid}       save it (autosave) or rename it
+    DELETE /editor-chat/{job_id}/sessions/{sid}       throw one away
+
+⚠ **THE FIVE SESSION ROUTES ARE A FILING CABINET, NOT A MEMORY.** They spend
+nothing, call no model, and the agent never reads them: `/turn` is still
+stateless and the browser still posts the whole conversation on every message.
+They exist so a person can keep *"the sound pass"* apart from *"the titles pass"*
+and still find both next week — asked for outright: *"user new chat bana kar alag
+alag baat kar sake … aur sab chat save hona chahiye … project by project"*. See
+`chat_sessions.py`.
 
 ⚠ **NOT ONE ROUTE IN THIS FILE SPENDS A PENNY OF ANYBODY'S MONEY.** `/turn`
 spends TEXT quota — one call — and returns a proposal the user reads before
@@ -45,8 +58,10 @@ import time
 from fastapi import APIRouter, Depends, HTTPException
 
 from .auth import CurrentUser, get_current_user
-from .common import get_owned_job
+from .common import fill_board_words, get_owned_job
+from . import chat_sessions
 from . import chat_settings
+from . import config as app_config
 from .features import require_feature
 from .jobs import Job
 from . import usage as usage_counters
@@ -56,6 +71,11 @@ from .schemas import (
     EditorChatOption,
     EditorChatRequest,
     EditorChatResponse,
+    EditorChatSession,
+    EditorChatSessionCreate,
+    EditorChatSessionList,
+    EditorChatSessionSummary,
+    EditorChatSessionUpdate,
     JobKind,
 )
 
@@ -152,7 +172,7 @@ def turn(
     # difference. See RULEBOOK F7/F8.
     turn_started = time.monotonic()
 
-    _owned_animatic(job_id, current)
+    job = _owned_animatic(job_id, current)
 
     messages = [{"role": m.role, "text": m.text} for m in body.messages]
     if not messages or messages[-1]["role"] != "user":
@@ -188,7 +208,13 @@ def turn(
     try:
         result = chat(
             messages=messages,
-            board=body.board or {},
+            # ⚠ THE FILM'S OWN WORDS, PUT BACK IN BEFORE THE MODEL SEES IT.
+            # The browser cannot send them — a description lives on the
+            # storyboard PANEL a frame references, not on the frame — so every
+            # turn until now described a fourteen-shot film as "Shot 1 … Shot
+            # 14" and the sound came back from a different film entirely. Free:
+            # a store read, no model call. See `fill_board_words`.
+            board=fill_board_words(body.board or {}, job),
             vocabulary=body.capabilities or {},
             settings=settings,
             language=body.language or "",
@@ -279,3 +305,214 @@ def turn(
         turns_used=used,
         turns_limit=limit,
     )
+
+
+# ===========================================================================
+# THE CHATS THEMSELVES — one project, many conversations, saved
+# ===========================================================================
+# ⚠ NOT ONE OF THESE FIVE SPENDS ANYTHING, CALLS A MODEL, OR IS READ BY ONE.
+# `/turn` above is still stateless: the browser owns the conversation and posts
+# it whole every message. This is the filing cabinet beside it — what a person
+# opens next week to see what they already had done in this film.
+#
+# ⚠ AND THE FEATURE GATE IS DELIBERATELY *NOT* ON THEM. `cap.editor-chat` being
+# switched off must not make somebody's saved conversations unreadable — a
+# feature you lose access to should stop producing new work, not eat the old.
+# The quota gate is likewise absent: reading back what you already paid for is
+# not a second charge.
+
+
+def _title(raw: str) -> str:
+    """A chat's label, trimmed to something a narrow list can draw."""
+    return (raw or "").strip()[: app_config.MAX_CHAT_TITLE_CHARS]
+
+
+def _rules() -> tuple[int, int, int]:
+    """`(chats per project, turns kept per chat, characters per chat)`.
+
+    ⚠ THE OPERATOR'S NUMBERS, READ FRESH FROM THE ADMIN PANEL — not constants
+    and no longer environment variables. Asked for outright: *"isme admin panel
+    mai v daalo, mai limit set kar dunga — mai jitna daalun wahi hona chahiye"*.
+    `get_settings` is cached and never raises; an unreachable store answers with
+    the shipped defaults, which is a working chat.
+    """
+    row = chat_settings.get_settings()
+    return (
+        int(row.get("max_chats_per_project", 40)),
+        int(row.get("chat_history_keep", 60)),
+        int(row.get("max_chat_chars", 400_000)),
+    )
+
+
+def _trim(turns: list | None, keep: int) -> list | None:
+    """The last `keep` turns. `None` stays `None` — see `save_session`.
+
+    ⚠ THE NEWEST ONES, AND THE OPERATOR SETS HOW MANY. A conversation past the
+    ceiling loses its OLDEST turns, which is the only end that can be dropped
+    without the chat stopping making sense.
+    """
+    if turns is None:
+        return None
+    return turns[-keep:] if keep > 0 and len(turns) > keep else turns
+
+
+def _too_big(turns: list | None, ceiling: int) -> bool:
+    """⚠ MEASURED AS IT WILL BE STORED, not by counting turns. Sixty short lines
+    and sixty pasted scripts are the same number of turns and nowhere near the
+    same document.
+
+    ⚠ AND IT REFUSES RATHER THAN TRUNCATES. Silently dropping half of somebody's
+    conversation to make it fit is the kind of help nobody asked for; the panel
+    keeps what is on screen and says it is not being saved.
+    """
+    if turns is None:
+        return False
+    try:
+        import json as _json
+
+        return len(_json.dumps(turns)) > ceiling
+    except (TypeError, ValueError):
+        # Not serialisable at all — refuse it rather than store something the
+        # next read cannot get back out.
+        return True
+
+
+@router.get("/{job_id}/sessions", response_model=EditorChatSessionList)
+def list_sessions(
+    job_id: str,
+    current: CurrentUser = Depends(get_current_user),
+) -> EditorChatSessionList:
+    """This project's chats, newest first, WITHOUT their transcripts.
+
+    Never 404s on "none yet" — a project with no conversations is a valid
+    state and the panel should not have to treat it as an error.
+    """
+    _owned_animatic(job_id, current)
+    rows = chat_sessions.list_sessions(current.email, job_id)
+    ceiling, _keep, _chars = _rules()
+    return EditorChatSessionList(
+        sessions=[EditorChatSessionSummary(**r) for r in rows],
+        # The operator's ceiling, sent so the panel can say "38 of 40" rather
+        # than only discovering it by being refused at the ＋ button. 0 is
+        # "no limit" and the panel prints nothing.
+        limit=ceiling,
+    )
+
+
+@router.post("/{job_id}/sessions", response_model=EditorChatSession)
+def create_session(
+    job_id: str,
+    body: EditorChatSessionCreate,
+    current: CurrentUser = Depends(get_current_user),
+) -> EditorChatSession:
+    """Start a new chat in this project — the ＋ button.
+
+    ⚠ THE ID IS MINTED HERE, NOT IN THE BROWSER. Two tabs open on one project
+    must not be able to agree on the same id by accident and write into each
+    other's conversation.
+
+    ⚠ AND `turns` MAY ARRIVE FULL ON THE VERY FIRST CREATE. The editor opens on
+    a project that does not exist yet, so the first message is what creates it —
+    those turns happened before there was anything to save them against, and
+    this is how they arrive rather than being lost.
+    """
+    _owned_animatic(job_id, current)
+
+    ceiling, keep, chars = _rules()
+    if _too_big(body.turns, chars):
+        raise HTTPException(
+            status_code=413,
+            detail=f"That conversation is too long to save (limit {chars:,} characters).",
+        )
+
+    # ⚠ 0 IS "NO LIMIT", NOT "FALL BACK TO THE DEFAULT". An operator who does
+    # not want a ceiling has to be able to say so, and this is how they say it.
+    if ceiling > 0 and chat_sessions.count_sessions(current.email, job_id) >= ceiling:
+        # ⚠ SWEEP THE EMPTY ONES FIRST, AND ONLY THE EMPTY ONES. A ＋ pressed by
+        # mistake must not be what fills somebody's ceiling — but making room by
+        # deleting the oldest conversation regardless would throw away work,
+        # silently, which is the one thing this store must never do.
+        if not chat_sessions.drop_one_unused(current.email, job_id):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"This project already has {ceiling} chats. "
+                    "Delete one to start another."
+                ),
+            )
+
+    sid = chat_sessions.new_session_id()
+    row = chat_sessions.save_session(
+        current.email,
+        job_id,
+        sid,
+        title=_title(body.title),
+        turns=_trim(body.turns or [], keep),
+    )
+    return EditorChatSession(**row)
+
+
+@router.get("/{job_id}/sessions/{session_id}", response_model=EditorChatSession)
+def read_session(
+    job_id: str,
+    session_id: str,
+    current: CurrentUser = Depends(get_current_user),
+) -> EditorChatSession:
+    """One whole chat, transcript and all — what opening a row in 🕘 asks for."""
+    _owned_animatic(job_id, current)
+    row = chat_sessions.get_session(current.email, job_id, session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="That chat is not here.")
+    return EditorChatSession(**row)
+
+
+@router.put("/{job_id}/sessions/{session_id}", response_model=EditorChatSession)
+def write_session(
+    job_id: str,
+    session_id: str,
+    body: EditorChatSessionUpdate,
+    current: CurrentUser = Depends(get_current_user),
+) -> EditorChatSession:
+    """Save a chat (the autosave) or rename it.
+
+    ⚠ `None` MEANS "LEAVE IT ALONE" AND `[]` MEANS "IT IS EMPTY", all the way
+    down to the store. A rename posts a title and no turns; an autosave posts
+    turns and no title. Collapsing the two would make renaming a chat delete
+    its transcript.
+
+    ⚠ IT UPSERTS ON PURPOSE. The browser retries an autosave that failed while
+    the network was away, and a 404 there would throw away the conversation it
+    was trying to rescue.
+    """
+    _owned_animatic(job_id, current)
+
+    _ceiling, keep, chars = _rules()
+    if _too_big(body.turns, chars):
+        raise HTTPException(
+            status_code=413,
+            detail=f"That conversation is too long to save (limit {chars:,} characters).",
+        )
+
+    row = chat_sessions.save_session(
+        current.email,
+        job_id,
+        session_id,
+        title=None if body.title is None else _title(body.title),
+        # ⚠ `_trim` PASSES `None` STRAIGHT THROUGH. A rename sends no turns, and
+        # a trim that turned that into `[]` would delete the transcript — the
+        # exact bug the `None`/`[]` split exists to prevent.
+        turns=_trim(body.turns, keep),
+    )
+    return EditorChatSession(**row)
+
+
+@router.delete("/{job_id}/sessions/{session_id}", status_code=204)
+def remove_session(
+    job_id: str,
+    session_id: str,
+    current: CurrentUser = Depends(get_current_user),
+) -> None:
+    """Throw one chat away. Silent when it was already gone — a delete that
+    404s on the second click is a delete that looks broken."""
+    _owned_animatic(job_id, current)
+    chat_sessions.delete_session(current.email, job_id, session_id)

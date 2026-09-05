@@ -77,6 +77,52 @@ export function clampBox(box, vp = viewport()) {
   return { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) };
 }
 
+/** ⚠ EVERY EDGE AND EVERY CORNER, IN THE ORDER THEY ARE DRAWN. Asked for
+ *  outright: *"abhi ek taraf se hi chota bara karta hun, mai chahta hun charo
+ *  taraf se"*. The names are the compass letters a window manager uses, and
+ *  `resizeBox` reads them by letter — an edge added here needs no new branch. */
+export const RESIZE_EDGES = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
+
+/**
+ * One resize drag, from any edge or corner.
+ *
+ * ⚠ THE EDGE THE PERSON IS *NOT* HOLDING MUST NOT MOVE. That is the whole of
+ * this function and it is why it cannot be `{ w: w + dx }` plus `clampBox`.
+ * Dragging the LEFT edge changes both `x` and `w`, and the naive version keeps
+ * subtracting from `x` after `w` has already bottomed out at `MIN_W` — so the
+ * window stops shrinking and starts sliding across the screen instead, with its
+ * right edge crawling left behind it. Anchoring the far edge first and deriving
+ * the near one from it is what stops that: the clamp lands on the size, and the
+ * position follows the size rather than racing it.
+ *
+ * The far edge is also the real maximum. A window whose left edge is dragged
+ * past the screen can only grow until `x` hits the 8px margin, which is
+ * `right - 8` — not the viewport width, which would let it grow off the side.
+ */
+export function resizeBox(box, dx, dy, edge, vp = viewport()) {
+  const maxW = Math.max(MIN_W, vp.w - 16);
+  const maxH = Math.max(MIN_H, vp.h - 16);
+  let { x, y, w, h } = clampBox(box, vp);
+
+  if (edge.includes("e")) {
+    w = clamp(w + dx, MIN_W, Math.min(maxW, Math.max(MIN_W, vp.w - 8 - x)));
+  } else if (edge.includes("w")) {
+    const right = x + w;
+    w = clamp(w - dx, MIN_W, Math.min(maxW, Math.max(MIN_W, right - 8)));
+    x = right - w;
+  }
+
+  if (edge.includes("s")) {
+    h = clamp(h + dy, MIN_H, Math.min(maxH, Math.max(MIN_H, vp.h - 8 - y)));
+  } else if (edge.includes("n")) {
+    const bottom = y + h;
+    h = clamp(h - dy, MIN_H, Math.min(maxH, Math.max(MIN_H, bottom - 8)));
+    y = bottom - h;
+  }
+
+  return clampBox({ x, y, w, h }, vp);
+}
+
 /** The docked column's width, made legal. Never wider than most of the screen. */
 export function clampWidth(width, vp = viewport()) {
   const max = Math.min(MAX_DOCK_W, Math.max(MIN_DOCK_W, vp.w - 160));

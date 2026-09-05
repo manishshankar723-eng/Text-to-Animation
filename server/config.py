@@ -128,7 +128,15 @@ MAX_ANIMATIC_ASSETS = int(os.environ.get("API_MAX_ANIMATIC_ASSETS", "1000"))
 # ⚠ AND IT IS FILES, NOT CLIPS — the razor and the music loop both make many
 # clips out of one file, and neither costs anything here. See
 # `MAX_ANIMATIC_AUDIO_CLIPS` below, which is the cap that grows with editing.
-MAX_ANIMATIC_AUDIO_TRACKS = int(os.environ.get("API_MAX_ANIMATIC_AUDIO_TRACKS", "16"))
+# ⚠ RAISED FROM 16 WHEN THE SOUND CAP STOPPED BEING A HOUSE NUMBER. The
+# browser used to refuse a cue past a flat ten of its own ("one pass fetches at
+# most 10 different sounds", printed four times under a fourteen-shot board);
+# it now asks for as many distinct sounds as the film cues and the only
+# ceiling is this one — which therefore has to be big enough for a real
+# board. A cue that cannot be served because the shared Freesound minute is
+# spent already comes back in `skipped` with a reason, so the honest limit is
+# storage, and a Freesound preview is a few hundred kilobytes.
+MAX_ANIMATIC_AUDIO_TRACKS = int(os.environ.get("API_MAX_ANIMATIC_AUDIO_TRACKS", "48"))
 # Audio CLIPS per animatic. ⚠ NOT the same cap: the razor cuts one file into
 # several clips without uploading anything, so counting clips against the file
 # limit above would make a track uncuttable after three cuts. Every clip is one
@@ -197,6 +205,31 @@ LOCAL_DRAFTS_PATH = os.environ.get("API_LOCAL_DRAFTS_PATH", ".local_drafts.json"
 # Upper bound on an autosaved script. Generous — a feature screenplay is well
 # under this — but bounded so a paste accident can't push megabytes per keystroke.
 MAX_SCRIPT_CHARS = int(os.environ.get("API_MAX_SCRIPT_CHARS", str(400_000)))
+
+# --- ✨ AI Editor chat sessions -----------------------------------------------
+# EVERY CONVERSATION THE AI EDITOR HAS EVER HAD, kept with the project it was
+# about. One project holds MANY chats; each is a title and a list of turns. See
+# `chat_sessions.py` for why this stopped being a `localStorage` key.
+# Same backend switch as drafts (USER_STORE), so there is nothing extra to set.
+CHAT_SESSIONS_COLLECTION = os.environ.get(
+    "API_CHAT_SESSIONS_COLLECTION", "editor_chat_sessions"
+)
+LOCAL_CHAT_SESSIONS_PATH = os.environ.get(
+    "API_LOCAL_CHAT_SESSIONS_PATH", ".local_chat_sessions.json"
+)
+# ⚠ HOW MANY CHATS, HOW MANY TURNS AND HOW BIG ARE **NOT HERE** — THEY ARE THE
+# ADMIN PANEL'S. They lived here as `API_MAX_CHAT_*` for half a day, which meant
+# only somebody with a shell could change them. Asked for outright: *"isme admin
+# panel mai v daalo, mai limit set kar dunga — mai jitna daalun wahi hona chahiye,
+# mai handle kar lunga"*. They are `max_chats_per_project`, `chat_history_keep`
+# and `max_chat_chars` in `chat_settings.LIMITS`, beside `opacity` and `blur`.
+# ⚠ DO NOT ADD AN ENV CEILING BACK OVER THEM. A hidden maximum that quietly
+# overrides what the operator typed is the same fault `opacity`'s floor of 40 was.
+#
+# How long a chat title may be. It stays here because it is not a product
+# decision — it is the width of a label in a narrow list, and no operator has an
+# opinion about it.
+MAX_CHAT_TITLE_CHARS = int(os.environ.get("API_MAX_CHAT_TITLE_CHARS", "120"))
 
 # --- Admin panel --------------------------------------------------------------
 # WHO IS AN ADMINISTRATOR. The role lives on the user document (`role: "admin"`)

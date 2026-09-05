@@ -640,6 +640,82 @@ def main():
     check("...and a plain failure with time left still does NOT",
           "ran out of time" not in quiet, quiet)
 
+    # ---------------------------------------------------------------------
+    # ⭐ A REBUILT REQUEST MUST NOT CHANGE WHO IS CALLED.
+    #
+    # Two functions here hand back a NEW `JsonRequest` built from an old one —
+    # `as_prompt_schema` (the schema moved into the prompt) and
+    # `_repair_request` (mend your own broken answer). Both were rebuilding it
+    # WITHOUT `capability`, and an empty capability is not a small thing: it
+    # means the DEFAULT provider. `resolve_provider(capability="")` falls back
+    # to `TEXT_PROVIDER`, so on this repo's own `.env` — chat on the Developer
+    # API, text on Vertex — a repair of a ✨ chat answer went to Vertex, with no
+    # credentials for it, and came back:
+    #
+    #     403 PERMISSION_DENIED … aiplatform.googleapis.com … CONSUMER_INVALID
+    #
+    # ⚠ AN ERROR ABOUT CREDENTIALS, ON A CALL WHOSE ONLY FAULT WAS A MISSING
+    # BRACE, ON A KEY THAT WAS PERFECTLY GOOD. Seen live on 2026-09-05 while
+    # running the chat battery. ⚠ AND WHERE BOTH BACKENDS HAVE CREDENTIALS IT
+    # DOES NOT FAIL AT ALL — it silently bills the mend to the other
+    # capability's key, which is the exact bug `get_client`'s cache key exists
+    # to prevent. A wrong answer that works is worse than one that 403s.
+    # ---------------------------------------------------------------------
+    print()
+    print("⭐ A REBUILT REQUEST KEEPS ITS CAPABILITY — or it changes provider")
+    print()
+
+    looking = JsonRequest(
+        purpose="editor chat", system="s", prompt="p",
+        schema={"type": "object", "properties": {"ok": {"type": "boolean"}}},
+        capability="chat",
+        images=({"mime": "image/png", "data": b"xx"},),
+    )
+
+    moved = llm_json.as_prompt_schema(looking)
+    check("⭐ as_prompt_schema KEEPS the capability",
+          moved.capability == "chat", repr(moved.capability))
+    check("...and the pictures, because it is the SAME call",
+          len(moved.images) == 1, str(len(moved.images)))
+
+    mend = llm_json._repair_request(looking, '{"ok": tru', "unterminated")
+    check("⭐ _repair_request KEEPS the capability",
+          mend.capability == "chat", repr(mend.capability))
+    check("...and DELIBERATELY drops the pictures — a mend is a syntax job",
+          mend.images == (), str(mend.images))
+    check("...and keeps the purpose, which is what `stub` answers by",
+          mend.purpose == "editor chat", mend.purpose)
+
+    # ⚠ AND THE PROOF THAT MATTERS IS THE ROUND TRIP, not the two fields above:
+    # the adapter is what asks `resolve_provider`, so the question is what the
+    # adapter is HANDED on the second call of a repair. Answered here with a
+    # fake transport, no model and no network — first answer unreadable, so a
+    # repair is bought; both requests are recorded.
+    os.environ["DIRECTOR_BUDGET_SECONDS"] = "600"
+    seen: list = []
+
+    def breaks_once(request):
+        seen.append(request.capability)
+        return '{"ok": tru' if len(seen) == 1 else '{"ok": true}'
+
+    llm_json.use_adapter(breaks_once)
+    try:
+        llm_json.complete_json(JsonRequest(
+            purpose="editor chat", system="s", prompt="p",
+            schema={"type": "object", "properties": {"ok": {"type": "boolean"}}},
+            capability="chat",
+        ))
+    finally:
+        llm_json.use_adapter(None)
+        os.environ.pop("DIRECTOR_BUDGET_SECONDS", None)
+
+    check("⭐ THE REPAIR IS A SECOND CALL — that is the whole risk",
+          len(seen) == 2, str(seen))
+    check("⭐ ...AND BOTH CALLS ARE THE SAME CAPABILITY, so both reach the same",
+          seen == ["chat", "chat"], str(seen))
+    check("...which is what stops the mend resolving to TEXT_PROVIDER",
+          all(c for c in seen), str(seen))
+
     print()
     print("⚠ AND A PROVIDER FAULT REACHES THE USER AS A SENTENCE, NOT A DICT")
     print()

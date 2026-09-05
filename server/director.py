@@ -39,7 +39,7 @@ from .auth import CurrentUser, get_current_user
 # ⚠ THE GUARD THAT ACTUALLY TURNS A FEATURE OFF. The sidebar reading the same
 # registry is cosmetic — anyone can call these routes directly. See features.py.
 from .features import require_feature
-from .common import get_owned_job, write_director_run
+from .common import fill_board_words, get_owned_job, write_director_run
 from .jobs import Job, get_store
 from .schemas import (
     AnimaticDirectorRun,
@@ -333,7 +333,10 @@ def write_plan(
 
     try:
         result = direct(
-            board=body.board or {},
+            # ⚠ THE SAME FILL THE CHAT DOES, AND FOR THE SAME REASON — the
+            # reading writes `sfx` and `music` off these descriptions, and the
+            # browser has none to send. See `fill_board_words`.
+            board=fill_board_words(body.board or {}, job),
             vocabulary=body.capabilities or {},
             include=body.include or {},
             language=language,

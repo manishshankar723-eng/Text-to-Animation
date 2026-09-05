@@ -14,7 +14,7 @@ from fastapi import HTTPException
 from . import config
 from .auth import CurrentUser
 from .jobs import get_store
-from .schemas import Job, JobStatus
+from .schemas import Job, JobKind, JobStatus
 
 logger = logging.getLogger(__name__)
 
@@ -471,3 +471,182 @@ def write_director_run(job_id: str, run: dict) -> None:
         store.update(job_id, result=result)
     except Exception:  # noqa: BLE001 — a lost state write must not kill the run
         logger.exception("[animatic %s] could not persist the director run", job_id)
+
+
+# ===========================================================================
+# THE FILM'S OWN WORDS — what a project is ABOUT, for the passes that write
+# about it (the 🎬 Director's reading and the ✨ AI Editor's turn).
+# ===========================================================================
+# ⚠ THIS EXISTS BECAUSE THE SOUND CAME OUT OF A DIFFERENT FILM. Asked to score a
+# Diwali puja board — marigolds, diyas, a rangoli, a woman at a decorated puja
+# table — the model returned "pop bubble", "camera shutter", "digital beep",
+# "mouse click", "glitch static", and a bed of "upbeat energetic corporate pop
+# vlog". That is not a taste failure. It is the only answer available to
+# something that was handed this and nothing else:
+#
+#     - Title: (untitled)
+#     - 14 shot(s), 0:28 total, 9:16 at 24fps
+#     1. [2.0s] Shot 1
+#     2. [2.0s] Shot 2   … fourteen times
+#
+# ⚠ THE WORDS EXISTED THE WHOLE TIME — ON THE BOARD, NOT ON THE FRAME.
+# `boardFrom` in the browser sends `description: frame.description ||
+# frame.prompt`, and `AnimaticFrame` HAS NO SUCH FIELD (`frameForSave` carries
+# none either), so that key has been "" on every turn since it was written. What
+# a shot is OF lives on the storyboard panel the frame REFERENCES — its `src`
+# carries `{storyboard_id, index}` — together with its location, the board's
+# genre and world, and the script the whole thing came from.
+#
+# ⚠ AND ONE FILL FIXES BOTH FEATURES, which is why it is here rather than in
+# either route. `board_digest` (chat) and `shot_digest` (Director) both read
+# `board["shots"][i]["description"]`; neither needs to know where it came from.
+#
+# ⚠ OWNER-CHECKED, EXACTLY LIKE `_voice_lines_of` IN `animatics.py`. Frames are
+# user-editable JSON, so a crafted `storyboard_id` would otherwise read another
+# account's script. Same shape of guard, same reason.
+
+# How much of each is worth spending tokens on. A description is a sentence; a
+# logline is the top of the script — enough to say what the film IS, not the
+# whole screenplay.
+FILM_DESCRIPTION_CHARS = 240
+FILM_LOGLINE_CHARS = 400
+FILM_WORLD_CHARS = 300
+
+
+def _film_text(value, limit: int) -> str:
+    """One line, whitespace collapsed and clipped. Never raises on a non-string."""
+    out = " ".join(str(value or "").split())
+    return out[:limit].rstrip()
+
+
+def _world_text(world) -> str:
+    """A board's `world` as one readable line.
+
+    Its shape has changed across versions (a string once, an object since), so
+    this reads either and never assumes a key is present.
+    """
+    if isinstance(world, str):
+        return _film_text(world, FILM_WORLD_CHARS)
+    if not isinstance(world, dict):
+        return ""
+    bits = []
+    for key in ("setting", "place", "period", "era", "time", "look", "notes", "summary"):
+        value = _film_text(world.get(key), 120)
+        if value:
+            bits.append(value)
+    return _film_text(" · ".join(bits), FILM_WORLD_CHARS)
+
+
+def fill_board_words(board: dict, job: Job) -> dict:
+    """Put the film's own words into the board the browser sent.
+
+    Returns a NEW board dict; the caller's is not touched. `director.py` hashes
+    the board it was given as part of its determinism claim, and a helper that
+    mutated its argument would make that hash depend on call order.
+
+    What it fills, and only where the browser left a blank:
+
+      * ``shots[i].description`` — what the panel is OF, from the board it came
+        from. A shot the user described themselves keeps their words.
+      * ``shots[i].location``    — where it happens.
+      * ``film``                 — one header for the whole project: the board's
+        real title, its genre, its world, the top of its script, and the market
+        it was written for. This is the part that answers *what KIND of film is
+        this*, which is the question every sound cue depends on.
+
+    ⚠ IT NEVER FAILS THE REQUEST. A deleted board, a src pointing at another
+    account's job, a result shaped by an older version — all of them mean "no
+    extra words", never an error. The turn still happens, and the model is told
+    plainly that it is working blind (see `board_digest`).
+    """
+    if not isinstance(board, dict):
+        return {}
+    shots = [dict(s) if isinstance(s, dict) else {} for s in (board.get("shots") or [])]
+    out = dict(board)
+
+    store = get_store()
+    boards: dict[str, Job | None] = {}
+
+    def board_job(board_id: str) -> Job | None:
+        """The storyboard behind a src — owner-checked, and fetched once."""
+        if board_id in boards:
+            return boards[board_id]
+        found = None
+        try:
+            candidate = store.get(board_id)
+            # ⚠ THE OWNER CHECK IS THE POINT, not a formality.
+            if (
+                candidate is not None
+                and candidate.owner == job.owner
+                and candidate.kind == JobKind.STORYBOARD
+            ):
+                found = candidate
+        except Exception:  # noqa: BLE001 — a store miss is "no words", never a 500
+            logger.warning("[film-words] could not read board %s", board_id)
+        boards[board_id] = found
+        return found
+
+    # ⚠ THE PROJECT'S OWN SOURCE FIRST, so a film header exists even for a
+    # project whose frames have since been replaced by uploads. The animatic
+    # records it when it is made from a board.
+    source_id = str((job.params or {}).get("source_storyboard_id") or "")
+    header_job = board_job(source_id) if source_id else None
+
+    filled = 0
+    for shot in shots:
+        src = shot.get("src")
+        if not isinstance(src, dict) or src.get("kind") not in ("panel", "pose"):
+            continue
+        board_id = str(src.get("storyboard_id") or "")
+        index = src.get("index")
+        if not board_id or not isinstance(index, int):
+            continue
+        found = board_job(board_id)
+        if found is None:
+            continue
+        header_job = header_job or found
+        panel = panel_for_index(found, index)
+        if not panel:
+            continue
+        # ⚠ ONLY WHERE THE USER LEFT A BLANK. A description they typed on the
+        # timeline is what they mean this shot to be; the panel's is only what it
+        # started as.
+        if not _film_text(shot.get("description"), 1):
+            described = _film_text(panel.get("description"), FILM_DESCRIPTION_CHARS)
+            if described:
+                shot["description"] = described
+                filled += 1
+        if not _film_text(shot.get("location"), 1):
+            where = _film_text(panel.get("location"), 80)
+            if where:
+                shot["location"] = where
+
+    out["shots"] = shots
+
+    if header_job is not None:
+        params = header_job.params or {}
+        market = params.get("market") if isinstance(params.get("market"), dict) else {}
+        film = {
+            # ⚠ THE BOARD'S TITLE, NOT THE PROJECT'S. A film exported from a
+            # board is called "Untitled Project" until somebody renames it, and
+            # the board it came from has had the real name all along.
+            "title": _film_text(header_job.character_name, 120),
+            "genre": _film_text(params.get("genre"), 60),
+            "world": _world_text(params.get("world")),
+            # The top of the script. Not the whole thing: what the film IS, said
+            # once, is what a sound or a treatment decision needs.
+            "logline": _film_text(params.get("script"), FILM_LOGLINE_CHARS),
+            "market": _film_text(
+                (market or {}).get("label") or (market or {}).get("country"), 60
+            ),
+            "language": _film_text((market or {}).get("language"), 40),
+        }
+        if any(film.values()):
+            out["film"] = film
+
+    if filled:
+        logger.info(
+            "[film-words] %s: filled %d of %d shot description(s) from the board.",
+            job.job_id, filled, len(shots),
+        )
+    return out

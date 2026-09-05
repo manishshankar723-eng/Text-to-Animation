@@ -13,7 +13,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { clamp } from "./util.js";
-import { duckEnvelope, envelopeAt, eqGains, fadeGainAt, trackWindow } from "./audio_mix.js";
+import {
+  clockRead,
+  duckEnvelope,
+  envelopeAt,
+  eqGains,
+  fadeGainAt,
+  trackWindow,
+} from "./audio_mix.js";
 import { clipId } from "./audio_clips.js";
 import { applyTrackAudio, resumeAudio } from "./audio_engine.js";
 
@@ -26,6 +33,9 @@ const DRIFT_MS = 120;
 // frames out costs a re-decode you can hear, and nothing here is sample-locked
 // anyway. Only ever applied to a follower — see `syncTracks`.
 const AUDIO_DRIFT_MS = 200;
+
+// The master clock's own guard lives in `audio_mix.js` beside the mix it feeds
+// — see `clockRead` and `CLOCK_STALL_MS` there for the bug it exists for.
 
 // Put one element at the given video time.
 //
@@ -216,6 +226,25 @@ export default function useTimelineTransport({
   const playingRef = useRef(false);
   const rateRef = useRef(1);
 
+  // What each element's clock last read, and when. A WeakMap for the same reason
+  // `appliedRef` is one: an element that leaves the page must not be held here.
+  const clockSeenRef = useRef(new WeakMap());
+
+  /**
+   * IS THIS ELEMENT'S CLOCK ACTUALLY RUNNING? — the guard between "unpaused"
+   * and "playing", which are not the same thing. See `CLOCK_STALL_MS`.
+   *
+   * Two ways to fail: it has decoded nothing yet (`readyState` below
+   * HAVE_CURRENT_DATA), or it has been sitting on one timestamp for longer than
+   * a stall is worth waiting for. Either way it is not something to tell the
+   * time by.
+   */
+  const advancing = useCallback((el, now) => {
+    const { usable, seen } = clockRead(el, clockSeenRef.current.get(el), now);
+    if (seen) clockSeenRef.current.set(el, seen);
+    return usable;
+  }, []);
+
   const syncTracks = useCallback(
     (videoMs) => {
       // The SPAN, for the same reason `gainAt` uses it: which clips are running
@@ -311,10 +340,18 @@ export default function useTimelineTransport({
       // Shuttling (J/L) is wall-clock only: a browser cannot play an <audio>
       // element backwards at all, and reading currentTime as the clock while
       // scrubbing at 4x fights the element rather than following it.
+      // ⚠ "GENUINELY PLAYING" MEANS ITS CLOCK IS MOVING, not merely that nobody
+      // paused it. An element still loading is unpaused and stuck at 0, and
+      // taking the time off one froze the playhead where it stood. See
+      // `CLOCK_STALL_MS`.
       const master =
         rate === 1
           ? liveTracks().find(
-              ({ el }) => !el.paused && !el.ended && !Number.isNaN(el.currentTime)
+              ({ el }) =>
+                !el.paused &&
+                !el.ended &&
+                !Number.isNaN(el.currentTime) &&
+                advancing(el, now)
             )
           : null;
       let t;
@@ -363,7 +400,7 @@ export default function useTimelineTransport({
 
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playing, spanMs, liveTracks, rate, playFrom, playTo, applyGains, syncTracks]);
+  }, [playing, spanMs, liveTracks, rate, playFrom, playTo, applyGains, syncTracks, advancing]);
 
   const stopPlayback = useCallback(() => {
     for (const { el } of liveTracks()) {

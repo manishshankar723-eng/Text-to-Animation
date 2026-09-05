@@ -71,30 +71,51 @@
 // and no Freesound key. The runner owns the async — one server call — and this
 // owns every decision that call's result leads to.
 
+// ⚠ THE ONE IMPORT, AND IT IS A PURE SIBLING. `MAX_AUDIO_FILES` is the project's
+// audio-file ceiling and it is mirrored from the server; this pass needs it to
+// know how many distinct sounds there is actually room for. Nothing in
+// `audio_clips.js` touches React, the network or the editor, so the "no browser,
+// no backend" promise above still holds and the node harness still runs.
+import { audioFileCount, MAX_AUDIO_FILES } from "../audio_clips.js";
+
 /** The include flags phases D and E answer to. Both are in `INCLUDE_KEYS`. */
 export const SFX_KEY = "sfx";
 export const MUSIC_KEY = "music";
 
 /**
- * HOW MANY DISTINCT SOUNDS ONE RUN MAY FETCH.
+ * HOW MANY DISTINCT SOUNDS ONE RUN MAY FETCH — **the room the project has**,
+ * and nothing tighter than that.
  *
- * ⚠ IT IS A BUDGET, NOT A TASTE RULE, and the budget is somebody else's. A free
- * Freesound key allows 60 requests a MINUTE for the whole deployment, and each
- * distinct cue costs two of them (one search, one metadata read before the CDN
- * download). Ten cues is twenty requests — one run, comfortably inside the
- * minute, leaving room for the person browsing the Sounds tab in the next tab
- * along. A 60-shot board with a cue on every shot would spend the entire
- * deployment's budget on one press.
+ * ⚠ IT WAS A FLAT TEN AND THE TEN WAS THE WRONG KIND OF NUMBER. The old note
+ * here argued the Freesound budget (60 requests a minute for the deployment) and
+ * chose ten. But that budget belongs to the SERVER, the server already handles
+ * running out of it — a rate-limited cue comes back in `skipped` with "try again
+ * in a minute" and every sound already filed stays on the timeline
+ * (`build_soundtrack`) — and meanwhile a user who cued fourteen shots was told
+ * *"one pass fetches at most 10 different sounds"* four times, about a project
+ * with room for thirty-four more files. A ceiling that refuses work the system
+ * can actually do is a rule the user has to argue with.
+ *
+ * ⚠ SO THE ONLY CEILING LEFT IS A REAL ONE: how many audio FILES this project
+ * can still hold (`MAX_AUDIO_FILES`, mirrored from the server's own cap). The
+ * caller passes the room it actually has; this is the fallback for a caller
+ * that does not know. Ask for fourteen sounds on an empty project and fourteen
+ * is what you get.
  *
  * ⚠ AND IT IS DISTINCT SOUNDS, NOT CLIPS. Six shots that all cue "footsteps on
  * gravel" are one search, one download, one file and six clips — which is also
  * the right FILM: one recording of gravel is a place, six different ones is six
  * places.
  */
-export const MAX_SFX_SOUNDS = 10;
+export const MAX_SFX_SOUNDS = MAX_AUDIO_FILES;
 
-/** And how many places they may be laid down. A clip is free; a fetch is not. */
-export const MAX_SFX_CLIPS = 32;
+/**
+ * And how many places they may be laid down. A clip is free; a fetch is not.
+ *
+ * ⚠ IT STILL HAS TO KEEP ONE RUN UNDER `MAX_ANIMATIC_AUDIO_CLIPS` (120): 64
+ * effects plus up to 32 music loops plus a razored voiceover is inside it.
+ */
+export const MAX_SFX_CLIPS = 64;
 
 /**
  * HOW LOUD, AND THE MUSIC'S TWO ANSWERS.
@@ -123,6 +144,37 @@ export const MUSIC_FADE_OUT_MS = 2500;
 export const SFX_FADE_MS = 40;
 
 /**
+ * HOW LONG A SOUND EFFECT IS HEARD FOR — its shot, plus a little ring-out.
+ *
+ * ⚠ THIS USED TO BE "THE WHOLE FILE" AND IT MADE THE FEATURE UNUSABLE. Every
+ * clip was written with `trim_ms: 0`, which means "play to the end of the
+ * recording", and a Freesound preview runs 20-30 seconds while a storyboard
+ * shot runs two. So ten cues on a 28-second film were ten recordings playing
+ * over each other from the moment each began — reported from the screen: *"sab
+ * ek dusre ke clip ke upar tha aur sabka awaz aa raha tha"*, with the clips
+ * visibly running off the end of their own shots on the timeline.
+ *
+ * ⚠ THE FILE ALREADY KNEW THE ANSWER AND THREW IT AWAY. `sfxCues` measures
+ * `hold_ms` — how long the cued shot actually holds — for every cue, and
+ * `sfxPlacements` never read it. The number was taken and not used.
+ *
+ * ⚠ AND IT IS A SHOT PLUS A TAIL, NOT A GATE ON THE CUT. The note over
+ * `sfxPlacements` was right that a slam ringing over the next cut is how sound
+ * works, and it is kept: the tail is what carries the ring past the edit. What
+ * is refused is a ring that outlives the NEXT CUE — a sound still playing when
+ * its replacement starts is not sound design, it is two sounds. So the tail is
+ * clamped to whatever room is left before the next cue on the lane.
+ */
+export const SFX_TAIL_MS = 600;
+
+/**
+ * The shortest trim the SERVER will accept — `AnimaticAudio.trim_ms` is
+ * `ge=100`, and the same floor the razor uses (`MIN_CLIP_MS`). ⚠ A trim below
+ * it is not a short clip, it is a 422 on the whole document; see `audioForSave`.
+ */
+const MIN_TRIM_MS = 100;
+
+/**
  * THE LENGTH BOUNDS, AND THEY ARE PREFERENCES RATHER THAN REQUIREMENTS.
  *
  * ⚠ BOTH WERE FAR TIGHTER AND BOTH HELPED MAKE A FILM SILENT. 8 seconds for an
@@ -145,6 +197,24 @@ export const MUSIC_MIN_SECONDS = 5;
 /** What the two lanes are called on the timeline. The user renames them freely. */
 export const SFX_LANE_NAME = "Sound FX";
 export const MUSIC_LANE_NAME = "Music";
+
+/**
+ * HOW MANY NEW SOUNDS THIS PROJECT CAN STILL TAKE.
+ *
+ * ⚠ THE ONE PLACE THE ARITHMETIC IS DONE, because both callers got it wrong by
+ * not doing it at all: each used a flat ten and neither looked at the timeline.
+ * Files already on it are counted (a razored take is one FILE however many
+ * clips it is), and one slot is held back for the music bed when there is going
+ * to be one — a bed that arrives to find the effects have taken every slot is
+ * the film losing the thing it most obviously needed.
+ *
+ * @param audioTracks the project's clips as they stand
+ * @param music       is a bed going to be asked for in this same pass
+ */
+export function soundRoom({ audioTracks, music } = {}) {
+  const used = audioFileCount(audioTracks || []);
+  return Math.max(1, MAX_AUDIO_FILES - used - (music ? 1 : 0));
+}
 
 /**
  * A cue's KEY — what makes two cues the same sound.
@@ -178,12 +248,17 @@ export function cueKey(query) {
  * "whoosh" for every cut out of arithmetic would be the rules planner having an
  * opinion about the story, which is the one thing it does not have.
  */
-export function sfxCues({ analysis, frames, starts } = {}) {
+export function sfxCues({ analysis, frames, starts, room } = {}) {
   const row = frames || [];
   const at = starts || [];
   const cues = [];
   const skipped = [];
   const sounds = new Map();
+  // ⚠ THE CALLER'S ROOM WINS, and it is the project's, not this file's. A caller
+  // that knows how many audio files are already on the timeline passes what is
+  // left; one that doesn't gets the whole ceiling. Never below 1 — a project
+  // with no room at all still needs each refusal to say so by name.
+  const ceiling = Math.max(1, Math.round(Number(room) || MAX_SFX_SOUNDS));
 
   for (const shot of (analysis && analysis.shots) || []) {
     const query = String((shot && shot.sfx) || "").trim();
@@ -198,13 +273,17 @@ export function sfxCues({ analysis, frames, starts } = {}) {
     if (!key) continue;
     // ⚠ THE BUDGET IS SPENT ON DISTINCT SOUNDS, so a repeat of one already in
     // the list is free and is never refused. Only a NEW sound can hit the cap.
-    if (!sounds.has(key) && sounds.size >= MAX_SFX_SOUNDS) {
+    if (!sounds.has(key) && sounds.size >= ceiling) {
       skipped.push({
         shot: shot.shot,
         query,
+        // ⚠ THE REASON IS NOW A FACT ABOUT THE PROJECT, NOT A HOUSE RULE. "The
+        // budget allows ten" was something the user could only disagree with;
+        // "this project holds N audio files and they are used" is something they
+        // can act on — delete a sound, or reuse a cue's wording.
         why:
-          `this run already fetches ${MAX_SFX_SOUNDS} different sounds, which is all ` +
-          "the shared sound-library budget allows in one pass",
+          `this project can hold ${ceiling} audio file${ceiling === 1 ? "" : "s"} and ` +
+          "they are all taken — reuse an earlier cue's wording, or remove a sound",
       });
       continue;
     }
@@ -473,12 +552,36 @@ export function sfxPlacements({ cues, imported } = {}) {
   const found = importedBy(imported);
   const clips = [];
   const missing = [];
+  // Where the NEXT cue on this lane begins, so a ring-out can be cut off by its
+  // replacement rather than played underneath it. Every sound effect goes on one
+  // lane (`placeSoundtrack`), so "the next cue" is the next one in time.
+  const starts = [...new Set((cues || []).map((c) => Math.max(0, Math.round(c.at_ms || 0))))].sort(
+    (a, b) => a - b
+  );
+  const nextAfter = (at) => {
+    for (const s of starts) if (s > at) return s;
+    return null;
+  };
   for (const cue of cues || []) {
     const file = found.get(cue.key);
     if (!file) {
       missing.push({ shot: cue.shot, query: cue.query, why: "no usable sound was found for it" });
       continue;
     }
+    const fileMs = Math.max(0, Math.round(Number(file.duration_ms) || 0));
+    const at = Math.max(0, Math.round(cue.at_ms || 0));
+    const hold = Math.max(0, Math.round(Number(cue.hold_ms) || 0));
+    // The shot, plus the ring — then cut back by whichever comes first: the next
+    // cue, or the end of the recording.
+    let play = hold + SFX_TAIL_MS;
+    const next = nextAfter(at);
+    if (next !== null) play = Math.min(play, next - at);
+    if (fileMs > 0) play = Math.min(play, fileMs);
+    play = Math.max(MIN_TRIM_MS, Math.round(play));
+    // ⚠ `null`, NOT `0`, WHEN THE WHOLE FILE FITS. The schema reads absent as
+    // "play it all" and refuses 0 outright (`ge=100`) — the zero that used to be
+    // written here refused every SAVE of the project, not just this clip.
+    const trim = fileMs > 0 && play >= fileMs ? null : play;
     clips.push({
       upload_id: file.upload_id,
       filename: file.filename || "",
@@ -489,12 +592,14 @@ export function sfxPlacements({ cues, imported } = {}) {
       // `SoundtrackItem`: a sound found by widening the query is an answer to a
       // different question, and the user has to be able to see which.
       relaxedTo: file.relaxed_to || "",
-      start_ms: cue.at_ms,
+      start_ms: at,
       offset_ms: 0,
-      trim_ms: 0,
+      trim_ms: trim,
       volume: SFX_VOLUME,
       fade_in_ms: SFX_FADE_MS,
-      fade_out_ms: SFX_FADE_MS,
+      // The ramp has to fit inside what is actually heard, or a 40ms fade on a
+      // clip trimmed to 100ms is most of the sound.
+      fade_out_ms: Math.min(SFX_FADE_MS, Math.round((trim ?? (fileMs || play)) / 4)),
       // Carried for the log line the panel prints, never for the mix.
       shot: cue.shot,
       query: cue.query,
@@ -551,7 +656,8 @@ export function musicPlacement({ cue, imported, totalMs, underSpeech } = {}) {
         {
           ...base,
           start_ms: 0,
-          trim_ms: 0,
+          // null = the whole file. ⚠ NEVER 0 — see `sfxPlacements`.
+          trim_ms: null,
           fade_in_ms: MUSIC_FADE_IN_MS,
           fade_out_ms: MUSIC_FADE_OUT_MS,
         },
@@ -576,8 +682,10 @@ export function musicPlacement({ cue, imported, totalMs, underSpeech } = {}) {
     clips.push({
       ...base,
       start_ms: at,
-      // Only the final clip is cut, and only when it genuinely overruns.
-      trim_ms: last && room < length ? room : 0,
+      // Only the final clip is cut, and only when it genuinely overruns. ⚠ The
+      // uncut ones are `null` ("the whole file"), never 0 — a 0 is refused by
+      // `AnimaticAudio.trim_ms` and takes the entire save down with it.
+      trim_ms: last && room < length ? Math.max(MIN_TRIM_MS, room) : null,
       fade_in_ms: at === 0 ? MUSIC_FADE_IN_MS : 0,
       fade_out_ms: last ? Math.min(MUSIC_FADE_OUT_MS, room) : 0,
     });

@@ -86,6 +86,37 @@ const NUMBERS = [
   },
 ];
 
+// ⚠ THE SAVED CONVERSATIONS, AND THESE ARE THE OPERATOR'S NUMBERS. Not model
+// cost — storage — which is why they are their own group rather than three more
+// rows under "What one message costs". Asked for outright: *"isme admin panel mai
+// v daalo, mai limit set kar dunga, mai jitna daalun wahi hona chahiye"*.
+const KEEPING = [
+  {
+    id: "max_chats_per_project",
+    label: "Chats per project",
+    note:
+      "How many separate conversations one project may hold. 0 means no limit. " +
+      "Past it a new chat is refused out loud — an existing one is never deleted " +
+      "to make room.",
+  },
+  {
+    id: "chat_history_keep",
+    label: "Messages kept per chat",
+    note:
+      "Past this the OLDEST messages fall off the saved conversation. The person " +
+      "still sees them until they reload. This is what is kept, not what is sent " +
+      "to the model — that is 'Messages sent as context' above.",
+  },
+  {
+    id: "max_chat_chars",
+    label: "Size of one chat",
+    note:
+      "Characters of stored text. A guard on a pasted script, not a message " +
+      "count. Over it the save is refused and the panel says so; nothing is cut.",
+    step: 10000,
+  },
+];
+
 export default function AdminChat() {
   const [row, setRow] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -488,6 +519,68 @@ export default function AdminChat() {
             />
           </label>
         </div>
+      </section>
+
+      {/* ============================================= what a project keeps == */}
+      {/* ⚠ THE SAVED CONVERSATIONS, AND THESE THREE NUMBERS ARE THE OPERATOR'S.
+          They were environment variables for half a day, which meant only
+          somebody with a shell could change them — asked for outright: *"isme
+          admin panel mai v daalo, mai limit set kar dunga, mai jitna daalun wahi
+          hona chahiye, mai handle kar lunga"*.
+
+          ⚠ AND WHAT IS TYPED HERE IS WHAT IS ENFORCED. The bounds beside each
+          field are the width of the input, not a second opinion about the
+          answer — they come off the server's own `LIMITS` (see the note at the
+          top of this file), so the browser and the store cannot disagree about
+          what is legal. Nothing is quietly turned into something else. */}
+      <section className="card admin-card">
+        <div className="admin-section-head">
+          <div>
+            <h2 className="admin-h2">What a project keeps</h2>
+            <p className="muted tiny admin-group-blurb">
+              Every conversation is saved with the project it was about, so it is
+              there on another computer and survives clearing site data. These
+              decide how much of it is kept. Nothing here costs anything to run —
+              it is storage, not model calls.
+            </p>
+          </div>
+        </div>
+        <div className="admin-rollout">
+          {KEEPING.map((field) => {
+            const bound = bounds[field.id] || {};
+            return (
+              <label key={field.id} className="admin-rollout-row wide">
+                <span>
+                  <strong>{field.label}</strong>
+                  <span className="muted tiny"> — {field.note}</span>
+                </span>
+                <input
+                  className="admin-search admin-chat-num"
+                  type="number"
+                  min={bound.min}
+                  max={bound.max}
+                  step={field.step || 1}
+                  value={s[field.id] ?? ""}
+                  disabled={!!busy}
+                  onChange={(e) => save({ [field.id]: Number(e.target.value) })}
+                />
+                <span className="muted tiny">
+                  {bound.min}–{bound.max}
+                </span>
+              </label>
+            );
+          })}
+        </div>
+        {/* ⚠ WHAT GOING OVER EACH ONE ACTUALLY DOES, IN WORDS. Two of these three
+            refuse and one drops the oldest messages, and an operator setting them
+            has no way to know which is which from a number field. */}
+        <p className="muted tiny admin-note">
+          Over the chat count, a new chat is refused and says so — chats nobody
+          ever typed in are swept first, but a real conversation is never deleted
+          to make room. Over the size, the save is refused and the panel says it
+          is not being saved; nothing is silently cut in half. Only the messages
+          kept per chat drops anything, and it drops the oldest.
+        </p>
       </section>
 
       {/* ==================================================== the greeting == */}

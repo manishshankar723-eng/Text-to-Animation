@@ -74,6 +74,8 @@ def check(label, good, detail=""):
 HARNESS = """
 import {
   MAX_SFX_SOUNDS,
+  SFX_TAIL_MS,
+  soundRoom,
   MUSIC_MIN_SECONDS,
   SFX_MAX_SECONDS,
   MUSIC_FADE_IN_MS,
@@ -229,6 +231,61 @@ out.budget = {
   keys: [...new Set(budget.cues.map((c) => c.key))].length,
   skipped: budget.skipped.map((s) => ({ shot: s.shot, query: s.query })),
 };
+// ⚠ AND THE SAME BOARD ON A PROJECT WITH ALMOST NO ROOM LEFT. The ceiling is the
+// CALLER'S now — how many audio FILES the project can still hold — so this is
+// what a real refusal looks like, and it must still never fall on a repeat.
+const tight = sfxCues({
+  analysis: manyReading,
+  frames: many.frames,
+  starts: many.starts,
+  room: 4,
+});
+out.tight = {
+  sounds: tight.sounds.length,
+  gravel: tight.cues.filter((c) => c.key === cueKey("footsteps on gravel")).length,
+  skipped: tight.skipped.map((s) => ({ shot: s.shot, query: s.query, why: s.why })),
+};
+// The arithmetic itself: a file already on the timeline counts ONCE however many
+// clips read it, and a slot is held back for the bed.
+out.room = {
+  empty: soundRoom({ audioTracks: [], music: false }),
+  bed: soundRoom({ audioTracks: [], music: true }),
+  used: soundRoom({
+    audioTracks: [{ upload_id: "a" }, { upload_id: "a" }, { upload_id: "b" }],
+    music: true,
+  }),
+};
+
+// =========================================================================
+// 4b. HOW LONG A SOUND EFFECT IS HEARD FOR
+// =========================================================================
+// ⚠ THE FAILURE THIS PINS: every clip was written `trim_ms: 0` — "play to the
+// end of the recording" — so ten cues on a 28-second film were ten 30-second
+// recordings playing over each other from the moment each began, with the clips
+// visibly running off the end of their own shots on the timeline. `hold_ms` was
+// measured for every cue and then thrown away.
+const holdCues = sfxCues({
+  analysis: {
+    shots: [
+      { shot: 1, sfx: "wind blowing" },
+      { shot: 2, sfx: "footsteps gravel" },
+      { shot: 5, sfx: "door creak" },
+    ],
+  },
+  frames: many.frames,
+  starts: many.starts,
+});
+out.holds = sfxPlacements({
+  cues: holdCues.cues,
+  imported: filed([
+    { key: cueKey("wind blowing"), ms: 30000 },
+    { key: cueKey("footsteps gravel"), ms: 30000 },
+    // A recording SHORTER than its shot — it must be left whole, not padded.
+    { key: cueKey("door creak"), ms: 300 },
+  ]),
+}).clips.map((c) => ({ start: c.start_ms, trim: c.trim_ms, fout: c.fade_out_ms }));
+out.tail = SFX_TAIL_MS;
+out.shotMs = 2000;
 // One request, one row per DISTINCT sound, plus the bed when there is one.
 // ⚠ AND THE LENGTH BOUNDS ARE WIDE ENOUGH TO BE TRUE RATHER THAN NARROW ENOUGH
 // TO BE A FILTER. 8s for an effect and a 12s FLOOR for the bed were half of why
@@ -436,8 +493,12 @@ def check_js(data):
           loop["uploads"] == 1, str(loop["uploads"]))
     check("⚠ the LAST clip is trimmed to the 10s of film left",
           loop["clips"][-1]["trim"] == 10000, json.dumps(loop["clips"][-1]))
-    check("...and no other clip is trimmed at all",
-          [c["trim"] for c in loop["clips"][:-1]] == [0, 0, 0],
+    # ⚠ `None`, NOT `0`. `AnimaticAudio.trim_ms` is `int | None` with `ge=100`:
+    # absent means "play the whole file" and 0 is neither absent nor >= 100, so
+    # the zero this used to assert refused the SAVE of any project the pass had
+    # touched — every field of it, not just the clip. See `audioForSave`.
+    check("...and no other clip is trimmed at all (null, never 0)",
+          [c["trim"] for c in loop["clips"][:-1]] == [None, None, None],
           json.dumps([c["trim"] for c in loop["clips"]]))
     check("the bed fades IN once, on the first clip only",
           [c["fin"] for c in loop["clips"]] == [data["fades"]["in"], 0, 0, 0],
@@ -446,8 +507,8 @@ def check_js(data):
           [c["fout"] for c in loop["clips"]] == [0, 0, 0, data["fades"]["out"]],
           json.dumps([c["fout"] for c in loop["clips"]]))
     check("an exact fit needs no trim on any clip",
-          data["exact"] == [{"start": 0, "trim": 0}, {"start": 20000, "trim": 0},
-                            {"start": 40000, "trim": 0}],
+          data["exact"] == [{"start": 0, "trim": None}, {"start": 20000, "trim": None},
+                            {"start": 40000, "trim": None}],
           json.dumps(data["exact"]))
     check("a file of unknown length is laid ONCE, never looped forever",
           data["unknown"] == 1, str(data["unknown"]))
@@ -467,22 +528,34 @@ def check_js(data):
           json.dumps(data["levels"]))
 
     print("\n⚠ THE BUDGET IS DISTINCT SOUNDS, NOT CLIPS — the shared library allows\n"
-          "  60 requests a minute for the whole deployment.\n")
+          "  ⚠ AND THE CEILING IS THE PROJECT'S ROOM NOW, NOT A HOUSE NUMBER — a\n"
+          "  flat ten told a 14-shot board it could have 10, four times over.\n")
     b = data["budget"]
-    check(f"no more than {b['cap']} distinct sounds are fetched",
-          b["sounds"] == b["cap"], str(b["sounds"]))
+    check("a 14-shot board asking for 12 distinct sounds gets all 12",
+          b["sounds"] == 12 and b["cues"] == 14 and not b["skipped"],
+          f"sounds={b['sounds']} cues={b['cues']} skipped={json.dumps(b['skipped'])}")
     check("the three differently-punctuated repeats are ONE sound",
-          b["gravel"] == 3 and b["keys"] == b["cap"],
+          b["gravel"] == 3 and b["keys"] == 12,
           f"gravel={b['gravel']} keys={b['keys']}")
-    check("...and a repeat is never what gets refused",
-          all("gravel" not in (s["query"] or "") for s in b["skipped"]),
-          json.dumps(b["skipped"]))
-    check("everything over the cap is skipped WITH A REASON, not dropped",
-          len(b["skipped"]) == 14 - b["cues"] and all(s["shot"] for s in b["skipped"]),
-          json.dumps(b["skipped"]))
+    check("⚠ the fallback ceiling is the project's audio-FILE cap, not a taste rule",
+          b["cap"] >= 32, str(b["cap"]))
+    t = data["tight"]
+    check("a project with room for 4 files fetches 4 and refuses the rest",
+          t["sounds"] == 4, str(t["sounds"]))
+    check("...and a repeat is STILL never what gets refused",
+          t["gravel"] == 3 and all("gravel" not in (s["query"] or "") for s in t["skipped"]),
+          json.dumps(t["skipped"]))
+    check("...with a reason that names the PROJECT, so the user can act on it",
+          bool(t["skipped"]) and all("this project can hold" in (s["why"] or "")
+                                     for s in t["skipped"]),
+          json.dumps(t["skipped"][:1]))
+    rm = data["room"]
+    check("the room is counted off the timeline: one file, however many clips",
+          rm["empty"] > rm["bed"] and rm["bed"] - rm["used"] == 2,
+          json.dumps(rm))
     r = data["request"]
     check("one request row per distinct sound, plus the bed",
-          r["withBed"] == b["cap"] + 1 and r["noBed"] == b["cap"],
+          r["withBed"] == b["sounds"] + 1 and r["noBed"] == b["sounds"],
           f"{r['withBed']} / {r['noBed']}")
     check("...and the bed is the one row marked 'music'",
           r["kinds"].count("music") == 1 and r["kinds"][-1] == "music",
@@ -505,6 +578,29 @@ def check_js(data):
     check("a cue nothing was found for is NAMED, never silently dropped",
           not nf["clips"] and len(nf["missing"]) == 1 and nf["missing"][0]["shot"] == 4,
           json.dumps(nf))
+
+    print("\n⚠ HOW LONG A SOUND EFFECT IS HEARD FOR — the clips used to be written\n"
+          "  'play the whole recording', so ten 30-second files played over each\n"
+          "  other under a 28-second film: \"sab ek dusre ke upar tha aur sabka\n"
+          "  awaz aa raha tha\", with the clips visibly past the end of their shots.\n")
+    h = data["holds"]
+    shot, tail = data["shotMs"], data["tail"]
+    check("a 30s recording on a 2s shot is TRIMMED, not left to play for 30s",
+          all(c["trim"] is None or c["trim"] <= shot + tail for c in h),
+          json.dumps(h))
+    check("⚠ and never into the next cue — a sound still playing when its\n"
+          "       replacement starts is two sounds, not sound design",
+          all(h[i]["start"] + (h[i]["trim"] or 0) <= h[i + 1]["start"]
+              for i in range(len(h) - 1)),
+          json.dumps(h))
+    check("...but it DOES ring past its own cut when there is room for it",
+          h[1]["trim"] == shot + tail, json.dumps(h[1]))
+    check("a recording shorter than its shot is left whole (null), never padded",
+          h[2]["trim"] is None, json.dumps(h[2]))
+    check("⚠ no clip carries trim_ms 0 — the value that refused every SAVE",
+          all(c["trim"] != 0 for c in h), json.dumps(h))
+    check("the fade out fits inside what is actually heard",
+          all(c["fout"] <= (c["trim"] or 30000) / 4 + 1 for c in h), json.dumps(h))
 
     print("\n⚠ EVERY 'NO' IS A REASON, because the panel prints it verbatim under\n"
           "  the tick box — a switch that changes nothing has to say why.\n")

@@ -31,6 +31,7 @@ Needs node and `client/node_modules`. Touches no backend and no dollar.
 import html
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -86,10 +87,34 @@ const base = {
   send() {}, choose() {}, apply() {}, revert() {}, clear() {}, setError() {},
 };
 
+// ⚠ THE SECOND STUB IS `useChatSessions`'s RETURN, FIELD FOR FIELD, for the
+// same reason the first one is the agent hook's: a field the panel reads that
+// the hook stops handing back throws HERE rather than in somebody's editor.
+const noChats = {
+  turns: [], sessions: [], active: null, activeId: "", limit: 40,
+  listing: false, opening: false, error: "", saves: true, full: false,
+  setTurns() {}, newChat() {}, open() {}, rename() {}, remove() {},
+  clearActive() {}, refresh() {},
+};
+
+const oneChat = {
+  ...noChats,
+  activeId: "s1",
+  active: { session_id: "s1", title: "Sound + transitions", turn_count: 3,
+            created_at: "", updated_at: "2026-09-05T11:00:00Z" },
+  sessions: [
+    { session_id: "s1", title: "Sound + transitions", turn_count: 3,
+      created_at: "", updated_at: "2026-09-05T11:00:00Z" },
+    { session_id: "s2", title: "", turn_count: 1,
+      created_at: "", updated_at: "2026-09-03T09:00:00Z" },
+  ],
+};
+
 const draw = (chat, extra = {}) =>
   renderToStaticMarkup(
     React.createElement(EditorChat, {
-      open: true, onClose() {}, chat, readCtx, dock: "right", greeting: "", ...extra,
+      open: true, onClose() {}, chat, store: oneChat, readCtx,
+      dock: "right", greeting: "", ...extra,
     })
   );
 
@@ -97,7 +122,9 @@ const out = {};
 
 // -------------------------------------------------------------- shut and open
 out.shut = renderToStaticMarkup(
-  React.createElement(EditorChat, { open: false, onClose() {}, chat: base, readCtx })
+  React.createElement(EditorChat, {
+    open: false, onClose() {}, chat: base, store: oneChat, readCtx,
+  })
 );
 out.empty = draw(base);
 
@@ -177,6 +204,47 @@ out.scored = draw({ ...base, revertable: "a1", turns: [{
 out.scoring = draw({ ...base, scoring: "Finding 2 sounds…", running: true, turns: [{
   ...soundTurn, applied: true, steps: 1,
 }] });
+
+// ------------------------------------------- one project, many conversations
+out.chatNamed = draw(base);
+// A panel that has never been spoken to: no chat exists yet, so there is
+// nothing to rename and the footer cannot promise it is saved.
+out.chatFresh = draw(base, { store: noChats });
+// The project itself does not exist yet either — the first message creates it.
+out.chatUnsaved = draw(base, { store: { ...noChats, saves: false } });
+// ⚠ A PROJECT WITH NO ROOM LEFT. The operator's ceiling is 1 and the one chat
+// there has been typed in, so the server would refuse another — `isFull` in
+// `chat_sessions.js` is what works that out, and the ＋ must ask BEFORE it opens
+// a blank panel.
+out.chatFull = draw(base, {
+  store: {
+    ...oneChat,
+    limit: 1,
+    sessions: [oneChat.sessions[0]],
+    full: true,
+  },
+});
+// The same project, but the panel is sitting on an UNSAVED chat — what happens
+// when the ceiling is lowered in the admin panel while somebody is part-way
+// through. Nothing here can be saved, and the footer has to say so.
+out.chatFullUnsaved = draw(base, {
+  store: {
+    ...oneChat,
+    limit: 1,
+    sessions: [oneChat.sessions[0]],
+    activeId: "",
+    active: null,
+    full: true,
+  },
+});
+// A chat being fetched. ⚠ THE GREETING MUST NOT SHOW HERE — an empty log under
+// the welcome text is what a BRAND NEW chat looks like, and showing it while an
+// old conversation is on its way says the chat came back empty.
+out.chatOpening = draw(base, { store: { ...oneChat, opening: true } });
+// The store is unreachable. The conversation still works; the footer says so.
+out.chatOffline = draw(base, {
+  store: { ...oneChat, error: "This chat is not being saved right now." },
+});
 
 // ----------------------------------------------------------- the three docks
 out.dockRight = draw(base, { dock: "right" });
@@ -366,6 +434,20 @@ def main() -> int:
           "left:" not in out["dockRight"].split(">")[0])
     check("the floating window has a corner to resize by",
           "ec-grip" in out["dockFloat"])
+    # ⚠ ALL FOUR SIDES AND ALL FOUR CORNERS — asked for outright: *"abhi ek taraf
+    # se hi chota bara karta hun, mai chahta hun charo taraf se"*. A handle that
+    # silently stops rendering is invisible until somebody tries to drag that
+    # edge, so every compass point is named here rather than counted.
+    for _edge in ("n", "s", "e", "w", "ne", "nw", "se", "sw"):
+        check(f"…and a handle on its {_edge} side",
+              f"ec-resize-{_edge}" in out["dockFloat"])
+    # ⚠ ONE TAB STOP, NOT EIGHT. The corner is the focusable one and the arrow
+    # keys on it already resize both axes; seven more stops between the composer
+    # and the page would be the cost of nothing.
+    check("…and only one of the eight is a tab stop",
+          out["dockFloat"].count("ec-resize ec-resize-") == 8
+          and out["dockFloat"].count("tabindex") == 1,
+          out["dockFloat"].count("tabindex"))
     check("…and it says so on hover, not in the panel",
           "Drag to resize" in out["dockFloat"])
     check("the title bar says it can be dragged",
@@ -377,6 +459,147 @@ def main() -> int:
     # this pins is that the seam is NEVER on the floating window, which has a
     # corner instead — two resize affordances on one panel is the bug.
     check("the floating window has no edge seam", "an-split" not in out["dockFloat"])
+
+    print("\n6c · One project, many chats — and the bar that moves between them\n")
+    # ⚠ THE WHOLE POINT OF THE FEATURE, AND THE PART A BROWSER TEST CANNOT SEE
+    # WITHOUT A LOGIN. Asked for outright: *"user new chat bana kar alag alag baat
+    # kar sake … aur sab chat save hona chahiye, us project mai dekh sake fir
+    # baad mai"*.
+    check("the chat bar is drawn", "ec-sess" in out["chatNamed"])
+    check("…carrying this chat's name", "Sound + transitions" in out["chatNamed"])
+    check("…a way to see the others", "Chats in this project" in out["chatNamed"])
+    check("…and a way to start a new one", "New chat" in out["chatNamed"])
+    # ⚠ THREE CONTROLS, NOT A TAB PER CHAT. A tab strip is the obvious reading of
+    # "tab ka function" and it is wrong for a 300–760px panel: two tabs fill it and
+    # the NAMES — the only thing telling two conversations apart — are the first
+    # thing it truncates. The list holds them at full length instead, so a SECOND
+    # chat in the store must add nothing at all to this row.
+    check("…and the bar does not grow a row per chat",
+          out["chatNamed"].count("ec-sess-btn") == 2,
+          out["chatNamed"].count("ec-sess-btn"))
+    # The list itself is a popover and opens on a click, which `renderToStaticMarkup`
+    # cannot do — its rows are covered by `tests/chat_store_check.mjs` instead.
+    check("…the list is shut until it is asked for", "ec-hist" not in out["chatNamed"])
+
+    # ⚠ A CHAT IS NOT CREATED UNTIL SOMEBODY SPEAKS IN IT, so a fresh panel has
+    # nothing to name and says so rather than offering a rename that goes nowhere.
+    check("a panel with no chat yet still draws the bar", "ec-sess" in out["chatFresh"])
+    check("…with the placeholder name", "New chat" in out["chatFresh"])
+    check("…and the rename is disabled, not hidden",
+          "ec-sess-name" in out["chatFresh"] and "disabled" in out["chatFresh"])
+
+    # ⚠ THE FOOTER USED TO SAY "saved in this browser only" AND THAT WAS TRUE.
+    # It is not any more — the conversation goes to the server with the project.
+    # A promise about somebody's work is the worst place to leave a stale string.
+    check("⚠ the footer no longer claims browser-only storage",
+          "saved in this browser only" not in out["chatNamed"])
+    check("…it says the chat is kept with the project",
+          "saved with this project" in out["chatNamed"])
+    check("…and on a project that does not exist yet, it says when",
+          "saved once you send the first message" in out["chatUnsaved"])
+    check("a store that is down says so in the footer, not in a modal",
+          "not being saved right now" in out["chatOffline"]
+          and "ec-foot-warn" in out["chatOffline"])
+
+    # ⚠ "OPENING…" RATHER THAN THE GREETING. An empty log under the welcome text
+    # is what a BRAND NEW chat looks like; showing it while an old conversation is
+    # still on its way says the chat came back empty.
+    check("a chat being fetched says it is opening", "Opening" in out["chatOpening"])
+    check("…and does NOT draw the new-chat greeting over it",
+          "ec-empty" not in out["chatOpening"])
+    check("…while a genuinely new chat does", "ec-empty" in out["chatNamed"])
+
+    print("\n6d · ⚠ THE RENAME BOX KEEPS WHAT IS TYPED INTO IT\n")
+    # ⚠ THIS SHIPPED BROKEN AND THE SYMPTOM WAS ABSURD: the box could never hold
+    # more than ONE character. Type "c", type "a", and it says "a". Reported
+    # exactly that way — *"ek letter likh raha hun, dusra letter likhta hun to
+    # pahla ko hata de raha hai"*.
+    #
+    # THE CAUSE: opening the box also SELECTS the old name — correct, because it
+    # opens over a name that is being replaced — and the select was re-running on
+    # every keystroke, so each new letter landed on a fully highlighted field and
+    # replaced what was already there.
+    #
+    # ⚠ AND THE APP ALREADY KNEW. `MediaBin.jsx`'s rename box carries this exact
+    # fix, with a comment naming this exact trap; this panel was written without
+    # reading it. It now uses the identical idiom — one way to open a rename box,
+    # not two.
+    #
+    # ⚠ IT CANNOT BE CAUGHT BY RENDERING. `renderToStaticMarkup` runs no effects
+    # and there is no DOM here — and jsdom is a dependency this project does not
+    # have and does not want (see the frontend section of AGENTS.md). So this
+    # reads the mechanism out of the source. Proved to FAIL with the guard
+    # removed.
+    src_text = (CLIENT / "src/components/EditorChat.jsx").read_text(encoding="utf-8")
+    bin_text = (CLIENT / "src/components/MediaBin.jsx").read_text(encoding="utf-8")
+
+    check(
+        "the rename box is a controlled input",
+        bool(re.search(r'className="ec-sess-input".*?value=\{(\w+)\}', src_text, re.S)),
+    )
+
+    # The ref callback that opens THAT box — read as the text between `ref={(el)`
+    # and the `ec-sess-input` class, so this cannot accidentally test some other
+    # field's focus code.
+    m_ref = re.search(
+        r"ref=\{\(el\) => \{(.*?)\}\}.*?className=\"ec-sess-input\"", src_text, re.S
+    )
+    check("it focuses itself when it opens", bool(m_ref))
+    body = m_ref.group(1) if m_ref else ""
+    check("…and selects the old name, so it need not be cleared first",
+          ".select()" in body)
+    # ⚠ THE ONE THAT ACTUALLY REGRESSED. A ref callback runs on EVERY render, so
+    # an unguarded select() re-highlights the field after each letter.
+    check("⚠ …GUARDED, so it does not re-select on every keystroke",
+          "document.activeElement !== el" in body,
+          " ".join(body.split())[:120])
+    # Plain autofocus lets the browser scroll the field into view — MediaBin's
+    # other reason for using a callback, and it applies here too.
+    check("…and it does not scroll the panel to do it", "preventScroll" in body)
+    # ⚠ ONE IDIOM, IN BOTH PLACES. Two ways to open a rename box in one app is two
+    # places to get this identical bug.
+    check("…the same idiom MediaBin's rename box already used",
+          "document.activeElement !== el" in bin_text)
+
+    print("\n6e · ⚠ A FULL PROJECT REFUSES ＋ BEFORE IT OPENS A BLANK PANEL\n")
+    # ⚠ THIS SHIPPED MISSING AND WAS REPORTED FROM A LIVE DEPLOYMENT. With the
+    # operator's ceiling set to 1 and one real chat already saved, ＋ answered
+    # with a cheerful empty "New chat" — and the refusal only arrived once a
+    # whole message had been typed and the autosave came back 409:
+    # *"maine admin panel mai ek likha, to yaha pe new chat open hua — kya ye
+    # sahi hai?"*. It was not: the panel promised a chat it could not save.
+    # ⚠ THE ＋ BUTTON'S OWN TAG, NOT THE WHOLE PANEL. The composer's Send is
+    # disabled whenever the box is empty, so "is there a `disabled` anywhere"
+    # answers yes on every render and proves nothing.
+    def plus_tag(markup):
+        m = re.search(r'<button[^>]*aria-label="New chat"[^>]*>', markup)
+        return m.group(0) if m else ""
+
+    check("the ＋ is live when there is room", bool(plus_tag(out["chatNamed"])))
+    check("…and not disabled", "disabled" not in plus_tag(out["chatNamed"]),
+          plus_tag(out["chatNamed"]))
+
+    # ⚠ DISABLED, NOT HIDDEN. A control that vanishes at a limit reads as a
+    # feature that broke; one that is visibly unavailable, with the reason on
+    # hover, is a rule somebody can act on.
+    check("⚠ a full project greys the ＋ out", "disabled" in plus_tag(out["chatFull"]),
+          plus_tag(out["chatFull"]))
+    check("…and it is still on screen", bool(plus_tag(out["chatFull"])))
+    # The way out is in the sentence — this is the only place it is said, and it
+    # is said on hover rather than as another line of chrome in a narrow panel.
+    check("…saying why, and how to get out of it",
+          "delete one to start another" in out["chatFull"])
+
+    # ⚠ AND THE FOOTER SAYS IT BEFORE A WORD IS TYPED when the panel is sitting on
+    # an unsaved chat in a full project — the ceiling can be lowered in the admin
+    # panel while somebody is part-way through, and "saved with this project"
+    # would then be a promise this panel cannot keep.
+    check("⚠ an unsaved chat in a full project does not promise it is saved",
+          "saved with this project" not in out["chatFullUnsaved"])
+    check("…it says the project is full instead",
+          "delete one to save this" in out["chatFullUnsaved"])
+    check("…in the warning colour, because it is a promise it cannot keep",
+          "ec-foot-warn" in out["chatFullUnsaved"])
 
     print("\n6b · How see-through it is, and whose decision that is\n")
     check("the operator's number reaches the panel", "--ec-opacity:60" in

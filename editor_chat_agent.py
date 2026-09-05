@@ -227,7 +227,33 @@ def board_digest(board: dict, detail_limit: int = 60) -> str:
     # same time on two different rows. See `boardFrom` for the whole story.
     layers = [row for row in (board.get("layers") or []) if isinstance(row, dict)]
 
-    lines = [
+    # ⚠ WHAT THE FILM IS, BEFORE WHAT IS ON THE TIMELINE. Filled in by
+    # `fill_board_words` on the server from the board this project was made
+    # from — the browser has none of it. It is first because it is the question
+    # every treatment decision depends on and the one the model used to answer
+    # by guessing: handed "Shot 1 … Shot 14" and nothing else, a Diwali puja
+    # board came back scored with "mouse click", "digital beep" and a bed of
+    # "upbeat energetic corporate pop vlog".
+    film = board.get("film") if isinstance(board.get("film"), dict) else {}
+    lines: list[str] = []
+    if any(film.values()):
+        lines.append("WHAT THIS FILM IS:")
+        for key, label in (
+            ("title", "Called"),
+            ("genre", "Kind of film"),
+            ("world", "Its world"),
+            ("market", "Made for"),
+            ("language", "Its language"),
+        ):
+            value = _clip(film.get(key), 200)
+            if value:
+                lines.append(f"- {label}: {value}")
+        logline = _clip(film.get("logline"), 400)
+        if logline:
+            lines.append(f"- What it is about: {logline}")
+        lines.append("")
+
+    lines += [
         "THE TIMELINE, RIGHT NOW:",
         f"- Title: {_clip(board.get('title'), 120) or '(untitled)'}",
         f"- {total} shot(s), {_ms(board.get('total_ms'))} total, "
@@ -271,6 +297,12 @@ def board_digest(board: dict, detail_limit: int = 60) -> str:
         label = _clip(shot.get("label"), SHOT_LABEL_CHARS)
         if label:
             bits.append(label)
+        # WHERE IT HAPPENS, from the panel this frame came from. Short, and in
+        # front of the description because a location is the single most useful
+        # word there is for deciding what a shot SOUNDS like.
+        where = _clip(shot.get("location"), 60)
+        if where:
+            bits.append(f"({where})")
         body = _clip(shot.get("description"), SHOT_TEXT_CHARS)
         if body:
             bits.append(f"— {body}")
@@ -289,6 +321,26 @@ def board_digest(board: dict, detail_limit: int = 60) -> str:
         # ⚠ The digest is newline-shaped and `_clip` collapses whitespace, so it
         # is taken from the board unflattened — the bullet list is the point.
         lines.append(str(board.get("sound")).strip()[:2000])
+
+    # ⚠ BLINDNESS IS STATED, NOT LEFT TO BE INFERRED — and this line is the whole
+    # difference between a wrong answer and a good question. A project made from
+    # uploads, or from a board that has since been deleted, genuinely has no
+    # words in it: every shot is "Shot 7, 2.0s" and nothing more. A model given
+    # that and asked for sound will fill the hole with the average stock video —
+    # whooshes, beeps, clicks, "corporate pop vlog" — and sound completely
+    # confident doing it. Told that it is blind, it has two honest moves instead,
+    # and it has both: `look` at the pictures, or `ask` what the film is.
+    described = sum(1 for s in shots if isinstance(s, dict) and str(s.get("description") or "").strip())
+    if total and not described and not any(film.values()):
+        lines.append("")
+        lines.append(
+            "⚠ NOTHING HERE SAYS WHAT THIS FILM IS ABOUT. There are no shot "
+            "descriptions, no genre and no script — only durations and numbers. "
+            "You do NOT know what is in these pictures. Before proposing anything "
+            "that depends on the content — sound effects, a music bed, a title, "
+            "which shot is dull — either `look` at the shots, or `ask` what the "
+            "film is. Guessing produces a soundtrack from somebody else's film."
+        )
 
     lines.append("")
     lines.append("SHOTS (numbered as the person sees them, 1-based):")
@@ -487,11 +539,31 @@ def reply_schema(vocabulary: dict) -> dict:
             },
             "sound": {
                 "type": "object",
-                "description": "Sound to fetch and lay down. Search TERMS, not prose.",
+                # ⚠ THE FIELD DESCRIPTIONS ARE THE STRONGEST INSTRUCTION THERE IS ON
+                # THIS PATH, AND ONE OF THEM WAS ARGUING WITH THE PROMPT. The chat runs
+                # on NATIVE structured output (`schema=native` in the llm_json log), so
+                # the model is decoding straight into this shape and reads these lines
+                # while it fills each field. `sfx` used to say "Sparingly." — written
+                # for a model choosing on its own, and quoted at somebody who ASKED.
+                # ⚠ Proved live, 2026-09-05: "add music and sound effects in this
+                # storyboard story wise" on a 14-shot board returned `music` filled,
+                # `sfx: []`, and a `reply` that NAMED the effects it had not sent —
+                # "the lighting of the lamps, the rustle of gifts, and the fireworks".
+                # The model knew what it wanted; the field told it not to. Lifting the
+                # rule in `prompts.yaml` alone did nothing, because this line is closer
+                # to the token being written. See RULEBOOK E106 and E123.
+                "description": "The sound to fetch and lay down. Search TERMS, not prose.",
                 "properties": {
                     "sfx": {
                         "type": "array",
-                        "description": "One per shot that needs a sound. Sparingly.",
+                        "description": "The sound effects to place, one entry per shot "
+                                       "that needs one. FILL THIS whenever they asked "
+                                       "for sound effects — an empty list is a refusal, "
+                                       "and naming the effects in `reply` instead puts "
+                                       "nothing on the timeline. If they asked for every "
+                                       "shot (\"story wise\", \"each one\"), give every "
+                                       "shot an entry. Leave it empty ONLY when they "
+                                       "asked for music alone.",
                         "items": {
                             "type": "object",
                             "properties": {
@@ -514,6 +586,33 @@ def reply_schema(vocabulary: dict) -> dict:
                         },
                     },
                 },
+                # ⚠ `sfx` IS REQUIRED BECAUSE A PROPERTY THIS MODEL IS NOT ASKED FOR
+                # IS A PROPERTY IT SIMPLY DOES NOT WRITE. This is the whole bug, and
+                # it was proved by changing this one line and nothing else — four
+                # live runs on `gemini-3.5-flash`, native structured output, same
+                # board, same message:
+                #
+                #   before   "sound": {"music": {…}}                 — no `sfx` KEY AT ALL
+                #   after    "sound": {"sfx": [14 cues], "music": {…}}
+                #
+                # ⚠ AND EVERY OTHER FIX FOR IT FAILED FIRST, which is why this comment
+                # is long. Lifting the "sparingly" rule in `prompts.yaml`, rewriting
+                # this field's own description to say "an empty list is a refusal",
+                # putting the rule directly under the verb list in the turn prompt,
+                # and finally naming the field path in the user's own message — all
+                # four left `sfx` empty. Words do not make a model fill a slot the
+                # SCHEMA says it may skip.
+                #
+                # ⚠ IT IS NOT "ALWAYS SEND SOUND": `sound` itself stays optional at the
+                # root, so a turn with no sound simply has no `sound` object. This says
+                # only that a `sound` object which EXISTS must answer about effects —
+                # and `_coerce_sound` still turns an empty list into nothing, so a
+                # music-only turn is unharmed.
+                #
+                # ⚠ `music` IS LEFT OPTIONAL ON PURPOSE. It arrived in all four runs
+                # without being asked for, and requiring it would push the model to
+                # invent a bed for somebody who asked only for a door slam.
+                "required": ["sfx"],
             },
         },
         "required": ["kind", "reply"],
@@ -762,7 +861,26 @@ def _vocabulary_for_prompt(vocabulary: dict) -> dict:
             }
             for v in (vocabulary.get("verbs") or []) if isinstance(v, dict) and v.get("id")
         ],
-        "transitions": ids(vocabulary.get("transitions")),
+        # ⚠ THE ONE TABLE THAT KEEPS ITS PROSE, AND IT EARNS THE TOKENS. Every
+        # other row here is trimmed to `id (label)` because the model does not
+        # need to be told what "bounce" means to choose it. Transitions are
+        # different: twelve of them are interchangeable mechanisms until
+        # something says what each one MEANS, and given a bare list the model has
+        # exactly one safe answer — dissolve, on every cut. That is what shipped.
+        # A fourteen-shot Ganesh Chaturthi reel came back with thirteen identical
+        # dissolves: *"Dissolve on the cut hi use kar raha hai"*. Twelve short
+        # lines is what buys a real choice. See `TRANSITIONS` in `transitions.js`.
+        "transitions": [
+            {
+                "id": row.get("id"),
+                "is": _clip(row.get("label") or row.get("id"), 40),
+                "does": _clip(row.get("note"), 80),
+                "use_when": _clip(row.get("when"), 220),
+                **({"directions": row["directions"]} if row.get("directions") else {}),
+            }
+            for row in (vocabulary.get("transitions") or [])
+            if isinstance(row, dict) and row.get("id")
+        ],
         "motions": ids(vocabulary.get("motions")),
         "effects": ids(vocabulary.get("effects")),
         "shapes": ids(vocabulary.get("shapes")),

@@ -99,6 +99,7 @@ import {
   DEFAULT_CROSSFADE_MS,
   fadeEndPatch,
   laneClips,
+  MAX_AUDIO_FILES,
   MIN_CLIP_MS,
   splitClip,
 } from "../animatic/audio_clips.js";
@@ -180,6 +181,7 @@ import useDirectorRun from "../animatic/agent/useDirectorRun.js";
 // ✨ The AI Editor chat. ⚠ THE SAME REGISTRY, TALKED TO — it runs `ACTIONS`
 // through the same `directorApi` bag built below, so nothing about the fence,
 // the caps or the undo behaviour is written twice. See useEditorChat.js.
+import useChatSessions from "../animatic/agent/useChatSessions.js";
 import useEditorChat from "../animatic/agent/useEditorChat.js";
 // ⚠ ONE ARITHMETIC FOR THE 🖼 PRICE, shared with the Director's own preview so
 // the 🖼 dialog and the 🎬 tick box can never quote one pass at two numbers.
@@ -284,7 +286,11 @@ const MIN_MS = 100;
 // 4 the sound passes were not limited, they were impossible. Files, not clips:
 // the razor and the looped music bed both make many clips out of one file and
 // neither costs anything here. See `sound_pass.js`.
-const MAX_AUDIO_TRACKS = 16;
+// ⚠ IT LIVES IN `audio_clips.js` NOW, because `sound_pass.js` needs the same
+// number and could not see a constant private to this file — so it invented a
+// flat ten of its own and refused four of a fourteen-shot board's cues on a
+// project with room for thirty-four more. One ceiling, one file.
+const MAX_AUDIO_TRACKS = MAX_AUDIO_FILES;
 // `AnimaticFrame.track` is `le=15`, so a sixteenth row is a value the server
 // would reject. Checked where a row is ADDED, so the refusal is a notice rather
 // than a failed save.
@@ -6819,7 +6825,18 @@ export default function AnimaticEditor({
       duration_ms: Math.max(0, Math.round(clip.duration_ms || 0)),
       start_ms: Math.max(0, Math.round(clip.start_ms || 0)),
       offset_ms: Math.max(0, Math.round(clip.offset_ms || 0)),
-      trim_ms: Math.max(0, Math.round(clip.trim_ms || 0)),
+      // ⚠ `null`, NEVER `0`, AND THAT ZERO COST A WHOLE NIGHT'S WORK.
+      // `AnimaticAudio.trim_ms` is `int | None` with `ge=100`: absent means
+      // "play the whole file", and 0 is neither absent nor ≥ 100. So every save
+      // of a project this pass had touched was refused with a 422 — the whole
+      // document, not the clip — and the autosave re-sent the same rejected body
+      // forever. Sound laid down at night, project blank in the morning.
+      // `audioForSave` now clamps this on the way out as well; it is fixed in
+      // both places because a clip is read by the EDITOR long before it is
+      // saved, and a 0 here also means "play the whole file" to `trackPlayMs` —
+      // which is the second half of the same report (a 30-second field
+      // recording playing over a 2-second shot).
+      trim_ms: clip.trim_ms > 0 ? Math.max(MIN_MS, Math.round(clip.trim_ms)) : null,
       volume: Math.max(0, Math.min(2, Number(clip.volume) || 1)),
       muted: false,
       fade_in_ms: Math.max(0, Math.round(clip.fade_in_ms || 0)),
@@ -7372,8 +7389,27 @@ export default function AnimaticEditor({
   // ⚠ AND `applySnapshot` IS Ctrl+Z's OWN FUNCTION. Undo after an applied plan
   // is one snapshot restored, never N steps walked backwards — see the header of
   // useEditorChat.js for why the second one could never have worked.
+  // ⚠ THE CONVERSATIONS COME FIRST, AND THE AGENT BORROWS ONE. `useChatSessions`
+  // owns this project's chats — the list, which one is open, and writing them up
+  // — and hands `{turns, setTurns}` down. That inversion is what made MANY chats
+  // per project possible: while the agent hook owned the transcript there could
+  // only ever be one. Asked for outright: *"user new chat bana kar alag alag baat
+  // kar sake … project by project save karna"*. See `useChatSessions.js`.
+  // ⚠ NOT UNTIL THE PANEL HAS BEEN OPENED. Every project load would otherwise
+  // spend a request listing conversations for a panel nobody touched — including
+  // on accounts the chat is switched off for entirely. It LATCHES rather than
+  // following `chatOpen`, because shutting the panel must not throw the list
+  // away and re-fetch it the next time it is opened.
+  const chatEverOpen = useRef(false);
+  if (chatOpen) chatEverOpen.current = true;
+  const chatStore = useChatSessions({
+    animaticId,
+    enabled: chatOpen || chatEverOpen.current,
+  });
+
   const chat = useEditorChat({
     animaticId,
+    store: chatStore,
     // Asking the chat to do something IS doing something: on a blank project
     // this is what creates it. See `ensureProject` at the top of this file.
     ensureId: ensureProject,
@@ -13767,6 +13803,7 @@ export default function AnimaticEditor({
         open={chatOpen}
         onClose={onCloseChat}
         chat={chat}
+        store={chatStore}
         readCtx={readDirectorCtx}
         dock={chat.config?.dock || "right"}
         opacity={chat.config?.opacity ?? 100}

@@ -307,3 +307,56 @@ export function envelopeAt(env, hopMs, ms) {
   if (i >= env.length) return env[env.length - 1];
   return env[i];
 }
+
+// --- The master clock -------------------------------------------------------
+
+/**
+ * HOW LONG AN ELEMENT MAY SIT ON THE SAME TIMESTAMP BEFORE IT STOPS BEING THE
+ * CLOCK.
+ *
+ * ⚠ THIS IS THE "PRESS PLAY AND NOTHING HAPPENS" BUG. `el.play()` marks an
+ * element unpaused *immediately*, long before the browser has decoded a single
+ * sample — so a freshly-placed clip reads `paused === false` with
+ * `currentTime === 0`. `useTimelineTransport` took the first unpaused element as
+ * its master clock and read the time off it, which gave the same answer on every
+ * animation frame: the playhead pinned to that clip's start, the pictures
+ * frozen, the transport apparently dead.
+ *
+ * Reported from the screen the day eleven sounds first landed on a timeline:
+ * *"mai play dala raha tha 0 frame pe to play nhi ho raha tha, but jab timeline
+ * ka cursor thoda aage se play kiya 2/3 sec se to hone laga"* — at 0 the music
+ * bed and the first effect both start from cold; two seconds in there is already
+ * a decoded element to read the time off. It could not happen before the sound
+ * passes existed: a film with no audio has no master clock and has always run
+ * off the wall clock.
+ */
+export const CLOCK_STALL_MS = 250;
+
+/**
+ * IS THIS ELEMENT'S CLOCK ACTUALLY RUNNING? — the difference between "unpaused"
+ * and "playing", which are not the same thing.
+ *
+ * Two ways to fail: it has decoded nothing yet (`readyState` below
+ * HAVE_CURRENT_DATA), or it has been sitting on one timestamp for longer than a
+ * stall is worth waiting for. Either way it is not something to tell the time by,
+ * and the caller falls back to the wall clock it already keeps for shuttling.
+ *
+ * ⚠ PURE, AND SEPARATE FROM THE HOOK, so `tests/transport_clock_check.py` can
+ * drive it under node with fake elements. The bug it pins has no other way of
+ * being caught: everything about it looks correct in the source and only shows
+ * up as a playhead that will not move.
+ *
+ * @param el    the <audio> element (or anything with `readyState`/`currentTime`)
+ * @param prev  what this element last read, `{at, since}`, or null/undefined
+ * @param now   `performance.now()` for this frame
+ * @returns `{usable, seen}` — `seen` is what to remember for the next frame
+ */
+export function clockRead(el, prev, now, stallMs = CLOCK_STALL_MS) {
+  if (!el || !Number.isFinite(el.currentTime) || el.readyState < 2 /* HAVE_CURRENT_DATA */) {
+    return { usable: false, seen: prev || null };
+  }
+  if (!prev || prev.at !== el.currentTime) {
+    return { usable: true, seen: { at: el.currentTime, since: now } };
+  }
+  return { usable: now - prev.since <= stallMs, seen: prev };
+}

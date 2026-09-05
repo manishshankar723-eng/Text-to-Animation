@@ -26,19 +26,50 @@
 // three panels to fix every bug in.
 //
 // ---------------------------------------------------------------------------
+// ⚠ ONE PROJECT HOLDS MANY CHATS, AND THE BAR UNDER THE TITLE IS HOW YOU MOVE
+// BETWEEN THEM.
+// ---------------------------------------------------------------------------
+// Asked for outright: *"user new chat bana kar alag alag baat kar sake … aur sab
+// chat save hona chahiye, user jo karwaya hai usko us project mai dekh sake fir
+// baad mai — project by project save karna"*. Three controls and no more: what
+// this chat is CALLED, the ones that came BEFORE it, and a NEW one. Deleting a
+// chat and how long ago it was live in the list, next to the thing they act on.
+//
+// ⚠ IT IS NOT A TAB STRIP, AND THAT IS THE ONE DESIGN DECISION IN THIS FEATURE
+// WORTH ARGUING WITH. A tab per chat is the obvious reading of "tab ka function"
+// and it is wrong for THIS panel: it is 300–760px wide, so two tabs fill it and
+// the rest scroll out of reach — and the first thing such a strip truncates is
+// the NAME, which is the only thing telling two conversations apart. A name plus
+// a list shows every one of them at full length at any width.
+//
+// ⚠ AND THE PANEL OWNS NONE OF IT. `useChatSessions` holds the chats, the open
+// one and every write; what is on state HERE is only what is on screen — which
+// popover is showing, what is half-typed in the rename box, which row is being
+// asked about. See the header of `useChatSessions.js`.
+//
+// ---------------------------------------------------------------------------
 // ⚠ IT MOVES AND IT RESIZES, AND THOSE ARE TWO DIFFERENT THINGS.
 // ---------------------------------------------------------------------------
 // Asked for outright: *"chat bot ka popup screen ko move kar sake and chhota aur
 // bara kar sake"*. **Every dock resizes** — the two pinned ones by their inner
-// edge (width only; they are full height by definition), the floating one by its
-// bottom-right corner. **Only the floating one moves**, because the other two
-// are pinned to a screen edge and "somewhere else" has no meaning for them.
+// edge (width only; they are full height by definition), the floating one from
+// **all four sides and all four corners**, which was the follow-up: *"abhi ek
+// taraf se hi chota bara karta hun, mai chahta hun charo taraf se"*. **Only the
+// floating one moves**, because the other two are pinned to a screen edge and
+// "somewhere else" has no meaning for them.
 //
-// ⚠ THE EDGE HANDLE IS `PaneSplitter`, THE ONE THE WORKSPACE SEAMS ALREADY USE
-// — same drag maths, same double-click-to-reset, same arrow keys, same 2px line
-// that only appears on hover. A second resize handle written here would have
-// been a second thing that behaves almost like the seams. The corner grip is the
-// only new one, and it is new because no seam in this app drags on both axes.
+// ⚠ THE EDGE HANDLE ON THE PINNED DOCKS IS `PaneSplitter`, THE ONE THE WORKSPACE
+// SEAMS ALREADY USE — same drag maths, same double-click-to-reset, same arrow
+// keys, same 2px line that only appears on hover. A second resize handle written
+// here would have been a second thing that behaves almost like the seams.
+//
+// ⚠ THE FLOATING WINDOW'S EIGHT ARE NOT SEAMS AND MUST NOT BE. A seam divides
+// two panes and hands width from one to the other; these move a free window's own
+// outline, and the top and left ones change WHERE the window is at the same time
+// as how big it is — something no seam in this app has ever had to do. That is
+// also why the sums live in `panel_box.js`: hold the left edge, shrink past the
+// minimum width, and a naive handler keeps sliding `x` after `w` has stopped, so
+// the window walks across the screen instead of refusing to get smaller.
 //
 // ⚠ AND THE NUMBERS ARE CLAMPED IN `panel_box.js`, NOT HERE. See its header for
 // why the window is kept WHOLLY on screen rather than "mostly" — there is no
@@ -87,12 +118,14 @@ import { describeStep } from "../animatic/agent/actions.js";
 // ⚠ THE GEOMETRY IS A MODULE, NOT FOUR NUMBERS IN A HANDLER. See its header.
 import {
   NARROW_W,
+  RESIZE_EDGES,
   clampBox,
   clampWidth,
   defaultBox,
   forgetBox,
   readBox,
   readWidth,
+  resizeBox,
   viewport,
   writeBox,
   writeWidth,
@@ -100,6 +133,9 @@ import {
 // ⚠ THE LABELS COME FROM THE SAME MODULE THAT READS THE OFFER, so a door added
 // there cannot arrive here as a blank button with no name on it.
 import { DOOR_LABEL } from "../animatic/agent/chat_turn.js";
+// ⚠ NAMING A CHAT AND DATING IT ARE RULES, NOT MARKUP — the same split
+// `panel_box.js` makes above. See that module's header.
+import { agoLabel, labelFor } from "../animatic/agent/chat_sessions.js";
 import { capabilities } from "../animatic/agent/capabilities.js";
 
 /** Remembered only when the operator picked "let each person choose". */
@@ -172,6 +208,10 @@ export default function EditorChat({
   open,
   onClose,
   chat,
+  // ⚠ THE CONVERSATIONS, NOT THE CONVERSATION. `useChatSessions` — the list,
+  // which one is open, and the ＋ / clock / rename actions. `chat` is the agent
+  // and knows nothing about any of it; see the header of `useChatSessions.js`.
+  store,
   readCtx,
   // "right" | "sidebar" | "float" | "user" — the operator's setting, from
   // /editor-chat/config.
@@ -293,9 +333,14 @@ export default function EditorChat({
     drag(e, (from, dx, dy) => ({ ...from.box, x: from.box.x + dx, y: from.box.y + dy }));
   }
 
-  /** The corner grip resizes both axes at once. No seam in this app does that. */
-  function beginResize(e) {
-    drag(e, (from, dx, dy) => ({ ...from.box, w: from.box.w + dx, h: from.box.h + dy }));
+  /** ⚠ ANY EDGE, ANY CORNER — and the maths that keeps the OTHER edge still is
+   *  `resizeBox`, not this. Asked for outright: *"abhi ek taraf se hi chota bara
+   *  karta hun, mai chahta hun charo taraf se"*. All eight handles are this one
+   *  function with a different compass letter; the top and left ones move `x`/`y`
+   *  as well as `w`/`h`, which is exactly the case the module gets right and a
+   *  handler written here got wrong twice. */
+  function beginResize(e, edge) {
+    drag(e, (from, dx, dy) => resizeBox(from.box, dx, dy, edge, viewport()));
   }
 
   function resetBox() {
@@ -335,6 +380,61 @@ export default function EditorChat({
   useEffect(() => {
     if (open) inputRef.current?.focus();
   }, [open]);
+
+  // ====================================================== the chats themselves
+  // ⚠ THE STATE HERE IS ONLY WHAT IS ON SCREEN — which popover is showing, what
+  // is half-typed in the rename box, which row is being asked about. The chats,
+  // the open one and every write live in `useChatSessions`. A panel that kept
+  // its own copy of the list would be a second answer to "which chat is this".
+  const [histOpen, setHistOpen] = useState(false);
+  // `null` = not renaming. A STRING, including "", is the box being edited —
+  // which is why this is not a boolean plus a value: an empty name mid-edit is a
+  // real state and `Boolean("")` throws it away.
+  const [renaming, setRenaming] = useState(null);
+  // Which row has been asked about. ⚠ A TWO-STEP DELETE, NOT A `confirm()`.
+  // Deleting a conversation cannot be undone from anywhere in this app, and a
+  // native dialog over a floating panel is the one modal this feature spent its
+  // whole design avoiding. The row asks in place instead.
+  const [askDelete, setAskDelete] = useState("");
+  const sessRef = useRef(null);
+
+  // ⚠ CLOSES ON A PRESS ANYWHERE ELSE, ON `pointerdown` RATHER THAN `click`.
+  // A click listener fires after the press has already moved focus, so dragging
+  // the panel by its title bar left the list hanging open over the film.
+  useEffect(() => {
+    if (!histOpen) return undefined;
+    const away = (e) => {
+      if (!sessRef.current?.contains(e.target)) {
+        setHistOpen(false);
+        setAskDelete("");
+      }
+    };
+    const esc = (e) => {
+      if (e.key === "Escape") {
+        setHistOpen(false);
+        setAskDelete("");
+      }
+    };
+    window.addEventListener("pointerdown", away);
+    window.addEventListener("keydown", esc);
+    return () => {
+      window.removeEventListener("pointerdown", away);
+      window.removeEventListener("keydown", esc);
+    };
+  }, [histOpen]);
+
+  const renameOpen = renaming !== null;
+
+  function commitRename() {
+    const next = renaming;
+    setRenaming(null);
+    if (next === null || !store?.activeId) return;
+    const clean = next.trim();
+    // ⚠ AN EMPTY NAME IS A REQUEST TO GO BACK TO THE AUTOMATIC ONE, not a chat
+    // called "". `rename("")` clears the title and `labelFor` draws "New chat".
+    if (clean === (store.active?.title || "")) return;
+    store.rename(store.activeId, clean);
+  }
 
   if (!open) return null;
 
@@ -462,8 +562,230 @@ export default function EditorChat({
         </button>
       </header>
 
+      {/* ⚠ ONE PROJECT, MANY CHATS — AND THE BAR IS WHERE YOU MOVE BETWEEN THEM.
+          Asked for outright: *"user new chat bana kar alag alag baat kar sake …
+          aur sab chat save hona chahiye, us project mai dekh sake fir baad mai"*.
+          Three controls and no more: what this chat is CALLED, the ones that came
+          BEFORE it, and a NEW one. Everything else about a chat — deleting it,
+          how long ago it was — lives in the list, where the thing it acts on is
+          on screen next to it.
+
+          ⚠ IT IS A SECOND ROW, NOT MORE BUTTONS IN THE TITLE BAR. That bar is
+          the drag handle on the floating dock, and three more press targets in it
+          is three more ways to fail to pick the window up.
+
+          ⚠ AND IT IS NOT A TAB STRIP. A tab per chat is the obvious reading of
+          "tab ka function", and it is wrong for THIS panel: it is 300–760px wide,
+          so two tabs fill it and the rest scroll out of reach — the names, which
+          are the only thing telling two conversations apart, are the first thing
+          such a strip cuts off. A name plus a list shows all of them at full
+          length at any width. */}
+      <div className="ec-sess" ref={sessRef}>
+        {renameOpen ? (
+          <input
+            /* ⚠ THE GUARD IS THE WHOLE THING, AND `MediaBin.jsx` ALREADY SAYS SO
+               — its own rename box carries this exact comment, and this panel
+               was written without reading it. A ref callback runs on EVERY
+               render, so an unguarded `select()` re-highlights the field after
+               each letter and the next letter replaces the selection: the box
+               can then never hold more than one character. Type "c", type "a",
+               and it says "a". Reported exactly that way: *"ek letter likh raha
+               hun, dusra letter likhta hun to pahla ko hata de raha hai"*.
+               `activeElement` is what makes it happen once, on open.
+
+               ⚠ AND IT IS A REF CALLBACK RATHER THAN `autoFocus` for the reason
+               MediaBin gives: plain autofocus lets the browser scroll the field
+               into view. Same idiom in both places on purpose — two ways to open
+               a rename box is two things to get this wrong in. */
+            ref={(el) => {
+              if (el && document.activeElement !== el) {
+                el.focus({ preventScroll: true });
+                el.select();
+              }
+            }}
+            type="text"
+            className="ec-sess-input"
+            value={renaming}
+            maxLength={120}
+            aria-label="Chat name"
+            onChange={(e) => setRenaming(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                commitRename();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                setRenaming(null);
+              }
+            }}
+          />
+        ) : (
+          <button
+            type="button"
+            className="ec-sess-name"
+            // ⚠ NOTHING TO RENAME UNTIL THERE IS A CHAT. A fresh panel has no
+            // saved conversation yet — the first message is what creates it — and
+            // a name typed onto nothing would have nowhere to go.
+            disabled={!store?.activeId}
+            onClick={() => setRenaming(store?.active?.title || "")}
+            title={
+              store?.activeId
+                ? "Rename this chat"
+                : "This chat gets a name from your first message"
+            }
+          >
+            <span className="ec-sess-label">{labelFor(store?.active)}</span>
+            <span className="ec-sess-pen" aria-hidden="true">✎</span>
+          </button>
+        )}
+
+        <button
+          type="button"
+          className={`ec-sess-btn ${histOpen ? "on" : ""}`}
+          onClick={() => {
+            setHistOpen((v) => !v);
+            setAskDelete("");
+          }}
+          aria-expanded={histOpen}
+          aria-haspopup="menu"
+          title="Chats in this project"
+          aria-label="Chats in this project"
+        >
+          ◷
+        </button>
+        {/* ⚠ IT REFUSES *BEFORE* IT OPENS A BLANK PANEL, and the first version
+            did not. A full project answered ＋ with a cheerful empty "New chat"
+            that could not be saved — the refusal only arrived once a whole
+            message had been typed and the autosave came back 409. Reported from
+            a live deployment with the ceiling set to 1: *"maine admin panel mai
+            ek likha, to yaha pe new chat open hua — kya ye sahi hai?"*.
+
+            ⚠ DISABLED, NOT HIDDEN. A button that vanishes at the ceiling is a
+            feature somebody thinks has broken; one that is greyed out and says
+            why on hover is a rule they can act on. The way out is in the
+            sentence: delete a chat. */}
+        <button
+          type="button"
+          className="ec-sess-btn"
+          disabled={store?.full}
+          onClick={() => {
+            store?.newChat();
+            setHistOpen(false);
+          }}
+          title={
+            store?.full
+              ? `This project already holds its ${store.limit} chats — delete one to start another.`
+              : "New chat"
+          }
+          aria-label="New chat"
+        >
+          ＋
+        </button>
+
+        {histOpen && (
+          <div className="ec-hist" role="menu" aria-label="Chats in this project">
+            {store?.listing && !store?.sessions?.length ? (
+              <p className="ec-hist-note tiny muted">
+                <span className="spinner-inline" /> Reading this project's chats…
+              </p>
+            ) : !store?.sessions?.length ? (
+              /* ⚠ NOT AN ERROR, AND NOT AN EMPTY BOX EITHER. A project nobody has
+                 talked about yet is the normal first state of this list. */
+              <p className="ec-hist-note tiny muted">
+                No saved chats yet — send a message and this one is kept.
+              </p>
+            ) : (
+              store.sessions.map((row) => (
+                <div
+                  key={row.session_id}
+                  className={`ec-hist-row ${
+                    row.session_id === store.activeId ? "on" : ""
+                  }`}
+                >
+                  {askDelete === row.session_id ? (
+                    <>
+                      <span className="ec-hist-ask tiny">Delete this chat?</span>
+                      <button
+                        type="button"
+                        className="ec-hist-yes tiny"
+                        onClick={() => {
+                          store.remove(row.session_id);
+                          setAskDelete("");
+                        }}
+                      >
+                        Delete
+                      </button>
+                      <button
+                        type="button"
+                        className="ec-hist-no tiny"
+                        onClick={() => setAskDelete("")}
+                      >
+                        Keep
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="ec-hist-open"
+                        onClick={() => {
+                          store.open(row.session_id);
+                          setHistOpen(false);
+                        }}
+                      >
+                        <span className="ec-hist-title">{labelFor(row)}</span>
+                        {/* ⚠ HOW MANY TIMES THE *PERSON* SPOKE, not how many
+                            bubbles are in there. What this row is really
+                            answering is "was anything done in this one", and
+                            the agent's own replies do not answer that. */}
+                        <span className="ec-hist-meta tiny muted">
+                          {row.turn_count === 1 ? "1 message" : `${row.turn_count} messages`}
+                          {agoLabel(row.updated_at) ? ` · ${agoLabel(row.updated_at)}` : ""}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className="ec-hist-del"
+                        onClick={() => setAskDelete(row.session_id)}
+                        title="Delete this chat"
+                        aria-label={`Delete ${labelFor(row)}`}
+                      >
+                        ✕
+                      </button>
+                    </>
+                  )}
+                </div>
+              ))
+            )}
+
+            {/* ⚠ THE CEILING IS SHOWN BEFORE IT IS HIT, not at the refusal — the
+                same rule the monthly allowance in the footer follows. It is the
+                OPERATOR'S number (admin panel → Chat → "What a project keeps"),
+                which is why it comes down with the list rather than being a
+                constant here. ⚠ `0` MEANS NO LIMIT and prints nothing: a count
+                against a ceiling that does not exist is noise. */}
+            {store?.limit > 0 && store?.sessions?.length > 0 && (
+              <p className="ec-hist-foot tiny muted">
+                {store.sessions.length} of {store.limit} chats in this project
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+
       <div className="sc-chat-log ec-log" ref={logRef}>
-        {chat.turns.length === 0 ? (
+        {/* ⚠ "OPENING…" RATHER THAN THE GREETING WHILE A CHAT IS BEING FETCHED.
+            An empty log under the welcome text is what a BRAND NEW chat looks
+            like — showing it while an old conversation is still on its way says
+            the chat came back empty, which is the one thing this feature must
+            never appear to have done. Only when there is nothing mirrored to
+            paint: with a mirror the real conversation is already on screen. */}
+        {store?.opening && chat.turns.length === 0 ? (
+          <p className="ec-hist-note tiny muted">
+            <span className="spinner-inline" /> Opening…
+          </p>
+        ) : chat.turns.length === 0 ? (
           <div className="ec-empty">
             <p className="muted">
               {greeting ||
@@ -590,7 +912,11 @@ export default function EditorChat({
             Clear chat
           </button>
         )}
-        <span className="tiny muted">
+        <span
+          className={`tiny ${
+            store?.error || (store?.full && !store?.activeId) ? "ec-foot-warn" : "muted"
+          }`}
+        >
           {/* ⚠ THE ALLOWANCE IS SHOWN BEFORE IT RUNS OUT, not at the refusal. A
               quota you discover by being blocked is a bad surprise; one you can
               see is a budget. Hidden entirely when it is unlimited — a number
@@ -598,26 +924,65 @@ export default function EditorChat({
           {chat.quota.limit !== null
             ? `${chat.quota.used} of ${chat.quota.limit} messages this month · `
             : ""}
-          saved in this browser only
+          {/* ⚠ THIS LINE USED TO READ "saved in this browser only" AND THAT WAS
+              TRUE. It is not any more: the conversation goes to the server with
+              the project, so it is there on another computer and it survives
+              clearing site data. The sentence changed on the same commit as the
+              behaviour — a promise about somebody's work is the worst place in
+              an app to leave a stale string.
+              ⚠ AND A STORE THAT IS DOWN SAYS SO HERE, not in a modal. The
+              conversation still works; it is just not being written down, and
+              that is a fact about a footer, not an interruption. */}
+          {store?.error
+            ? store.error
+            : /* ⚠ AND IF THE PANEL IS SITTING ON AN UNSAVED CHAT IN A FULL
+                 PROJECT, THE FOOTER SAYS SO BEFORE A WORD IS TYPED. The ＋ is
+                 disabled, but the ceiling can also be lowered in the admin panel
+                 while somebody is part-way through — and "saved with this
+                 project" would then be a promise this panel cannot keep. */
+              store?.full && !store?.activeId
+              ? `This project already holds its ${store.limit} chats — delete one to save this.`
+              : store?.saves
+                ? "saved with this project"
+                : "saved once you send the first message"}
         </span>
       </div>
 
-      {/* ⚠ THE CORNER, AND IT IS THE ONE HANDLE IN THIS APP THAT DRAGS ON BOTH
-          AXES — which is why it is not a `PaneSplitter`. It carries the seam's
-          other two habits anyway: double-click puts the window back where it
-          opens, and the arrow keys resize it for anyone who cannot drag. */}
-      {floating && (
-        <div
-          className="ec-grip"
-          onPointerDown={beginResize}
-          onDoubleClick={resetBox}
-          onKeyDown={nudge}
-          role="separator"
-          tabIndex={0}
-          aria-label="Panel size"
-          title="Drag to resize · double-click to put it back"
-        />
-      )}
+      {/* ⚠ EIGHT HANDLES, ONE HANDLER — four edges and four corners, the way
+          every window on a desktop resizes. Asked for outright: *"abhi ek taraf
+          se hi chota bara karta hun, mai chahta hun charo taraf se"*. They are
+          not `PaneSplitter`s: a seam divides two panes and pushes the work next
+          to it, while these move a free-floating window's own outline, and the
+          top and left ones change WHERE the window is as well as how big.
+
+          ⚠ ONLY THE CORNER IS A TAB STOP, AND THAT IS DELIBERATE. Eight focusable
+          strips would put eight stops between the composer and the rest of the
+          page for a control that does one job — and the corner already resizes
+          both axes with the arrow keys, so the keyboard loses nothing. The other
+          seven are pointer affordances and say so with `aria-hidden`.
+
+          ⚠ AND `ec-grip` STAYS THE CORNER'S CLASS. It is the drawn one — the two
+          faint strokes every window manager uses — and it carries the seam's other
+          two habits: double-click puts the window back where it opens, and the
+          arrow keys resize it for anyone who cannot drag. */}
+      {floating &&
+        RESIZE_EDGES.map((edge) => (
+          <div
+            key={edge}
+            className={`ec-resize ec-resize-${edge}${edge === "se" ? " ec-grip" : ""}`}
+            onPointerDown={(e) => beginResize(e, edge)}
+            onDoubleClick={resetBox}
+            {...(edge === "se"
+              ? {
+                  onKeyDown: nudge,
+                  role: "separator",
+                  tabIndex: 0,
+                  "aria-label": "Panel size",
+                  title: "Drag to resize · double-click to put it back",
+                }
+              : { "aria-hidden": "true" })}
+          />
+        ))}
     </aside>
   );
 }

@@ -222,12 +222,32 @@ export const TRANSITION_FAMILIES = [
 // `TRANSITION_FAMILIES` still draws — see `transitionsByFamily` — because a
 // treatment nobody filed should be visible and ugly, never invisible, which is
 // the rule `fx_library.js` follows for exactly the same reason.
+// ⚠ `note` IS WHAT IT DOES. `when` IS WHAT IT MEANS, AND IT IS FOR THE AI.
+//
+// The chips in the pane show `note` — "Cross-fade", "An edge travels across" —
+// because a person picking one by hand can see the picture and only needs
+// reminding which is which. The AI cannot see anything, and a list of twelve
+// mechanisms with no editorial meaning attached has exactly one safe answer:
+// dissolve, every time.
+//
+// Which is precisely what shipped. Asked to treat a fourteen-shot Ganesh
+// Chaturthi reel, the ✨ AI Editor came back with "Dissolve on the cut after
+// shot 1 … Dissolve on the cut after shot 13" — thirteen identical dissolves.
+// Reported from the screen: *"Dissolve on the cut hi use kar raha hai … in do
+// shot ke bich mai konsa badhiyan transition rahega waisa set kare"*. It was not
+// being lazy; nothing had ever told it what a wipe is FOR.
+//
+// ⚠ SO `when` LIVES ON THE TRANSITION, NOT IN THE PROMPT. A thirteenth kind
+// added to this list without one would be a treatment the AI can render and can
+// never knowingly choose — the same silent half-wiring E125 is about. Add a
+// kind, write its `when`; `tests/transition_choice_check.py` fails until you do.
 export const TRANSITIONS = [
   {
     id: "dissolve",
     family: "fade",
     label: "Dissolve",
     note: "Cross-fade",
+    when: "Time passes, or two shots are one thought. The soft, invisible one — and it only reads as \"time passed\" because most cuts around it are straight.",
     params: Object.keys(TRANSITION_PARAMS.dissolve),
   },
   {
@@ -235,6 +255,7 @@ export const TRANSITIONS = [
     family: "dip",
     label: "Dip",
     note: "Out through a colour",
+    when: "A chapter ends. Through BLACK for a real break — a new scene, a new day, the end. Through WHITE for a flash, a memory, a burst of light, a photograph being taken.",
     params: Object.keys(TRANSITION_PARAMS.dip),
   },
   {
@@ -242,6 +263,7 @@ export const TRANSITIONS = [
     family: "wipe",
     label: "Wipe",
     note: "An edge travels across",
+    when: "A deliberate move somewhere new, and it says so out loud. Energy and intent: ads, promos, reels, montages, a before-and-after.",
     params: Object.keys(TRANSITION_PARAMS.wipe),
   },
   {
@@ -249,6 +271,7 @@ export const TRANSITIONS = [
     family: "slide",
     label: "Slide",
     note: "The next shot pushes in",
+    when: "The next shot physically pushes the last one out. Quick and literal — a list, a product line-up, a step-by-step, a reel that must not lose its pace.",
     params: Object.keys(TRANSITION_PARAMS.slide),
   },
   // The matte-driven reveals. Every one of these is the SAME code path as a
@@ -261,6 +284,7 @@ export const TRANSITIONS = [
     family: "wipe",
     label: "Diagonal",
     note: "An angled edge, in from a corner",
+    when: "A wipe with attitude. Sport, action, an upbeat promo, a music cut.",
     params: Object.keys(TRANSITION_PARAMS.diagonal),
   },
   {
@@ -268,6 +292,7 @@ export const TRANSITIONS = [
     family: "shape",
     label: "Split",
     note: "Barn doors open from the middle",
+    when: "Barn doors opening. A reveal — a curtain going up on whatever is behind it.",
     params: Object.keys(TRANSITION_PARAMS.split),
   },
   {
@@ -275,6 +300,7 @@ export const TRANSITIONS = [
     family: "shape",
     label: "Iris",
     note: "A circle opens from the centre",
+    when: "An old-film iris. Nostalgia, a storybook, a children's film, the end of a joke.",
     params: Object.keys(TRANSITION_PARAMS.radial),
   },
   {
@@ -282,6 +308,7 @@ export const TRANSITIONS = [
     family: "shape",
     label: "Diamond",
     note: "An iris on its point",
+    when: "A decorative iris. An ornamental or festive film — and used once, not as a house style.",
     params: Object.keys(TRANSITION_PARAMS.diamond),
   },
   {
@@ -289,6 +316,7 @@ export const TRANSITIONS = [
     family: "shape",
     label: "Box",
     note: "A rectangle opens from the centre",
+    when: "A framed reveal. A product, a title card, a screen inside a screen.",
     params: Object.keys(TRANSITION_PARAMS.box),
   },
   {
@@ -296,6 +324,7 @@ export const TRANSITIONS = [
     family: "shape",
     label: "Clock",
     note: "A hand sweeps round from twelve",
+    when: "Time itself, drawn as a clock hand. A countdown, a schedule, a day passing, a deadline.",
     params: Object.keys(TRANSITION_PARAMS.angular),
   },
   {
@@ -303,6 +332,7 @@ export const TRANSITIONS = [
     family: "wipe",
     label: "Blinds",
     note: "Bands wipe together",
+    when: "A brisk graphic break. Corporate, tech, a data segment, a section divider.",
     params: Object.keys(TRANSITION_PARAMS.blinds),
   },
   {
@@ -310,6 +340,7 @@ export const TRANSITIONS = [
     family: "wipe",
     label: "Checker",
     note: "A chequerboard, in two passes",
+    when: "Playful and retro. A kids' film, a game, a light-hearted vlog.",
     params: Object.keys(TRANSITION_PARAMS.checker),
   },
 ];

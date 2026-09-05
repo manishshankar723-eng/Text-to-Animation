@@ -722,6 +722,23 @@ def as_prompt_schema(request: JsonRequest) -> JsonRequest:
         schema=request.schema,
         purpose=request.purpose,
         sampling=request.sampling,
+        # ⚠ EVERY FIELD THAT DECIDES WHO IS CALLED HAS TO COME ACROSS, and two
+        # were being dropped. A `JsonRequest` rebuilt without `capability` is a
+        # request for the DEFAULT provider: `resolve_provider(capability="")`
+        # falls back to `TEXT_PROVIDER`, so on a deployment where the chat runs
+        # on the Developer API and the text model runs on Vertex, this one
+        # omission sent the call to the wrong backend, on the wrong key, under
+        # the wrong model id. From outside it looks like
+        # `403 PERMISSION_DENIED … aiplatform.googleapis.com` on a key that is
+        # perfectly good. ⚠ And where BOTH backends have credentials it does not
+        # fail at all — it silently bills this call to the other capability's
+        # key, which is the exact bug `get_client`'s cache key was built to stop.
+        capability=request.capability,
+        # ⚠ AND THE PICTURES, because this is the SAME call with the schema moved
+        # into the prompt — not a different, cheaper one. Dropped here, a LOOK on
+        # any provider that cannot be handed a schema would go out blind and the
+        # model would answer about a film it was never shown.
+        images=request.images,
     )
 
 
@@ -832,6 +849,22 @@ def _repair_request(request: JsonRequest, payload: str, reason: str) -> JsonRequ
         schema=request.schema,
         purpose=request.purpose,
         sampling=request.sampling,
+        # ⚠ AND SO IS THE CAPABILITY — a repair is the SAME capability asking
+        # again, and rebuilding without this sent it to whatever `TEXT_PROVIDER`
+        # says instead. On this repo's own `.env` that is Vertex while the chat
+        # is on the Developer API, so mending a ✨ chat answer came back as
+        # `403 PERMISSION_DENIED … aiplatform.googleapis.com` — an error about
+        # credentials, on a call whose only fault was a missing brace. Seen live,
+        # 2026-09-05. Where both backends work it is worse, because it does not
+        # fail: the mend is billed to another capability's key.
+        capability=request.capability,
+        # ⚠ THE PICTURES ARE LEFT BEHIND HERE, AND THAT IS THE DECISION, not an
+        # oversight — the opposite call from `as_prompt_schema` above. A repair
+        # asks the model to mend ITS OWN TEXT, which is quoted in full in the
+        # prompt above; it is a syntax job, and re-uploading five stills to close
+        # a brace is real money and thirty seconds for nothing. If a repair is
+        # ever changed to ask the model to RECONSIDER rather than to mend, this
+        # has to change with it.
     )
 
 

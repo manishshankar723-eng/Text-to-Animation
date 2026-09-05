@@ -2114,6 +2114,15 @@ class ChatSettingsBody(BaseModel):
     opacity: int | None = None
     # How far the film underneath it is blurred, in px. Clamped by the store.
     blur: int | None = None
+    # ⚠ WHAT A PROJECT KEEPS — the SAVED conversations, not the prompt. Asked for
+    # outright: *"isme admin panel mai v daalo, mai limit set kar dunga, mai jitna
+    # daalun wahi hona chahiye"*. They were `API_MAX_CHAT_*` environment variables
+    # for half a day, which meant only somebody with a shell could change them.
+    # Enforced in `server/editor_chat.py`; bounds are the store's, as above.
+    # 0 chats means NO limit, not "fall back to the default".
+    max_chats_per_project: int | None = None
+    chat_history_keep: int | None = None
+    max_chat_chars: int | None = None
     ask_on_spend: bool | None = None
     ask_on_destructive: bool | None = None
     allow_paid_passes: bool | None = None

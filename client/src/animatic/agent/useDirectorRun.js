@@ -149,6 +149,7 @@ import {
   sfxCues,
   sfxDue,
   sfxPlacements,
+  soundRoom,
   soundtrackRequest,
 } from "./sound_pass.js";
 import {
@@ -566,6 +567,10 @@ export default function useDirectorRun({
         analysis: reading,
         frames: ctx.frames || [],
         starts: ctx.starts || [],
+        // The project's own room rather than a house number — see `soundRoom`.
+        // A bed is always reserved for: the run scores the film either from the
+        // reading or from the house cue, so a slot is owed one way or the other.
+        room: soundRoom({ audioTracks: ctx.audioTracks, music: true }),
       });
       // ⚠ AND WHEN NOBODY READ THE FILM, THE HOUSE STILL SCORES IT. Both boxes
       // used to be switches that could not do anything on the free door — and on
@@ -1929,6 +1934,7 @@ export default function useDirectorRun({
             analysis: analysisRef.current,
             frames: ctx.frames || [],
             starts: ctx.starts || [],
+            room: soundRoom({ audioTracks: ctx.audioTracks, music: true }),
           })
         : NO_SFX;
       const fresh =
@@ -2181,7 +2187,23 @@ export function boardFrom(ctx) {
       return {
         label: frame.label || "",
         ms: frame.duration_ms || 0,
+        // ⚠ ALMOST ALWAYS "", AND THAT IS NOT A BUG HERE — IT IS WHY `src` IS
+        // BESIDE IT. `AnimaticFrame` has no `description` and `frameForSave`
+        // carries none, so this key has been empty on every turn since it was
+        // written. What a shot is OF lives on the storyboard PANEL the frame
+        // references, and only the server can read that. It is kept because a
+        // caller (or a future field) may genuinely have one, and a description
+        // the user typed must always outrank the panel's.
         description: frame.description || frame.prompt || "",
+        // ⚠ WHERE THE WORDS ARE. `{kind, storyboard_id, index}` is what lets the
+        // server fill this shot's description in from the board it came from —
+        // see `fill_board_words` in `server/common.py`, and the Diwali board
+        // that was scored with "mouse click" and "corporate pop vlog" because
+        // nothing in this payload said what the film was about.
+        //
+        // ⚠ IT IS NOT RENDERED INTO THE PROMPT. The server reads it, fills the
+        // words, and drops it — so this costs no tokens and no privacy.
+        ...(frame.src && typeof frame.src === "object" ? { src: frame.src } : {}),
         dialogue: dialogueOf(frame),
         // The gutter's own number and name for the row this clip sits on. Left
         // out entirely when there is no row stack to read — see above.

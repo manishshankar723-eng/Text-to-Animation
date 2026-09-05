@@ -42,14 +42,21 @@
 // than it says is worse than no button. Ctrl+Z still exists for everything else.
 //
 // ---------------------------------------------------------------------------
-// ⚠ THE TRANSCRIPT IS THIS BROWSER'S, KEYED BY PROJECT.
+// ⚠ THIS HOOK NO LONGER OWNS THE TRANSCRIPT. `useChatSessions` DOES.
 // ---------------------------------------------------------------------------
-// The route is stateless (see `server/editor_chat.py`), so the conversation is
-// written to localStorage on every change and read back on mount — enough to
-// survive a refresh and a navigation away from the editor. Keyed by the project
-// id and NOT global: opening a second film must not carry the first film's
-// conversation over, which is the bug `ScriptChat` had to fix by minting a
-// session id. Here there is a real id to key on from the first render.
+// `{turns, setTurns}` arrive on `store` and are used here exactly as the
+// `useState` they replaced. That inversion is what made MANY conversations per
+// project possible: while this hook owned the transcript there could only ever
+// be one of them, because "the conversation" and "the agent" were one object.
+//
+// The route is still stateless (see `server/editor_chat.py`) — the whole
+// conversation still rides up on every message. What changed is where it is kept
+// between messages: one `localStorage` key per project became a row per chat on
+// the server, keyed by (owner, project). See `useChatSessions.js`.
+//
+// ⚠ NOTHING ELSE IN HERE MOVED. Every `setTurns` below is the same call it was;
+// the difference is that the setter now writes into a chat that has a name, a
+// list and a home.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -67,6 +74,7 @@ import {
   musicPlacement,
   sfxCues,
   sfxPlacements,
+  soundRoom,
   soundtrackRequest,
 } from "./sound_pass.js";
 // ⚠ FREE, AND THAT IS WHY IT IS CLIENT-SIDE. The editor already decodes every
@@ -82,12 +90,6 @@ import { deadAir, fillerLines, speechDigest } from "./speech.js";
  * to "has the commit landed yet".
  */
 const STEP_MS = 90;
-
-/** Versioned, so a later change to the turn shape can ignore the old store. */
-const STORE_PREFIX = "aniwala.editorChat.v1.";
-
-/** A runaway guard on what is kept in storage and in the DOM. */
-const MAX_KEPT = 60;
 
 /**
  * HOW BIG A PICTURE A LOOK SENDS — its long edge, in pixels.
@@ -125,60 +127,17 @@ function toBase64(blob) {
 const newId = () =>
   Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 
-function loadStored(animaticId) {
-  if (!animaticId) return [];
-  try {
-    const raw = localStorage.getItem(STORE_PREFIX + animaticId);
-    const parsed = raw ? JSON.parse(raw) : null;
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    // A corrupt or unreadable store is not worth an error on screen — the chat
-    // starts empty, which is a state it has to handle anyway.
-    return [];
-  }
-}
-
-/**
- * ⚠ WHAT IS STORED IS NOT WHAT IS DRAWN. A turn in memory carries its plan, and
- * a plan carries every step's arguments — tens of kilobytes on a long one, in a
- * store shared with every other project this browser has opened. What survives a
- * refresh is the CONVERSATION; a plan that was never applied is gone, and the
- * bubble says so rather than offering an Apply button that would run against a
- * timeline the user has since edited. That last part is the real reason: a stale
- * plan is not a saving, it is a trap.
- */
-function toStore(turns) {
-  return turns.slice(-MAX_KEPT).map((t) => ({
-    id: t.id,
-    role: t.role,
-    kind: t.kind,
-    text: t.text,
-    // Kept because it reads as part of the conversation — "I asked, you chose".
-    ask: t.kind === "ask" ? t.ask : undefined,
-    chosen: t.chosen,
-    // A plan that WAS applied is remembered as a fact, not as a button.
-    applied: t.applied,
-    steps: t.applied ? t.steps : undefined,
-    // What the sound pass actually managed, kept because it is a fact about
-    // the film rather than a button. The cues themselves are not: they are
-    // part of the plan, and a stale plan is a trap (see `stale`).
-    soundReport: t.soundReport,
-    // ⚠ AN OFFER SURVIVES A REFRESH, AND A PLAN DOES NOT. The difference is what
-    // the button does: an Apply would run stale steps against a timeline the
-    // person has since edited (a trap — see `stale`), while a door button only
-    // opens ✨ Animate / 🎙 Voiceover, which reads the film as it is NOW and
-    // prices it there. Nothing about it can go stale.
-    passes: t.passes,
-    stale: t.kind === "plan" ? true : undefined,
-  }));
-}
-
 /**
  * THE ✨ AI EDITOR CHAT.
  *
  * @param {string}   animaticId    the project — the chat is keyed to it. NULL on
  *                                 a blank project nothing has been done to yet;
  *                                 `ensureId` is what turns it into a real one.
+ * @param {object}   store         `useChatSessions` — THE CONVERSATION ITSELF.
+ *                                 `{turns, setTurns, clearActive}` is all this
+ *                                 hook takes from it; which chat those turns
+ *                                 belong to, and when they are written down, is
+ *                                 that hook's business and not this one's.
  * @param {function} ensureId      creates the project on demand and answers its
  *                                 id — a chat turn is the user doing something,
  *                                 so it may be the thing that creates it
@@ -193,6 +152,7 @@ function toStore(turns) {
  */
 export default function useEditorChat({
   animaticId,
+  store,
   ensureId,
   readCtx,
   api: editorApi,
@@ -212,7 +172,9 @@ export default function useEditorChat({
   placeSoundtrack,
   openPaidDoor,
 }) {
-  const [turns, setTurns] = useState(() => loadStored(animaticId));
+  // ⚠ BORROWED, NOT OWNED — see the header. `useChatSessions` holds the
+  // conversation because it is the thing that knows which conversation this is.
+  const { turns, setTurns } = store;
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [config, setConfig] = useState(null);
@@ -287,32 +249,18 @@ export default function useEditorChat({
   soundRef.current = { buildSoundtrack, placeSoundtrack };
 
   // ------------------------------------------------------------- persistence
-  // ⚠ THE FIRST ID A DRAFT GETS IS NOT A PROJECT SWITCH. A blank editor starts
-  // with no project at all and mints one at the first action — including a chat
-  // turn — so `animaticId` goes null → real MID-CONVERSATION. Reloading from
-  // storage then would wipe the exchange that created the project.
-  const chatKeyRef = useRef(animaticId);
+  // ⚠ THERE IS NONE HERE ANY MORE, ON PURPOSE. Loading a chat, writing it back
+  // and surviving the null → real project switch all moved to `useChatSessions`,
+  // which is the only place that knows WHICH chat is on screen. What is left
+  // behind is this hook's own per-conversation state, reset below: a chat
+  // swapped underneath it must not keep the last one's error line or its Undo.
   useEffect(() => {
-    if (chatKeyRef.current === animaticId) return;
-    if (!chatKeyRef.current && animaticId) {
-      chatKeyRef.current = animaticId; // the draft just became a project
-      return;
-    }
-    chatKeyRef.current = animaticId;
-    setTurns(loadStored(animaticId));
+    // The chat on screen changed — a different one was opened, ＋ was pressed,
+    // or the project itself changed. Nothing this hook was holding still applies.
     setRevertable("");
     setError("");
-  }, [animaticId]);
-
-  useEffect(() => {
-    if (!animaticId) return;
-    try {
-      localStorage.setItem(STORE_PREFIX + animaticId, JSON.stringify(toStore(turns)));
-    } catch {
-      // Storage full or blocked (private mode). The conversation still works for
-      // this page load; it just will not survive a refresh. Not worth a message.
-    }
-  }, [animaticId, turns]);
+    snapshotRef.current = null;
+  }, [animaticId, store.activeId]);
 
   // ------------------------------------------------------------------ config
   // ⚠ FREE, AND ASKED ONCE. It answers whether the chat is on for this account,
@@ -505,6 +453,31 @@ export default function useEditorChat({
             text: turn.reply,
             ask: turn.ask,
             plan: turn.plan,
+            // ⚠ `sound` AND `passes` ARE PAYLOADS, NOT DECORATION, AND BOTH WERE
+            // BEING LEFT BEHIND HERE. `normaliseTurn` returns five things a turn
+            // can carry — `plan`, `sound`, `ask`, `passes`, `look` — and this
+            // object was copying three of them field by field, which is the same
+            // shape of bug as a rebuilt `JsonRequest` dropping its capability
+            // (RULEBOOK E124): nothing throws, the field is simply not there.
+            //
+            // ⚠ WHAT IT COST, both seen live on 2026-09-05:
+            //   · `sound` — the panel counts cues into the Apply button
+            //     (`turn.sound?.sfx`), so fourteen cues and a music bed drew
+            //     **"Apply 0 edits · Nothing has changed yet"**. Worse than the
+            //     label: `apply()` starts `if ((!steps.length && !turn?.sound))
+            //     return`, so with a sound-only turn the button did LITERALLY
+            //     NOTHING when pressed. Sound has never once reached the timeline
+            //     through this panel.
+            //   · `passes` — `EditorChat.jsx` draws the paid-door buttons from
+            //     `turn.passes`, so ✨ Animate / 🎙 Voiceover / 🖼 Animatic images
+            //     never appeared, however clearly the chat offered them.
+            //
+            // ⚠ AND `toStore` (now in `chat_sessions.js`) ALREADY READ
+            // `t.passes`, which is the tell: the
+            // save projection was written for a field the live row never had, so
+            // the two halves disagreed and neither one failed out loud.
+            sound: turn.sound,
+            passes: turn.passes,
             // ⚠ THE SERVER'S DROPS AND THE CLIENT'S, TOGETHER. The server drops a
             // step whose verb it cannot read; the client drops one that will not
             // land on THIS film. Two different failures, and the user is owed
@@ -713,6 +686,10 @@ export default function useEditorChat({
       analysis: { shots: (sound.sfx || []).map((s) => ({ shot: s.shot, sfx: s.query })) },
       frames: ctx.frames || [],
       starts: ctx.starts || [],
+      // ⚠ THE PROJECT'S OWN ROOM, NOT A HOUSE NUMBER. A fourteen-shot board was
+      // told four times that "one pass fetches at most 10 different sounds" —
+      // about a project with room for thirty-four more files. See `soundRoom`.
+      room: soundRoom({ audioTracks: ctx.audioTracks, music: Boolean(sound.music) }),
     });
     const bed = sound.music ? musicCue({ analysis: { music: sound.music } }) : null;
     const payload = soundtrackRequest({ sounds: cued.sounds, music: bed });
@@ -783,16 +760,14 @@ export default function useEditorChat({
   }, [applySnapshot, onNotice, revertable]);
 
   const clear = useCallback(() => {
-    setTurns([]);
+    // ⚠ THROUGH THE STORE, NOT PAST IT. Emptying `turns` here alone would leave
+    // the SAVED chat exactly as it was, so the conversation would come straight
+    // back on the next refresh — a Clear button that clears nothing.
+    store.clearActive();
     setError("");
     setRevertable("");
     snapshotRef.current = null;
-    try {
-      localStorage.removeItem(STORE_PREFIX + animaticId);
-    } catch {
-      // Nothing was stored, so there is nothing to clear.
-    }
-  }, [animaticId]);
+  }, [store]);
 
   // ⚠ THE SESSION CAP COUNTS THIS BROWSER'S CONVERSATION, NOT THE MONTH. The
   // month is `quota`, enforced on the server. This one is the operator's runaway
@@ -829,7 +804,7 @@ export default function useEditorChat({
     blocked: overQuota
       ? `You've used all ${quota.limit} AI Editor messages this month. Upgrade for more, or wait until next month.`
       : overSession
-        ? "This conversation has gone on long enough — start a new one to carry on."
+        ? "This conversation has gone on long enough — press ＋ for a new chat."
         : "",
   };
 }

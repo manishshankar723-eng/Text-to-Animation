@@ -48,6 +48,21 @@ number chosen for every screen. It is a slider now, next to `opacity`, and the
 two are judged together against a real deployment.
 
 ---------------------------------------------------------------------------
+⚠ **AND THE SAVED-CHAT LIMITS LIVE HERE TOO, FOR THE SAME REASON.**
+---------------------------------------------------------------------------
+*"isme admin panel mai v daalo, mai limit set kar dunga — mai jitna daalun wahi
+hona chahiye"*. How many chats a project may keep, how many turns of one are
+kept, and how big one may get were environment variables for half a day, which
+means only somebody with a shell could change them. They are `max_chats_per_project`,
+`chat_history_keep` and `max_chat_chars` in `LIMITS` below, enforced in
+`server/editor_chat.py` and stored by `server/chat_sessions.py`.
+
+⚠ **THE OPERATOR'S NUMBER IS THE NUMBER.** `0` chats means NO ceiling, not
+"fall back to 40"; the bounds are the width of the input and the panel prints
+them, so nothing is quietly turned into something else behind the person who
+typed it.
+
+---------------------------------------------------------------------------
 ⚠ **THE TWO SAFETY RAILS DEFAULT ON AND SHOULD STAY ON.**
 ---------------------------------------------------------------------------
 `ask_on_spend` and `ask_on_destructive` are the "ask before you act" half of the
@@ -188,6 +203,41 @@ LIMITS = {
     # `opacity` IS BELOW 100** — there is nothing showing through a solid panel to
     # blur, and `backdrop-filter` is a per-frame GPU cost over a playing timeline.
     "blur": {"min": 0, "max": 40, "default": 0},
+    # ------------------------------------------------------------------
+    # WHAT A PROJECT MAY KEEP — the saved conversations (see chat_sessions.py)
+    # ------------------------------------------------------------------
+    # ⚠ THESE THREE WERE ENVIRONMENT VARIABLES FOR HALF A DAY AND THAT WAS
+    # WRONG. Asked for outright: *"isme admin panel mai v daalo, mai limit set
+    # kar dunga — mai jitna daalun wahi hona chahiye, mai handle kar lunga"*. A
+    # number only an SSH session can change is not a number an operator owns.
+    #
+    # ⚠ AND THE OPERATOR'S NUMBER IS ENFORCED EXACTLY. The bounds here are the
+    # width of the input, not a second opinion about the answer: the panel shows
+    # `min`–`max` beside every field (they travel on `admin_payload`), so a value
+    # outside them is refused in front of the person typing rather than silently
+    # becoming something else. That is the same lesson `opacity` learned when its
+    # floor of 40 was quietly overriding what the operator chose.
+    #
+    # How many saved chats one project may hold. ⚠ 0 MEANS NO LIMIT — an
+    # operator who does not want a ceiling must be able to say so, and "set it to
+    # 500 and hope" is not saying so.
+    "max_chats_per_project": {"min": 0, "max": 500, "default": 40},
+    # How many turns of ONE conversation are kept. Past this the oldest fall off
+    # the SAVED chat — the person still sees them until they reload, which is why
+    # the admin note says "kept", not "shown".
+    # ⚠ THE MAXIMUM HERE IS ALSO THE BROWSER'S HARD CAP (`HARD_KEEP` in
+    # `client/src/animatic/agent/chat_sessions.js`). If this max ever goes up
+    # without that constant going up with it, the browser trims first and the
+    # operator's number stops meaning anything. Pinned by
+    # `tests/chat_sessions_check.py` §11, which reads both files.
+    "chat_history_keep": {"min": 10, "max": 400, "default": 60},
+    # The size guard on ONE saved conversation, in characters of stored JSON.
+    # ⚠ MEASURED AS IT WILL BE STORED, not by counting turns: sixty short lines
+    # and sixty pasted scripts are the same number of turns and nowhere near the
+    # same document. Over it the save is REFUSED (413) rather than truncated —
+    # silently dropping half of somebody's conversation to make it fit is the
+    # kind of help nobody asked for.
+    "max_chat_chars": {"min": 20_000, "max": 2_000_000, "default": 400_000},
 }
 
 EDITABLE = frozenset({
@@ -199,6 +249,9 @@ EDITABLE = frozenset({
     "shot_detail_limit",
     "opacity",
     "blur",
+    "max_chats_per_project",
+    "chat_history_keep",
+    "max_chat_chars",
     "ask_on_spend",
     "ask_on_destructive",
     "allow_paid_passes",
@@ -236,6 +289,11 @@ def defaults() -> dict:
         "opacity": LIMITS["opacity"]["default"],
         # No blur, which is also what is on screen today. See LIMITS above.
         "blur": LIMITS["blur"]["default"],
+        # What a project may keep. See the block in LIMITS — the numbers are the
+        # operator's, and these three are only where they start.
+        "max_chats_per_project": LIMITS["max_chats_per_project"]["default"],
+        "chat_history_keep": LIMITS["chat_history_keep"]["default"],
+        "max_chat_chars": LIMITS["max_chat_chars"]["default"],
         "ask_on_spend": True,
         "ask_on_destructive": True,
         # ⚠ ON SINCE 2026-09-03, AND WHAT IT TURNS ON IS THE OFFER. Off, the

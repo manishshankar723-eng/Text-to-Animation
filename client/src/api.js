@@ -434,6 +434,46 @@ function qs(params) {
   return s ? `?${s}` : "";
 }
 
+/**
+ * A VALIDATION FAILURE, SAID IN WORDS — never the raw array.
+ *
+ * ⚠ THIS USED TO BE `JSON.stringify(detail)` AND IT PUT PYDANTIC ON THE SCREEN.
+ * FastAPI answers a 422 with a LIST of `{type, loc, msg, input}` objects, and
+ * stringifying it painted a wall of red JSON along the bottom of the editor:
+ * `[{"type":"greater_than_equal","loc":["body","audio_tracks",0,"trim_ms"], …`.
+ * The user could see something was wrong and could not see WHAT, and the thing
+ * it was hiding was the most expensive failure this app has had — every save of
+ * that project refused, silently, all night.
+ *
+ * So: how many things are wrong, WHICH PART of the project they are in, and the
+ * server's own sentence about the first one. Enough to report, and enough to
+ * act on.
+ */
+function readableDetail(detail) {
+  if (!Array.isArray(detail) || !detail.length) {
+    return detail ? JSON.stringify(detail) : "";
+  }
+  const where = (row) => {
+    const loc = Array.isArray(row?.loc) ? row.loc : [];
+    // `loc` reads ["body", "<field>", <index>, "<sub-field>"] — the part worth
+    // naming is the field, and the index if there is one.
+    const parts = loc.filter((p) => p !== "body");
+    const field = String(parts[0] ?? "").replace(/_/g, " ");
+    const index = parts.find((p) => typeof p === "number");
+    const leaf = parts.length > 1 ? String(parts[parts.length - 1]).replace(/_/g, " ") : "";
+    if (!field) return "";
+    const item = typeof index === "number" ? ` #${index + 1}` : "";
+    return leaf && leaf !== field ? `${field}${item} (${leaf})` : `${field}${item}`;
+  };
+  const first = detail[0] || {};
+  const spot = where(first);
+  const others = detail.length - 1;
+  return (
+    `The server refused this${spot ? ` — ${spot}` : ""}: ${first.msg || "invalid value"}` +
+    (others > 0 ? ` (and ${others} more like it).` : ".")
+  );
+}
+
 async function request(path, { method = "GET", body, isForm = false, timeoutMs, signal } = {}) {
   const headers = {};
   const token = getToken();
@@ -518,7 +558,7 @@ async function request(path, { method = "GET", body, isForm = false, timeoutMs, 
       detail = res.statusText;
     }
     throw new Error(
-      typeof detail === "string" ? detail : JSON.stringify(detail) || "Request failed"
+      typeof detail === "string" ? detail : readableDetail(detail) || "Request failed"
     );
   }
 
@@ -2261,6 +2301,68 @@ export function editorChatTurn(
     // finish and charge for it. The panel says so; see `stop` in
     // `useEditorChat.js`.
     signal,
+  });
+}
+
+// --- The ✨ AI Editor's saved chats ------------------------------------------
+// ONE PROJECT, MANY CONVERSATIONS, AND THEY OUTLIVE THIS BROWSER.
+//
+// ⚠ NOT ONE OF THESE FIVE SPENDS A PENNY OR CALLS A MODEL. `editorChatTurn`
+// above is still the only paid call in the feature and it is still STATELESS —
+// the transcript rides up with every message. These are the filing cabinet
+// beside it: what a person opens next week to see what they already had done in
+// this film. Asked for outright: *"user new chat bana kar alag alag baat kar
+// sake … aur sab chat save hona chahiye … project by project"*.
+//
+// ⚠ THE LIST DOES NOT CARRY THE TRANSCRIPTS, and that is deliberate on the
+// server too — forty chats of sixty turns is megabytes to draw a dozen titles.
+// `editorChatSession` is what fetches one. See `server/chat_sessions.py`.
+
+// FREE. This project's chats, newest first — `{sessions: [{session_id, title,
+// turn_count, created_at, updated_at}], limit}`. Never 404s on "none yet".
+export function editorChatSessions(id) {
+  return request(`/editor-chat/${id}/sessions`);
+}
+
+// FREE. Start a new chat. ⚠ THE ID COMES BACK FROM THE SERVER, never from here:
+// two tabs open on one project must not be able to mint the same one.
+//
+// ⚠ `turns` IS FOR ONE CASE AND IT IS NOT A NICETY — the editor opens on a
+// project that does not exist yet, so the first message is what CREATES it.
+// Those turns happened before there was anything to save them against, and this
+// is how they arrive rather than being lost.
+export function editorChatSessionCreate(id, { title = "", turns = [] } = {}) {
+  return request(`/editor-chat/${id}/sessions`, {
+    method: "POST",
+    body: { title, turns },
+  });
+}
+
+// FREE. One whole chat, transcript and all.
+export function editorChatSession(id, sessionId) {
+  return request(`/editor-chat/${id}/sessions/${sessionId}`);
+}
+
+// FREE. Save a chat (the autosave) or rename it.
+//
+// ⚠ UNDEFINED MEANS "LEAVE IT ALONE" AND `[]` MEANS "IT IS EMPTY", all the way
+// down to the store. A rename sends a title and no turns; an autosave sends
+// turns and no title. Sending both halves every time would make a rename that
+// raced an autosave overwrite the newer transcript with the older one.
+export function editorChatSessionSave(id, sessionId, { title, turns } = {}) {
+  const body = {};
+  if (title !== undefined) body.title = title;
+  if (turns !== undefined) body.turns = turns;
+  return request(`/editor-chat/${id}/sessions/${sessionId}`, {
+    method: "PUT",
+    body,
+  });
+}
+
+// FREE. Throw one chat away. Silent when it was already gone.
+export function editorChatSessionDelete(id, sessionId) {
+  return request(`/editor-chat/${id}/sessions/${sessionId}`, {
+    method: "DELETE",
   });
 }
 

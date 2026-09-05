@@ -3777,6 +3777,77 @@ class EditorChatResponse(BaseModel):
     turns_limit: int | None = None
 
 
+class EditorChatSessionSummary(BaseModel):
+    """One row of the 🕘 list — a chat WITHOUT its transcript.
+
+    ⚠ THE LIST IS ITS OWN SHAPE, NOT A CHAT WITH THE TURNS LEFT OUT. Forty
+    conversations of sixty turns is megabytes to draw a dozen titles, and a
+    panel that opened one of THOSE would be reading "no messages" off a chat it
+    simply had not loaded. Two shapes, so the difference cannot be mistaken.
+    """
+
+    session_id: str = ""
+    # Empty until the first message names it — see `titleFor` in the browser.
+    title: str = ""
+    # How many times the PERSON spoke. What the list is really saying is "was
+    # anything done in here", and the agent's own replies do not answer that.
+    turn_count: int = 0
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class EditorChatSessionList(BaseModel):
+    """GET /editor-chat/{job_id}/sessions — this project's chats, newest first."""
+
+    sessions: list[EditorChatSessionSummary] = Field(default_factory=list)
+    # The ceiling, sent so the panel can say "40 of 40" rather than only
+    # discovering the limit by being refused at the ＋ button.
+    limit: int = 0
+
+
+class EditorChatSession(BaseModel):
+    """One whole chat, transcript and all.
+
+    ⚠ `turns` IS THE BROWSER'S OWN TURN SHAPE, STORED AS IT ARRIVES. The server
+    never reads inside a turn and never sends one to a model — this is a record,
+    not a memory (see `chat_sessions.py`). Typing it here would put a second,
+    lagging definition of a turn in a second language, and the day they disagreed
+    the store would start dropping fields the panel needs.
+    """
+
+    session_id: str = ""
+    title: str = ""
+    turns: list[dict] = Field(default_factory=list)
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class EditorChatSessionCreate(BaseModel):
+    """Body for POST /editor-chat/{job_id}/sessions — start a new chat.
+
+    `turns` is here for ONE case and it is not a nicety: the editor opens on a
+    project that does not exist yet, so the first message is what creates it.
+    Those turns already happened in the browser before there was anything to
+    save them against, and this is how they arrive rather than being lost.
+    """
+
+    title: str = ""
+    turns: list[dict] = Field(default_factory=list)
+
+
+class EditorChatSessionUpdate(BaseModel):
+    """Body for PUT /editor-chat/{job_id}/sessions/{session_id}.
+
+    ⚠ BOTH FIELDS DEFAULT TO `None`, AND THAT IS THE POINT — `None` means
+    "leave it alone", `[]` means "it is empty". A rename sends a title and no
+    turns; an autosave sends turns and no title. Defaulting either to its empty
+    value would make renaming a chat wipe its transcript.
+    """
+
+    title: str | None = None
+    turns: list[dict] | None = None
+
+
 class EditorChatConfig(BaseModel):
     """GET /editor-chat/config — what the editor needs before it draws the panel.
 

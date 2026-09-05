@@ -40,6 +40,7 @@ import freesound
 import panel_sequence
 
 from . import config, worker
+from . import chat_sessions
 from .auth import CurrentUser, get_current_user
 # ⚠ THE GUARD THAT ACTUALLY TURNS A FEATURE OFF. The sidebar reading the same
 # registry is cosmetic — anyone can call these routes directly. See features.py.
@@ -789,15 +790,34 @@ def _older_than(stamp: str, seconds: int) -> bool:
     return (datetime.now(timezone.utc) - t).total_seconds() > seconds
 
 
-def _purge_animatic(job_id: str) -> None:
-    """Delete a project's folder and its record. Shared by DELETE and the sweep."""
+def _purge_animatic(job_id: str, owner: str = "") -> None:
+    """Delete a project's folder, its record and its ✨ AI Editor chats.
+
+    Shared by DELETE and the sweep.
+
+    ⚠ THE CHATS GO WITH IT, AND THAT IS WHY `owner` IS A PARAMETER. Chats are
+    stored keyed by (owner, project), so a deleted film without one would leave
+    every conversation about it behind for ever with nothing pointing at them —
+    invisible, un-deletable, and still holding what the person typed. An empty
+    `owner` sweeps nothing rather than guessing, and says so in the log.
+    """
     folder = _animatic_dir(job_id)
     if os.path.isdir(folder):
         try:
             shutil.rmtree(folder)
         except OSError:
             logger.exception("[animatic %s] could not remove %s", job_id, folder)
-    get_store().delete(job_id)
+    if owner:
+        try:
+            gone = chat_sessions.delete_project(owner, job_id)
+            if gone:
+                logger.info("[animatic %s] removed %d saved chat(s)", job_id, gone)
+        except Exception:
+            # ⚠ NEVER THE THING THAT STOPS A DELETE. A chat store that is down
+            # must not leave the user unable to remove their own project.
+            logger.exception("[animatic %s] could not remove its chats", job_id)
+    else:
+        logger.warning("[animatic %s] purged with no owner — chats left in place", job_id)
 
 
 def _summarise(job: Job, boards: dict | None = None) -> AnimaticSummary:
@@ -1222,7 +1242,7 @@ def list_animatics(
             ):
                 swept += 1
                 try:
-                    _purge_animatic(j.job_id)
+                    _purge_animatic(j.job_id, j.owner or "")
                     logger.info("[animatic %s] swept: empty and never named", j.job_id)
                 except Exception:
                     logger.exception("[animatic %s] sweep failed", j.job_id)
@@ -1441,7 +1461,7 @@ def delete_animatic(job_id: str, current: CurrentUser = Depends(get_current_user
             status_code=409,
             detail="This project is still exporting — wait for it to finish first.",
         )
-    _purge_animatic(job_id)
+    _purge_animatic(job_id, job.owner or "")
     return None
 
 

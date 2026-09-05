@@ -17,9 +17,29 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../api.js";
 
 import { assetForSave } from "./assets.js";
+import { audioForSave } from "./audio_clips.js";
 import { frameForSave } from "./frame_save.js";
 
 const AUTOSAVE_MS = 900;
+
+/**
+ * A FAILED SAVE IS RETRIED, AND THAT IS NOT BELT-AND-BRACES.
+ *
+ * ⚠ THE AUTOSAVE ONLY EVER FIRED ON A CHANGE. Its effect is keyed on the
+ * document's signature, so once a write failed, nothing tried again until the
+ * user touched the project — and if they had finished for the night, nothing
+ * ever did. That is the shape of the night's work that vanished: the save was
+ * refused, "⚠ Not saved" sat in the corner, and the editor waited for an edit
+ * that was never coming.
+ *
+ * Backed off (5s, 10s, 15s…) and bounded, because the two failures worth
+ * retrying are transient — a dropped connection, a server restarting — and a
+ * body the server will never accept is not made acceptable by sending it fifty
+ * more times. After the last try the state stays "error" and the header says so
+ * until the user presses Save.
+ */
+const RETRY_MS = 5000;
+const RETRY_TRIES = 4;
 
 
 /**
@@ -46,7 +66,11 @@ function signatureOf(doc) {
     layers: doc.layers,
     overlays: doc.overlays,
     transitions: doc.transitions,
-    audioTracks: doc.audioTracks,
+    // ⚠ NORMALISED ON BOTH SIDES, exactly like the frames and the cards. It is
+    // what the save sends, so it is what the baseline has to be signed from —
+    // otherwise a clip the clamp tidies reads as an edit on every render and the
+    // project is forever dirty. See `audioForSave` for what the clamp is protecting.
+    audioTracks: (doc.audioTracks || []).map(audioForSave),
   });
 }
 
@@ -152,6 +176,11 @@ export default function useAnimaticProject({
   const loadedRef = useRef(false);
   const docRef = useRef(null); // latest project, for the unmount flush
   const dirtyRef = useRef(false);
+  // The pending retry after a failed write, and how many have been spent. Reset
+  // by any successful save; see `RETRY_MS`.
+  const retryRef = useRef({ timer: 0, tries: 0 });
+  // `flush` reaching its own retry timer without either depending on the other.
+  const flushRef = useRef(null);
   // A signature of the project as it is ON THE SERVER. "Dirty" is decided by
   // comparing content against this — NOT by "did an effect fire", which is what
   // it used to do via a setTimeout(0) flag. That race was lost whenever React
@@ -313,9 +342,12 @@ export default function useAnimaticProject({
           assets: doc.assets.map(assetForSave),
           overlays: doc.overlays.map((o) => ({ ...o, url: undefined })),
           transitions: doc.transitions,
-          audioTracks: doc.audioTracks,
+          audioTracks: (doc.audioTracks || []).map(audioForSave),
         });
         baselineRef.current = sent;
+        // The write landed — nothing left to retry, whatever went wrong before.
+        clearTimeout(retryRef.current.timer);
+        retryRef.current = { timer: 0, tries: 0 };
         setSaveState("saved");
         setSavedFlash(true);
         // The exported file no longer matches the project — the server flags this
@@ -325,6 +357,19 @@ export default function useAnimaticProject({
         dirtyRef.current = true;
         setSaveState("error");
         onErrorRef.current?.(e.message);
+        // ⚠ AND TRY AGAIN BY ITSELF. A patched flush has a caller waiting on it
+        // and is told instead; an autosave has nobody to tell, which is exactly
+        // why it used to fail once and stay failed. See `RETRY_MS`.
+        if (!patch && retryRef.current.tries < RETRY_TRIES) {
+          const tries = retryRef.current.tries + 1;
+          clearTimeout(retryRef.current.timer);
+          retryRef.current = {
+            tries,
+            timer: setTimeout(() => {
+              if (dirtyRef.current) flushRef.current?.();
+            }, RETRY_MS * tries),
+          };
+        }
         // ⚠ RE-THROWN FOR A PATCHED FLUSH ONLY. A caller that saves on purpose
         // and then acts on the result — the storyboard import, whose urls are
         // only servable once the write lands — has to know it failed. The
@@ -335,6 +380,14 @@ export default function useAnimaticProject({
     },
     [animaticId]
   );
+
+  useEffect(() => {
+    flushRef.current = flush;
+  }, [flush]);
+
+  // Nothing may outlive the editor — a retry firing after unmount would write
+  // through a hook nobody is rendering.
+  useEffect(() => () => clearTimeout(retryRef.current.timer), []);
 
   // Let the tick fade after a moment. Cleared on any new edit too, via the
   // autosave effect below.

@@ -307,6 +307,49 @@ def sound_instruction() -> str:
     return (
         "SOUND: two fields, and both are SEARCH TERMS FOR A STOCK SOUND LIBRARY "
         "rather than descriptions.\n"
+        "\n"
+        "⚠ BEFORE YOU WRITE A SINGLE CUE, SAY WHAT KIND OF FILM THIS IS AND "
+        "WHERE IT IS SET. Read `film` and the shot descriptions and answer it "
+        "in one line to yourself: what is this — an ad, a promo, a story film, a "
+        "vlog, a cooking video, a fitness video, a music video, a logo sting, a "
+        "corporate film, a wedding, a festival, a documentary? And WHOSE world "
+        "is it — which place, which century, which faith or community if the "
+        "film is about one? EVERY CUE AFTER THAT MUST BE SOMETHING THAT WOULD "
+        "ACTUALLY BE HEARD IN THAT WORLD. A sound from a different film is worse "
+        "than silence: silence is neutral, a wrong sound is a lie about what the "
+        "audience is watching.\n"
+        "- ⚠ THE FAILURE THIS IS HERE TO STOP, WHICH REALLY HAPPENED. A "
+        "storyboard of a Hindu festival at home — marigold garlands, lit diyas, "
+        "a rangoli, a woman at a decorated puja table — was scored with \"pop "
+        "bubble\", \"camera shutter\", \"digital beep\", \"mouse click\", "
+        "\"glitch static\", under a bed of \"upbeat energetic corporate pop "
+        "vlog\". Every one of those is a UI noise from a tech vlog. That set — "
+        "whoosh, swoosh, beep, click, ding, notification, glitch, "
+        "\"corporate\", \"upbeat energetic\" — is the DEFAULT a model reaches "
+        "for when it does not know what the film is. If you find yourself "
+        "writing them, stop: either the film really is a tech vlog, or you have "
+        "just scored a stock template instead of this person's film.\n"
+        "- SO CUE WHAT THE PLACE ITSELF MAKES. A kitchen: sizzle, chopping, a "
+        "kettle. A temple or a shrine: a bell, a conch, a chant, an oil lamp. A "
+        "gym: a barbell, a rope, a breath. A market: a crowd, a hawker. A "
+        "wedding: a band, a drum, cheering. A newsroom, a farm, a beach, a "
+        "workshop — each one has its own noises, and they are the whole "
+        "vocabulary you need. The right question is never \"what sounds "
+        "exciting\", it is \"what would a microphone in this room have "
+        "picked up\".\n"
+        "- ⚠ CULTURE, FAITH AND PLACE ARE THE USER'S, AND ARE NEVER YOURS TO "
+        "SWAP. A film set in one tradition is not scored with another's music or "
+        "another's instruments, and it is never quietly translated into a "
+        "Western default because that is what a stock library has most of. If "
+        "the material names a festival, a rite, a region or a community, the "
+        "sound belongs to THAT one. If it does not name one, do not invent one — "
+        "cue what the pictures plainly contain, and nothing more.\n"
+        "- ⚠ AND IF YOU CANNOT SAY WHAT THE FILM IS, DO NOT SCORE IT. A board "
+        "with no descriptions, no genre and no script tells you only that there "
+        "are shots and how long they are. Leave `sfx` empty and set `music.query` "
+        "to \"\" rather than filling the hole with a guess. An unscored film the "
+        "user can score themselves is a far better outcome than a film wearing "
+        "somebody else's soundtrack.\n"
         "- ⚠ ONE TO THREE WORDS. NEVER MORE. THIS IS THE RULE THAT DECIDES WHETHER "
         "THE FILM GETS ANY SOUND AT ALL. The library matches EVERY word you write, "
         "so each extra word can only cut the results down — and a fourth adjective "
@@ -334,6 +377,15 @@ def sound_instruction() -> str:
         "swell\". BAD: \"ambient peaceful piano underscore\" — four words, and it "
         "finds nothing at all, so the film plays dry. The MOOD goes in `mood`, "
         "where it is read by a person; `query` is only for the search box.\n"
+        "- ⚠ AND THE BED COMES FROM THE FILM'S OWN WORLD, NOT FROM A GENRE "
+        "LABEL. \"upbeat energetic corporate pop\" is not a description of music, "
+        "it is what a stock library calls its biggest folder — and it is the "
+        "wrong folder for almost every film that is about something. Name the "
+        "INSTRUMENT or the TRADITION the film's world would actually play: "
+        "\"sitar tabla\", \"devotional bhajan\", \"temple flute\", \"oud "
+        "percussion\", \"gospel organ\", \"mariachi guitar\", \"taiko drums\", "
+        "\"celtic fiddle\", \"lofi guitar\", \"orchestral strings\". Still one to "
+        "three words, still searchable — but of THIS film.\n"
         "- One bed, not one per scene: a change of music is the strongest "
         "punctuation a film has and it is not yours to make. `query` is \"\" for a "
         "film that should play dry, which is the right answer for a dialogue scene "
@@ -398,6 +450,30 @@ def _clip(text: Any, limit: int) -> str:
     return out[: limit - 1].rstrip() + "…"
 
 
+def _film_of(board: dict) -> dict:
+    """WHAT KIND OF FILM THIS IS, clipped — or `{}` when nothing says.
+
+    ⚠ BUILT IN A FIXED KEY ORDER, like everything else in the brief: this object
+    is part of the determinism hash, so it may not depend on what the caller
+    happened to put in their dict first.
+
+    Filled in on the server by `fill_board_words` from the storyboard this
+    project came from. `{}` is the honest answer for a project made of uploads,
+    and the prompt is TOLD that rather than left to infer it — see
+    `sound_instruction`.
+    """
+    film = board.get("film") if isinstance(board.get("film"), dict) else {}
+    out = {
+        "title": _clip(film.get("title"), 120),
+        "genre": _clip(film.get("genre"), 60),
+        "world": _clip(film.get("world"), 300),
+        "logline": _clip(film.get("logline"), 400),
+        "market": _clip(film.get("market"), 60),
+        "language": _clip(film.get("language"), 40),
+    }
+    return out if any(out.values()) else {}
+
+
 def build_brief(board: dict, brief_text: str = "", language: str = "") -> dict:
     """Read a board payload into the object both calls are given.
 
@@ -420,6 +496,10 @@ def build_brief(board: dict, brief_text: str = "", language: str = "") -> dict:
             "holds_ms": max(0, ms),
             "label": _clip(item.get("label"), 120),
             "description": _clip(item.get("description"), MAX_DESCRIPTION_CHARS),
+            # WHERE IT HAPPENS — filled in from the storyboard panel this frame
+            # references (`fill_board_words`). One word of place decides more
+            # about what a shot SOUNDS like than anything else on this line.
+            "location": _clip(item.get("location"), 80),
             "dialogue": _clip(item.get("dialogue"), MAX_DIALOGUE_CHARS),
         }
         shots.append(entry)
@@ -434,6 +514,13 @@ def build_brief(board: dict, brief_text: str = "", language: str = "") -> dict:
         "total_ms": int(board.get("total_ms") or total),
         "language": (language or "").strip(),
         "brief": _clip(brief_text, MAX_BRIEF_CHARS),
+        # ⚠ WHAT KIND OF FILM THIS IS — the question every cue depends on, and
+        # the one the reading used to answer by guessing. Filled in on the server
+        # from the board this project was made from (`fill_board_words` in
+        # `server/common.py`); {} for a project made of uploads, which is a fact
+        # the prompt is told rather than left to infer. A Diwali puja board with
+        # none of this came back scored "mouse click" and "corporate pop vlog".
+        "film": _film_of(board),
         # What is ALREADY on the timeline. A Director that proposes a dissolve on
         # a cut that has one is proposing a replacement without knowing it, and a
         # second title over a title the user wrote is the edit they will
@@ -606,7 +693,19 @@ def plan_schema(vocabulary: dict) -> dict:
                         "note": {"type": "string", "description": "Why, in a few words. English."},
                         "args": {"type": "object", "properties": props},
                     },
-                    "required": ["verb"],
+                    # ⚠ `args` IS REQUIRED FOR THE SAME REASON `sound.sfx` IS: a
+                    # property this model is not asked for is one it may simply not
+                    # write, and a step with a verb and no arguments is a dead step.
+                    # Seen live on 2026-09-05 in the ✨ chat — the model sent
+                    # `{"verb": "note"}` with no `args`, and the panel showed
+                    # "no arguments this verb understands" over an empty plan.
+                    # ⚠ AN EMPTY OBJECT IS STILL A VALID ANSWER HERE, and it must be:
+                    # `args` is a FLAT union of every verb's argument names (there are
+                    # no unions in this schema — see `props` above), so nothing inside
+                    # it can be required without breaking every other verb. This says
+                    # "write the object", not "fill it"; `fold_steps` filters it by verb
+                    # and the client's validator still refuses a step that needs more.
+                    "required": ["verb", "args"],
                 },
             },
         },
@@ -879,7 +978,13 @@ def _vocabulary_for_prompt(vocabulary: dict) -> dict:
     text = vocabulary.get("text") or {}
     return {
         "verbs": vocabulary.get("verbs") or [],
-        "transitions": ids("transitions", ("params", "directions")),
+        # ⚠ `when` IS CARRIED, AND IT IS THE ONLY REASON A CHOICE IS POSSIBLE.
+        # `note` says what a transition DOES ("an edge travels across"); `when`
+        # says what it MEANS and where it belongs. Trimmed to ids and mechanics,
+        # a planner has twelve interchangeable things and picks the safest one
+        # every time — which is how a fourteen-shot reel came back carrying
+        # thirteen identical dissolves. See `TRANSITIONS` in `transitions.js`.
+        "transitions": ids("transitions", ("when", "params", "directions")),
         "transition_ms": vocabulary.get("transitionDurationMs") or {},
         "effects": ids("effects", ("params",)),
         "shapes": ids("shapes"),

@@ -437,3 +437,88 @@ export function audioEndMs(tracks) {
   }
   return end;
 }
+
+/**
+ * HOW MANY AUDIO **FILES** ONE PROJECT MAY HOLD.
+ *
+ * ⚠ MIRRORS `API_MAX_ANIMATIC_AUDIO_TRACKS` ON THE SERVER, and it is FILES, not
+ * clips: the razor and the looped music bed both make many clips out of one
+ * file and neither costs anything here. `MAX_ANIMATIC_AUDIO_CLIPS` is the other
+ * cap.
+ *
+ * ⚠ IT LIVES HERE RATHER THAN IN THE EDITOR BECAUSE THE SOUND PASS NEEDS IT
+ * TOO. It used to be a private constant in `AnimaticEditor.jsx`, so
+ * `sound_pass.js` could not see the real room and invented a number of its own
+ * (a flat ten) — which is how a fourteen-shot board was told "one pass fetches
+ * at most 10 different sounds" while the project had room for six more. One
+ * ceiling, in the one file both sides import.
+ */
+export const MAX_AUDIO_FILES = 48;
+
+/** How many DISTINCT files these tracks read — the number the cap counts. */
+export function audioFileCount(tracks) {
+  return new Set((tracks || []).map((t) => t.upload_id).filter(Boolean)).size;
+}
+
+/**
+ * EXACTLY WHAT AN AUDIO CLIP LOOKS LIKE WHEN IT IS SAVED — and the last place a
+ * bad number can be stopped before it costs the user their project.
+ *
+ * ⚠ THIS EXISTS BECAUSE ONE FIELD ON ONE CLIP SILENTLY KILLED EVERY SAVE. The
+ * soundtrack pass wrote `trim_ms: 0` meaning "no trim"; the schema says trim is
+ * either absent or **at least 100** (`AnimaticAudio.trim_ms`, `ge=100`). So the
+ * whole document was refused with a 422 — not the clip, the DOCUMENT — and the
+ * autosave re-sent the same rejected body forever. Reported from the screen:
+ * sound and music laid down at night, project opened blank in the morning, with
+ * a wall of raw validation JSON along the bottom of the editor.
+ *
+ * ⚠ SO IT IS A CLAMP AS WELL AS A WHITELIST, and that is the difference between
+ * this and `assetForSave` / `frameForSave`. Those two exist so a field is not
+ * DROPPED. This one also exists so a field cannot be POISONED: every number is
+ * forced into the range the schema accepts, on the way out, whatever put it
+ * there. A future field written wrong by some new pass costs that field, never
+ * the project.
+ *
+ * `url` is deliberately absent: the server fills it on read and ignores it on
+ * write, so sending it back would store a path that goes stale.
+ *
+ * `tests/audio_save_contract_check.py` compares this list against
+ * `AnimaticAudio` and drives it with values no clip should ever carry.
+ */
+export function audioForSave(track) {
+  const t = track || {};
+  const num = (v, fallback = 0) => (Number.isFinite(Number(v)) ? Number(v) : fallback);
+  const ms = (v, lo, hi) => Math.max(lo, Math.min(hi, Math.round(num(v))));
+  // ⚠ THE ONE THAT BROKE IT. `null` is "play the whole file" and is what the
+  // schema means by absent; anything shorter than the floor is not a trim, it
+  // is a number somebody meant as "none". Both become null rather than 0.
+  const rawTrim = Math.round(num(t.trim_ms));
+  const trim = rawTrim >= MIN_CLIP_MS ? rawTrim : null;
+  const curve = (v) => (["linear", "power", "exponential"].includes(v) ? v : "linear");
+  const db = (v) => Math.max(-12, Math.min(12, num(v)));
+  return {
+    id: t.id || "",
+    upload_id: t.upload_id || "",
+    layer_id: t.layer_id || "",
+    group_id: t.group_id || "",
+    filename: t.filename || "",
+    duration_ms: Math.max(0, Math.round(num(t.duration_ms))),
+    start_ms: Math.max(0, Math.round(num(t.start_ms))),
+    offset_ms: Math.max(0, Math.round(num(t.offset_ms))),
+    trim_ms: trim,
+    volume: Math.max(0, Math.min(2, num(t.volume, 1))),
+    muted: Boolean(t.muted),
+    fade_in_ms: ms(t.fade_in_ms, 0, 60000),
+    fade_out_ms: ms(t.fade_out_ms, 0, 60000),
+    fade_in_curve: curve(t.fade_in_curve),
+    fade_out_curve: curve(t.fade_out_curve),
+    eq_low: db(t.eq_low),
+    eq_mid: db(t.eq_mid),
+    eq_high: db(t.eq_high),
+    role: t.role || "",
+    // 1.0 is "never ducks", and the schema's floor is 0.05 — a 0 written by
+    // something that meant "off" would refuse the save exactly as trim did.
+    duck_to: Math.max(0.05, Math.min(1, num(t.duck_to, 1))),
+    duck_target: t.duck_target || "",
+  };
+}

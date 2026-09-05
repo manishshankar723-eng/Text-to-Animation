@@ -165,6 +165,17 @@ out.badKind = T({ kind: "plan", reply: "Swirling.",
 // A plan whose every step died is an ANSWER, not an Apply button over nothing.
 out.deadPlan = out.badVerb.turn.kind;
 
+// ⭐ EVERY FIELD A TURN CAN CARRY, asked of the real `normaliseTurn` rather
+// than listed by hand — the Python side checks that the hook copies all of
+// them into the row the panel draws from. A turn deliberately carrying the
+// lot: steps, sound AND an offer.
+out.turnKeys = Object.keys(T({
+  kind: "plan", reply: "everything at once",
+  plan: { steps: [{ verb: "add_transition", args: { cut: 1, kind: "dissolve" } }] },
+  sound: { sfx: [{ shot: 1, query: "temple bell" }], music: { query: "sitar" } },
+  passes: [{ door: "veo", why: "shot 4 would carry footage" }],
+}).turn);
+
 // -------------------------------- 3b. a plan of nothing but NOTES is not one
 // ⭐ SEEN LIVE, 2026-09-05. "add music and sound effects in this storyboard
 // story wise" came back as one note, no sound, under a reply claiming the work
@@ -299,12 +310,17 @@ out.sound = {
     kind: "plan", reply: "x",
     sound: { sfx: [{ shot: 2, query: "bell" }, { shot: 2, query: "crowd" }] },
   }),
-  // ⚠ THE BUDGET IS SHARED ACROSS THE WHOLE DEPLOYMENT — 60 requests a minute.
   // ⚠ A FOURTEEN-SHOT FILM, NOT THE FOUR-SHOT FIXTURE, and the difference is the
   // whole check. On four shots the one-cue-per-shot rule bites first and only
   // four cues ever survive — so the assertion passed while proving nothing about
-  // the budget. The shared Freesound ceiling is only reachable when there are
-  // more shots than distinct sounds allowed.
+  // the ceiling at all.
+  //
+  // ⚠ AND THE CEILING IS THE PROJECT'S ROOM NOW. This used to assert that a
+  // fourteen-shot board came back with ten cues and four refusals, because the
+  // limit was a flat ten written into the pass. That is what the user saw on
+  // screen — *"4 things I couldn't use · one pass fetches at most 10 different
+  // sounds"* — on a project that had room for thirty-four more files. An empty
+  // project must now take all fourteen.
   overCap: normaliseTurn(
     {
       kind: "plan", reply: "x",
@@ -319,6 +335,28 @@ out.sound = {
         id: `b${i + 1}`, label: `S${i + 1}`, duration_ms: 2000,
       })),
       starts: Array.from({ length: 14 }, (_, i) => i * 2000),
+    }
+  ),
+  // …and the SAME board on a project whose audio-file room is nearly gone. The
+  // refusal is a fact about their project rather than a house rule, so the panel
+  // can tell them something they can act on.
+  noRoom: normaliseTurn(
+    {
+      kind: "plan", reply: "x",
+      sound: {
+        sfx: Array.from({ length: 14 }, (_, i) => ({ shot: i + 1, query: `sound ${i}` })),
+        music: { query: "soft sitar" },
+      },
+    },
+    caps,
+    {
+      ...ctx,
+      frames: Array.from({ length: 14 }, (_, i) => ({
+        id: `b${i + 1}`, label: `S${i + 1}`, duration_ms: 2000,
+      })),
+      starts: Array.from({ length: 14 }, (_, i) => i * 2000),
+      // 45 files already filed, plus a slot held for the bed, leaves room for 2.
+      audioTracks: Array.from({ length: 45 }, (_, i) => ({ upload_id: `have${i}` })),
     }
   ),
   // Nothing usable at all is not a plan.
@@ -534,6 +572,46 @@ def client_checks(data: dict) -> None:
         data["deadPlan"] == "answer",
     )
 
+    # -------------------------------------------------------------------
+    # ⭐ WHAT `normaliseTurn` RETURNS AND WHAT THE PANEL IS GIVEN ARE TWO
+    #   DIFFERENT OBJECTS, AND THE SECOND IS BUILT FIELD BY FIELD.
+    #
+    # `useEditorChat.send` copies the turn into the row the panel draws from,
+    # naming each field — and it was naming three of five. Nothing threw; the
+    # fields were simply not there. Both cost a whole feature, live 2026-09-05:
+    #
+    #   · `sound` — the button counts cues (`turn.sound?.sfx`), so fourteen
+    #     cues and a bed drew "Apply 0 edits · Nothing has changed yet"; and
+    #     `apply()` opens `if ((!steps.length && !turn?.sound)) return`, so on
+    #     a sound-only turn the button did LITERALLY NOTHING when pressed.
+    #   · `passes` — `EditorChat.jsx` draws the paid-door buttons from
+    #     `turn.passes`, so ✨ Animate / 🎙 Voiceover / 🖼 Animatic images
+    #     never appeared however clearly the chat offered them.
+    #
+    # ⚠ SO THE LIST IS ASKED OF THE REAL FUNCTION, NOT WRITTEN HERE. A sixth
+    # payload added to `normaliseTurn` tomorrow fails this check until the hook
+    # carries it — which is the only version of this test worth having, because
+    # naming `sound` and `passes` is guarding the two we already fixed.
+    # ⚠ IT READS SOURCE, and that is a deliberate trade: the projection lives
+    # inside a React hook and is not exported, so there is nothing to import.
+    # Renaming the row's fields will fail this — correctly: it is the panel's
+    # contract.
+    # -------------------------------------------------------------------
+    hook = (ROOT / "client" / "src" / "animatic" / "agent" / "useEditorChat.js").read_text(
+        encoding="utf-8")
+    start = hook.find('role: "agent",')
+    row = hook[start:start + 4000] if start >= 0 else ""
+    check("the agent row that the panel draws from is still findable",
+          bool(row), "role: \"agent\" not found in useEditorChat.js")
+    # `reply` is stored under the name `text`; every other payload keeps its name.
+    RENAMED = {"reply": "text"}
+    carried = [RENAMED.get(k, k) for k in data["turnKeys"]]
+    check("⭐ …and the turn it is built from carries all five payloads",
+          {"kind", "text", "plan", "sound", "passes"} <= set(carried), str(carried))
+    for field in carried:
+        check(f"⭐    the row copies `{field}` — or the panel never sees it",
+              ("%s:" % field) in row, "missing from the agent row")
+
     # ⭐ THE ONE THAT SHIPPED A LIE. Every step below is VALID — nothing is
     # dropped, nothing is malformed — and the plan still changes nothing, because
     # `note` is `run: () => {}`. The old test was `steps.length`, which a note
@@ -649,13 +727,18 @@ def client_checks(data: dict) -> None:
     check("one cue per shot", len(s["dupeShot"]["turn"]["sound"]["sfx"]) == 1)
     check("…and the second is reported, not silent",
           any("already has a sound" in d["why"] for d in s["dupeShot"]["drops"]))
-    # ⚠ THE PREVIEW MUST PROMISE WHAT THE PASS WILL ACTUALLY FETCH.
-    check("the shared sound budget is enforced in the PREVIEW",
-          len(s["overCap"]["turn"]["sound"]["sfx"]) <= 10,
-          str(len(s["overCap"]["turn"]["sound"]["sfx"])))
-    check("…and the refusals are counted",
-          any("different sounds" in d["why"] for d in s["overCap"]["drops"]),
-          str(s["overCap"]["drops"]))
+    # ⚠ THE PREVIEW MUST PROMISE WHAT THE PASS WILL ACTUALLY FETCH — and the
+    # ceiling it promises against is the PROJECT'S ROOM, not a house number.
+    check("⚠ a 14-shot board on an empty project keeps all 14 cues",
+          len(s["overCap"]["turn"]["sound"]["sfx"]) == 14
+          and not [d for d in s["overCap"]["drops"] if d["what"] == "sound"],
+          f'{len(s["overCap"]["turn"]["sound"]["sfx"])} / {s["overCap"]["drops"]}')
+    nr = s["noRoom"]
+    check("…but a project with no audio-file room left refuses the extras",
+          len(nr["turn"]["sound"]["sfx"]) == 2, str(len(nr["turn"]["sound"]["sfx"])))
+    check("…and the reason names the PROJECT, so the user can act on it",
+          any("this project can hold" in d["why"] for d in nr["drops"]),
+          str(nr["drops"][:1]))
     check("an empty sound block is not a plan", s["empty"]["turn"]["kind"] == "answer")
 
     print("\n6 · Dead air, filler, and what the model is told about sound\n")
@@ -820,6 +903,83 @@ def server_checks() -> None:
     check("an empty block is None, not an empty plan",
           agent._coerce_sound({"sfx": [], "music": {}}) is None)
     check("garbage is None", agent._coerce_sound(None) is None)
+
+    # -------------------------------------------------------------------
+    # ⭐ `required` IS THE ONLY PART OF THIS SCHEMA THE MODEL RELIABLY OBEYS.
+    #
+    # The ✨ chat runs on NATIVE structured output, and a property that is not
+    # in its object's `required` list is one the model may simply NOT WRITE —
+    # not fill badly, not leave empty: omit the key entirely. Proved live on
+    # 2026-09-05 by changing ONE line and nothing else, same board, same
+    # message ("add music and sound effects in this storyboard story wise"):
+    #
+    #   sound.required = []        →  "sound": {"music": {…}}          no sfx KEY
+    #   sound.required = ["sfx"]   →  "sound": {"sfx": [14 cues], "music": {…}}
+    #
+    # ⚠ AND EVERY WORD-SHAPED FIX FAILED FIRST — the house rule lifted in
+    # `prompts.yaml`, the field's own description rewritten to say "an empty
+    # list is a refusal", the rule moved directly under the verb list in the
+    # turn prompt, and finally the field path named in the USER'S OWN message.
+    # All four left it empty. So this is not a style check: it is the one
+    # property of this schema that decides whether the feature does anything.
+    #
+    # ⚠ IT IS PINNED AS AN EXACT MAP, NOT A "MUST CONTAIN". Adding a property
+    # to any object here is a decision about whether the model will ever write
+    # it, and a test that only checked the known-bad fields would let the next
+    # one through silently. Change the schema and you must change this table —
+    # that is the point of it.
+    # -------------------------------------------------------------------
+    print()
+    vocab = {"verbs": [
+        {"id": "note", "args": ["text"]},
+        {"id": "add_effect", "args": ["shot", "kind", "params"]},
+    ]}
+    REQUIRED = {
+        "": ["kind", "reply"],
+        "ask": ["question", "options"],
+        "ask.options[]": ["label"],
+        "plan": ["summary", "steps"],
+        # ⭐ `args` — the same bug in the same schema. Seen live: the model sent
+        # `{"verb": "note"}` with no args at all, and the panel showed "no
+        # arguments this verb understands" over an empty plan. Nothing INSIDE
+        # `args` can be required (it is a flat union of every verb's argument
+        # names), so "write the object" is the strongest thing sayable here.
+        "plan.steps[]": ["verb", "args"],
+        "plan.steps[].args": [],
+        "plan.steps[].args.params[]": ["name", "value"],
+        "look": ["shots"],
+        "passes[]": ["door"],
+        # ⭐ THE ONE THAT WAS THE BUG.
+        "sound": ["sfx"],
+        "sound.sfx[]": ["shot", "query"],
+        # ⚠ `music` STAYS OPTIONAL ON PURPOSE: it arrived in all four live runs
+        # unasked, and requiring it would push the model to invent a bed for
+        # somebody who asked only for a door slam.
+        "sound.music": [],
+    }
+
+    def objects(node, path=""):
+        """Every OBJECT in the schema that has properties, by dotted path."""
+        if not isinstance(node, dict):
+            return
+        if node.get("type") == "object" and (node.get("properties") or {}):
+            yield path, [k for k in (node.get("required") or [])]
+            for name, child in (node.get("properties") or {}).items():
+                yield from objects(child, f"{path}.{name}" if path else name)
+        elif node.get("type") == "array":
+            yield from objects(node.get("items") or {}, path + "[]")
+
+    found = dict(objects(agent.reply_schema(vocab)))
+    check("⭐ EVERY OBJECT IN THE REPLY SCHEMA IS ACCOUNTED FOR",
+          set(found) == set(REQUIRED),
+          f"new: {sorted(set(found) - set(REQUIRED))} gone: {sorted(set(REQUIRED) - set(found))}")
+    for where in sorted(set(found) & set(REQUIRED)):
+        check(f"   required at {where or '(root)'} is {REQUIRED[where] or 'NONE'}",
+              sorted(found[where]) == sorted(REQUIRED[where]), str(sorted(found[where])))
+    check("⭐ …and `sound.sfx` is named, which is what makes sound effects arrive",
+          "sfx" in found.get("sound", []), str(found.get("sound")))
+    check("⭐ …and `args` is named, which is what stops a step arriving empty",
+          "args" in found.get("plan.steps[]", []), str(found.get("plan.steps[]")))
 
     # ⭐ AND THE SERVER REFUSES A NOTE-ONLY PLAN TOO, INDEPENDENTLY. The client
     # states this rule in `chat_turn.js`'s own header and still shipped it broken;

@@ -112,12 +112,19 @@ export const HOUSE_CAPS = {
   MIN_CLIP_MS: 200,
 };
 
-/** `[{ id, label, note }]` for every transition this build renders. */
+/** `[{ id, label, note, when }]` for every transition this build renders. */
 function transitionVocab() {
   return TRANSITIONS.map((t) => ({
     id: t.id,
     label: t.label,
     note: t.note || "",
+    // ⚠ WHAT IT MEANS, NOT WHAT IT DOES — the half a planner actually needs.
+    // `note` says "an edge travels across"; `when` says that is a deliberate
+    // move somewhere new and belongs in an ad or a promo. Without it the model
+    // has twelve mechanisms and no grammar, and picks a dissolve every time —
+    // which is exactly what a fourteen-shot reel came back with. See the note
+    // over `TRANSITIONS` in `transitions.js`.
+    when: t.when || "",
     // Which parameters it takes, and the legal values for the one that is a
     // CHOICE rather than a number. A planner that knows "wipe takes a direction"
     // stops proposing `{ softness: "left" }`.

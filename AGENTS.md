@@ -308,7 +308,17 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-09-05 — **ONE STROKE WAS NOT ENOUGH: THE BOXES INSIDE THE CHAT PANEL HAD NO EDGE EITHER.** *"under wale panel v thora highlight karo, thora merge ho raha hai — jab text likhne jata hun tab aata hai wo thik hai, magar panel se v thora highlight karo"*. Yesterday's `--ec-stroke` fixed the panel's OUTER edge and stopped there. ⚠ **THE INNER BOXES LOST BOTH OF THEIR SIGNALS AT ONCE** — the log and the composer wear `--border` from `storyboard.css`, and **E115** had already taken their fill away entirely (that is what stops the alpha stacking three deep), so on a see-through panel there was nothing whatsoever marking where the conversation ended and the typing box began. New **`--ec-stroke-in`**, derived the same way and applied to the log, the composer and both chrome dividers. ⚠ **IT IS DELIBERATELY WEAKER THAN THE OUTER ONE, AND THAT ORDERING IS THE RULE**: three edges of the same weight is a grid, not a window — the outer stroke has to stay the strongest line on screen or it stops reading as the panel's boundary. Both tokens lift together when the panel goes see-through, and stay a step apart. ⚠ **THE FOCUS STATE IS UNTOUCHED** — `.sc-composer:focus-within` is one specificity step above this, so clicking into the box still paints the gold exactly as before; that half was already right and the fix is only about finding the box BEFORE focusing it. **RULEBOOK E116 extended** (outer AND inner). Chat + admin suites green, `npm run build` green. ⚠ **NOT SEEN ON A SCREEN BY ME** — the two ratios (82/18 normally, 62/38 when see-through) are the numbers to tell me to move. See the Work Log.
+**Last updated:** 2026-09-05 — **THE ✨ CHAT'S ＋ OPENED A CHAT THE PROJECT HAD NO ROOM FOR.** *"maine admin panel mai ek likha to yaha pe new chat open hua — kya yah sahi hai?"* — no, and the screenshot showed why: ceiling set to **1**, one real chat already saved, and ＋ answered with a cheerful empty *"New chat"*, footer still promising *"saved with this project"*, with the 🕘 list printing *"1 of 1 chats in this project"* directly above the live button. ⚠ **WHAT WOULD HAVE HAPPENED NEXT IS THE POINT**: type a whole message, the autosave posts a create, the server answers **409**, and the refusal arrives *after* the work. **The panel opened something it already knew it could not save.** ⚠ **THE SERVER GUARD WAS NEVER THE BUG** — it is still the only real one (another tab, a lowered ceiling, a direct POST). What was missing is that the CLIENT had every fact it needed to answer first: the list and the ceiling both come down on `GET /sessions`. A refusal that can be given before the work is a refusal that must be. ⚠ **AND "AS MANY ROWS AS THE CEILING" IS THE WRONG TEST** — the server sweeps chats nobody ever typed in *before* it refuses, so a project whose rows include an empty one still has room; greying ＋ out there is the mirror-image bug. `isFull(sessions, limit)` in `chat_sessions.js` is the one place that decides, and `limit: 0` is **no ceiling**, never "no room" (E138, and `opacity: 0` before it). ⚠ **DISABLED, NOT HIDDEN, WITH THE WAY OUT ON HOVER** (*"delete one to start another"*) — a control that vanishes at a limit reads as a feature that broke. ⚠ **AND THE FOOTER STOPS PROMISING**: on an unsaved chat in a full project it says the project is full, in `--warn`, because the ceiling can be lowered in the admin panel while somebody is part-way through. New **RULEBOOK E140**; `editor_chat_render_check.py` §6e (8 checks, **proved to fail with the `disabled` removed**) and `chat_store_check.mjs` §1b (9 checks on `isFull`). 7 suites green + `npm run build`. ⚠ **NOT SEEN IN A BROWSER BY ME** — ceiling 1, one chat with a message: ＋ must be greyed out and explain itself on hover, and the existing chat must still open normally. See the Work Log.
+
+**Previously:** 2026-09-05 — **THE ✨ CHAT'S RENAME BOX COULD ONLY HOLD ONE LETTER.** *"jab mai rename kar rahun to ek letter likha raha hai, dusra letter likhta hun to pahla ko hata de raha hai same jagah pe"*. Type "c", type "a", the box says "a" — and the screenshot showed the tell: that single "c" sitting there **highlighted**. ⚠ **THE CAUSE**: opening the box calls `select()` (correct — it opens over a name being replaced, and nobody should have to clear the old one first), but the effect doing it depended on `[renaming]`, the TEXT. So it re-ran on every change, re-highlighted the whole field, and the next letter replaced the selection. **Nothing throws and nothing warns** — it looks like a broken keyboard, which is how it survived a green build and seventeen green suites. ⚠ **AND THE APP ALREADY KNEW THE ANSWER**: `MediaBin.jsx`'s own rename box carries this fix with a comment naming this exact trap (*"the `activeElement` guard is what stops the text being re-selected on every keystroke, since a ref callback runs every render"*) — I wrote the chat's box without reading it and re-derived it wrong. So the fix is not a new mechanism, it is **MediaBin's, copied**: a ref callback guarded by `document.activeElement !== el`, with `preventScroll` for the same reason MediaBin gives. **One idiom for opening a rename box, not two.** ⚠ **A RENDER TEST CANNOT SEE THIS** — `renderToStaticMarkup` runs no effects, there is no DOM, and jsdom is a dependency this project does not have and does not want. So `editor_chat_render_check.py` **§6d reads the mechanism out of the source file** (the `ec-sess-input`'s ref callback: `select()`, the guard, `preventScroll`) plus one check that MediaBin still carries the same guard, so they cannot drift into two idioms again — **proved to fail with the guard removed**. New **RULEBOOK E139**. 7 suites green + `npm run build`. ⚠ **NOT SEEN IN A BROWSER BY ME** — rename a chat and type a whole word: it must keep the whole word, and the old name must still be selected the instant the box opens. See the Work Log.
+
+**Previously:** 2026-09-05 — **THE ✨ CHAT'S SAVED-CHAT LIMITS ARE ADMIN-PANEL FIELDS NOW, NOT ENVIRONMENT VARIABLES.** *"isme admin panel mai v daalo, mai limit set kar dunga, mai jitna daalun ohi hona chahiye, mai handle kar lunga"*. This morning's three ceilings were `API_MAX_CHAT_*` env vars and a hard-coded 60 in the browser — **a number only an SSH session can change is not a setting, it is a constant with extra steps.** They are three fields on the Chat tab under **"What a project keeps"**, beside opacity and blur: **chats per project** (0–500, 0 = no limit, default 40), **messages kept per chat** (10–400, default 60) and **size of one chat** (20k–2M characters, default 400,000). ⚠ **THE ENV VARS WERE DELETED, NOT KEPT AS A HIDDEN CEILING OVER THE PANEL** — a maximum that quietly overrules what the operator typed is exactly the fault `opacity`'s floor of 40 was (E115). ⚠ **`0` MEANS NO LIMIT AND IT HAS TO** — "set it to 500 and hope" is not saying "no ceiling", and a `0` read as falsey and replaced by the default is the identical bug `opacity: 0` had on this same router; enforcement is `> 0`, never `or`. ⚠ **THE ONE THAT WOULD HAVE FAILED SILENTLY**: the browser's own mirror cap sat at 60, so setting "messages kept" to 200 would have done nothing at all — the turns are dropped before the server ever sees them. The cap is now the admin field's MAXIMUM (400), the trim happens on the server, and `tests/chat_sessions_check.py` §11 reads that constant **out of the `.js` file** so the two cannot drift. ⚠ **AND WHAT GOING OVER EACH ONE DOES IS PRINTED BESIDE IT** — two refuse out loud, one drops the OLDEST messages, and an operator has no way to tell which from a number field. The 🕘 list now also shows *"3 of 40 chats in this project"*. New **RULEBOOK E138** (**E135** points at it); §11 is 24 checks and every one moves the setting and then proves the ROUTE changed with it. 8 suites green + `npm run build`. ⚠ **NOT SEEN IN A BROWSER BY ME** — set chats-per-project to 1 and press ＋ twice: the second must be refused, the first chat must still be there. See the Work Log.
+
+**Previously:** 2026-09-05 — **ONE PROJECT NOW HOLDS MANY ✨ CHATS, AND THEY ARE SAVED ON THE SERVER.** *"tum tab ka function banao chat ka … user new chat bana kar alag alag baat kar sake … aur sab chat save hona chahiye, us project mai dekh sake fir baad mai — project by project … mujhe production level bana hai"*. ⚠ **THE TWO HALVES WERE THE SAME PROBLEM**: the transcript lived in ONE `localStorage` key per project, so there was nowhere to put a second conversation, and the footer said — honestly — *"saved in this browser only"*. ⚠ **THE LINE IS THE DESIGN**: the WORK (titles, transcripts) is the SERVER's, keyed by **(owner, project)**, because it follows the account; WHICH CHAT WAS OPEN and a mirror of that ONE chat's turns stay in the browser, because "where was I" is a fact about one screen and the mirror is what makes a reopened panel paint instantly and survive a dead network — a CACHE, with the server as the truth. New `server/chat_sessions.py` (Mongo, or a JSON file, on the same `API_USER_STORE` switch `drafts.py` uses) and five routes on the existing `/editor-chat` router. ⚠ **THE EXPENSIVE BUG, NAMED AND PINNED**: `None` means "leave it alone" and `[]` means "it is empty", from the request body down to the document — a rename posts a title and no turns, an autosave posts turns and no title, and collapsing the two with `or` makes **renaming a chat delete its transcript**, invisible until it happens to somebody with a long one. ⚠ **THE CEILING IS A CEILING, NOT A BIN** — over 40, the store sweeps chats *nobody ever typed in* and then refuses out loud; it never deletes a conversation to make room, and a deleted project takes its chats with it. ⚠ **THE OLD KEY IS RESCUED ONCE, AND DROPPED ONLY AFTER THE TURNS ARE ON THE SERVER** — every existing user has a conversation under v1, and shipping without that would have looked exactly like the feature deleted their history. ⚠ **THE PANEL GOT A NAME, A CLOCK AND A ＋ — NOT A TAB STRIP**: the panel is 300–760px wide, so two tabs fill it and the first thing a strip truncates is the NAME, the only thing telling two conversations apart. ⚠ **AND A CHAT IS NOT CREATED UNTIL SOMEBODY SPEAKS IN IT** (E118's rule again), named from the first thing the PERSON said. Three real races guarded: an EPOCH counter (an id cannot tell a new chat from the last one — both are `""`), one write in flight at a time, and a spinner owned by the newest fetch. New **RULEBOOK E135, E136, E137**; **E113** points at E135. New `tests/chat_sessions_check.py` (47) and `tests/chat_store_check.mjs` (44), `editor_chat_render_check.py` §6c. 14 suites green + `npm run build`. ⚠ **NOT SEEN IN A BROWSER BY ME** (G7) — rename a long chat and check the messages survived; open a project you have used before and check the old conversation came across. See the Work Log.
+
+**Previously:** 2026-09-05 — **THE ✨ CHAT WINDOW RESIZES FROM ALL FOUR SIDES NOW.** *"jaise abhi ek taraf se hi chota bara kar karta hun, mai chahta hun ki charo taraf se chota bara kar sakun"*. The floating window had one handle — the bottom-right corner — so a window near the right edge could only be grown by first dragging it left. It now has **eight**: four sides, four corners. ⚠ **THE LEFT AND TOP EDGES MOVE THE WINDOW AS WELL AS RESIZE IT, AND THAT IS WHERE THE SILENT BUG LIVES** — `x + dx` with `w - dx` and a clamp at the end keeps sliding `x` after `w` has bottomed out at `MIN_W`, so past the minimum the window **stops shrinking and walks across the screen**, dragging its far edge with it. Nothing throws. New `resizeBox(box, dx, dy, edge)` in `panel_box.js` fixes it by ORDER: anchor the far edge, clamp the SIZE, derive the position from the size — and the far edge is the real maximum too (`right - 8`, not the viewport width). One function read by compass letter, so a ninth handle needs no new branch. ⚠ **ONE TAB STOP, NOT EIGHT** — the corner keeps the focus and its arrow keys; the other seven are `aria-hidden`. ⚠ **AND THE STRIPS HANG 5px OUTSIDE THE BORDER** so the 2px edge itself is grabbable, corners declared after edges, `touch-action: none` on all of them or a touch drag is stolen as a page scroll. New **RULEBOOK E132** (**E113** points at it), new `tests/panel_resize_check.mjs` (39 checks, the walk by name); `editor_chat_render_check.py` §6a names all eight. Both green + `npm run build`. ⚠ **NOT SEEN ON A SCREEN BY ME** — drag the left edge to the minimum: it must stop, not slide. See the Work Log.
+
+**Previously:** 2026-09-05 — **ONE STROKE WAS NOT ENOUGH: THE BOXES INSIDE THE CHAT PANEL HAD NO EDGE EITHER.** *"under wale panel v thora highlight karo, thora merge ho raha hai — jab text likhne jata hun tab aata hai wo thik hai, magar panel se v thora highlight karo"*. Yesterday's `--ec-stroke` fixed the panel's OUTER edge and stopped there. ⚠ **THE INNER BOXES LOST BOTH OF THEIR SIGNALS AT ONCE** — the log and the composer wear `--border` from `storyboard.css`, and **E115** had already taken their fill away entirely (that is what stops the alpha stacking three deep), so on a see-through panel there was nothing whatsoever marking where the conversation ended and the typing box began. New **`--ec-stroke-in`**, derived the same way and applied to the log, the composer and both chrome dividers. ⚠ **IT IS DELIBERATELY WEAKER THAN THE OUTER ONE, AND THAT ORDERING IS THE RULE**: three edges of the same weight is a grid, not a window — the outer stroke has to stay the strongest line on screen or it stops reading as the panel's boundary. Both tokens lift together when the panel goes see-through, and stay a step apart. ⚠ **THE FOCUS STATE IS UNTOUCHED** — `.sc-composer:focus-within` is one specificity step above this, so clicking into the box still paints the gold exactly as before; that half was already right and the fix is only about finding the box BEFORE focusing it. **RULEBOOK E116 extended** (outer AND inner). Chat + admin suites green, `npm run build` green. ⚠ **NOT SEEN ON A SCREEN BY ME** — the two ratios (82/18 normally, 62/38 when see-through) are the numbers to tell me to move. See the Work Log.
 
 **Previously:** 2026-09-04 — **ANSWERED, LIVE: THE ✨ CHAT'S SLOWNESS WAS NEVER THE PLAIN TURN.** *"okay start open issue and fix it … mai ek api key update kiya hun … magar dhiyan se ye wala key gree tril hai"* — a trial key arrived, so the question the stopwatch was built for got asked. **Six calls, spent deliberately**, `gemini-3.5-flash` on the Developer API, same board and same turn seconds apart: **text 2.6s / 5.2s / 4.2s**, **a LOOK (5 stills) 34.6s**, **12 stills 27.1s**, and **three consecutive 503s** in between. ⚠ **A text turn is ~5 seconds and was never the complaint; a LOOK is ~10× that** — and a look meeting one transient fault is 35 + backoff + 35, which is where the 90s reports landed, on the day the look feature shipped. ⚠ **NOT PROVEN** that this is what the original reporter hit — nobody replayed their session. ⚠ **AND `MAX_LOOK_SHOTS = 12` IS NOT THE BUG: twelve stills were FASTER than five**, so the picture COUNT does not drive the cost; left alone deliberately. **Two real faults it did prove, both fixed:** (1) **a retry was being bought that could not land** — `_worth_retrying` asked only "is 15s left?", so a 35s look that failed with 31s on the clock paid for a call guaranteed to be cut off; the estimate is now what the last attempt actually took, and `_with_clock` learned the ending where the clock stops a call that still has time on it (**F10**); (2) **a busy model printed a Python dict into the chat panel** — `{'error': {'code': 503, …}}`, seen live three times, because only 429 had ever been given a sentence; faults are now classified and the raw text moved to the log (**F11**). Also corrected as stale: E112's "7.5s" for a look — the mechanism is confirmed live (`system=0.3KB, prompt=18.1KB, images=5`) but it answers in **34.6s**. The prompt is confirmed innocent, re-measured: 9.9/5.9/5.3KB, ~5.9k tokens; new number nobody had — the reply schema is **13 levels deep**. 50 checks in `tests/director_timeout_check.py`, 20 suites green. ⚠ **Not committed.** See the Work Log.
 
@@ -3651,7 +3661,787 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-09-05 (latest) — THE CLOCK WAS FIXED AND THE TURN STILL DID NOTHING
+### 2026-09-05 (latest) — ＋ OPENED A CHAT THE PROJECT HAD NO ROOM FOR
+
+    "maine admin panel mai ek likha to yaha pe new chat open hua — kya yah sahi
+     hai? dekho"
+
+No, and the screenshots show exactly why. Ceiling set to **1** in the admin
+panel, one real chat already saved ("C · 1 message · 14m"), and ＋ answered with a
+cheerful empty **"New chat"** — footer still promising *"saved with this
+project"*. Nothing on screen said the project was full. The 🕘 list even printed
+*"1 of 1 chats in this project"* right above the live ＋ button.
+
+**WHAT WOULD HAVE HAPPENED NEXT** is the part worth stating: the person types a
+whole message, the autosave posts a create, the server returns **409**, and the
+footer turns into *"This project already has 1 chats. Delete one to start
+another."* — after the work. The panel opened something it already knew it could
+not save.
+
+**THE SERVER GUARD WAS NEVER THE BUG.** It is still the only real one — another
+tab, a lowered ceiling, a direct POST. What was missing is that the CLIENT had
+every fact it needed to answer first: the list and the ceiling both come down on
+`GET /sessions`. **A refusal that can be given before the work is a refusal that
+must be.**
+
+**AND "AS MANY ROWS AS THE CEILING" IS THE WRONG TEST.** The server sweeps chats
+nobody ever typed in *before* it refuses (`drop_one_unused`), so a project whose
+rows include an empty one still has room — that empty row is what makes it.
+Greying out ＋ there would be the mirror-image bug: a button refused on a project
+the server would have honoured. `isFull(sessions, limit)` in `chat_sessions.js`
+is the one place that decides, and `limit: 0` is **no ceiling**, never "no room"
+(E138's rule, and `opacity: 0`'s before it).
+
+**WHAT CHANGED**
+
+- `isFull()` in `chat_sessions.js` — the rule, next to the other rules.
+- `useChatSessions` exposes `full`, and `newChat()` refuses on it too. The button
+  is disabled, but a keyboard can still reach a button.
+- The ＋ is **disabled, not hidden**, and says *"This project already holds its 1
+  chats — delete one to start another."* on hover. A control that vanishes at a
+  limit reads as a feature that broke; one visibly unavailable with the way out
+  in the tooltip is a rule somebody can act on.
+- The footer **stops promising**: sitting on an unsaved chat in a full project it
+  says the project is full, in `--warn`, instead of *"saved with this project"*.
+  That case is real — the ceiling can be lowered in the admin panel while
+  somebody is part-way through.
+
+New **RULEBOOK E140**. `tests/editor_chat_render_check.py` §6e (8 checks, two new
+renders, **proved to fail with the `disabled` removed**) and
+`tests/chat_store_check.mjs` §1b (9 checks on `isFull`, the empty-row case among
+them). Seven suites green + `npm run build`.
+
+⚠ **NOT SEEN IN A BROWSER BY ME.** The same test as before, now with a different
+expected answer: ceiling 1, one chat with a message in it — ＋ should be greyed
+out and explain itself on hover, and the existing chat must still open normally.
+
+---
+
+### 2026-09-05 — THE RENAME BOX COULD ONLY HOLD ONE LETTER
+
+    "jab mai rename kar rahun to ek letter likha raha hai, dusra letter likhta
+     hun to pahla ko hata de raha hai same jagah pe aur dusra letter aa raha hai"
+
+Exactly right, and exactly what it was doing. Type "c", type "a", the box says
+"a". The screenshot shows the tell: that single "c" sitting there **highlighted**.
+
+**THE CAUSE.** Opening the box focuses it and calls `select()` — correct, because
+it opens over a name that is being replaced, and nobody should have to clear the
+old one first. But the effect doing it was written
+
+    }, [renaming]);        // ← the TEXT
+
+so it re-ran on every change, re-highlighted the whole field, and the next letter
+replaced the selection. Nothing throws. Nothing warns. It looks like a broken
+keyboard, which is why it survived a green build and seventeen green suites.
+
+**AND THE APP ALREADY KNEW THE ANSWER.** `MediaBin.jsx`'s own rename box carries
+this fix, with a comment naming this exact trap:
+
+    /* The `activeElement` guard is what stops the text being re-selected
+       on every keystroke, since a ref callback runs every render. */
+
+I wrote the chat's rename box without reading it and re-derived it wrong. So the
+fix is not a new mechanism — it is **MediaBin's, copied**: a ref callback guarded
+by `document.activeElement !== el`, with `preventScroll` for the same reason
+MediaBin gives (plain autofocus lets the browser scroll the field into view).
+One idiom for opening a rename box, not two.
+
+**THE TEST, AND WHY IT LOOKS ODD.** `renderToStaticMarkup` runs no effects and
+there is no DOM here, and jsdom is a dependency this project does not have and
+does not want. So `tests/editor_chat_render_check.py` **§6d reads the mechanism
+out of the source file** — the ref callback of the `ec-sess-input`, checked for
+`select()`, for the `activeElement` guard, and for `preventScroll` — plus one
+check that MediaBin still carries the same guard, so the two cannot drift into
+two idioms again. **Proved to fail with the guard removed**, both before and
+after the rewrite.
+
+New **RULEBOOK E139**. Files: `client/src/components/EditorChat.jsx` (the box),
+`tests/editor_chat_render_check.py` (§6d, 6 checks). Seven suites green +
+`npm run build`.
+
+⚠ **NOT SEEN IN A BROWSER BY ME.** One thing to try: rename a chat and type a
+whole word. It should keep the whole word, and the old name should still be
+selected the moment the box opens so typing replaces it.
+
+---
+
+### 2026-09-05 — THE CHAT LIMITS ARE THE ADMIN PANEL'S NOW
+
+    "isme admin panel mai v daalo, mai limit set kar dunga, mai jitna daalun ohi
+     hona chahiye, mai handle kar lunga — tum admin panel mai functionality bana do"
+
+The saved-chat ceilings shipped this morning as environment variables:
+`API_MAX_CHAT_SESSIONS_PER_PROJECT`, `API_MAX_CHAT_SESSION_CHARS`, and a
+hard-coded 60 in the browser. **A number only an SSH session can change is not a
+setting, it is a constant with extra steps.** They are three fields on the Chat
+tab now, under **"What a project keeps"**, beside the opacity and blur sliders:
+
+    Chats per project        0–500     (0 = no limit)      default 40
+    Messages kept per chat   10–400                        default 60
+    Size of one chat         20k–2M characters             default 400,000
+
+**THE ENV VARS WERE DELETED, NOT KEPT AS A CEILING OVER THE PANEL.** That was the
+actual decision in this change and it is worth stating: a hidden maximum that
+quietly overrules what the operator typed is exactly the fault `opacity`'s floor
+of 40 was (E115) — the screen says one thing, the product does another, and
+nobody can see which. *"Mai jitna daalun wahi hona chahiye"* means what it says.
+
+**`0` MEANS NO LIMIT, AND IT HAS TO.** An operator who does not want a ceiling
+must be able to *say* so; "set it to 500 and hope" is not saying so. And `0` read
+as falsey and replaced by the default is the identical bug `opacity: 0` had on
+this very router — zero is an ANSWER on these fields, so the enforcement is
+`> 0`, never `or`.
+
+**THE ONE THAT WOULD HAVE FAILED SILENTLY.** The browser caps what it mirrors
+(`MAX_KEPT` in `chat_sessions.js`, 60). If that cap sits BELOW the admin field's
+maximum, the turns are gone before the server ever sees them — so setting
+"messages kept per chat" to 200 would have done nothing at all, with nothing on
+screen to say so. The browser's cap is now the admin field's maximum (400) and
+the trim happens on the SERVER, where the operator's number lives.
+`tests/chat_sessions_check.py` §11 reads that constant **out of the `.js` file**
+rather than trusting a comment, so the two cannot drift apart.
+
+**AND WHAT GOING OVER EACH ONE DOES IS PRINTED BESIDE THEM.** Two refuse out loud
+(a new chat is refused; a save is refused and the panel says it is not being
+saved), one drops the OLDEST messages. An operator typing a number has no way to
+tell which is which from a number field, and "it silently deleted things" is the
+report you get if they guess wrong.
+
+The 🕘 list also shows **"3 of 40 chats in this project"** now — the allowance
+shown before it runs out rather than at the refusal, which is the same rule the
+monthly message count in the footer already follows. At `0` it prints nothing: a
+count against a ceiling that does not exist is noise.
+
+**Files.** `server/chat_settings.py` (three entries in `LIMITS`, `defaults` and
+`EDITABLE`), `server/editor_chat.py` (new `_rules()` and `_trim()`; every route
+reads the operator's numbers), `server/admin.py` (`ChatSettingsBody` carries them
+— a field the store accepts but the route drops is a settings screen that lies),
+`server/config.py` (the two env vars removed, with a note saying not to add a
+ceiling back over the panel), `client/src/admin/AdminChat.jsx` (the new section),
+`client/src/animatic/agent/chat_sessions.js` (the cap raised to the admin
+maximum), `EditorChat.jsx` + `editor-chat.css` (the count line).
+
+New **RULEBOOK E138**; **E135** points at it. `tests/chat_sessions_check.py` §11
+is 24 new checks — every one moves the setting and then proves the ROUTE changed
+with it, because reading the store back only proves the store can hold a number.
+Eight suites green + `npm run build`.
+
+⚠ **NOT SEEN IN A BROWSER BY ME.** Worth doing by hand: set "chats per project"
+to 1 in the admin panel, then press ＋ twice in a project that already has one
+chat — the second should be refused with a sentence, and the first chat must
+still be there.
+
+---
+
+### 2026-09-05 — ONE PROJECT, MANY CHATS — AND THEY ARE SAVED ON THE SERVER NOW
+
+    "mai chahta hun ki tum tab ka function banao chat ka, kyun ki abhi user ek hi
+     chat pe baat kar sakta hai … user new chat bana kar alag alag baat kar sake,
+     aisa kuchh Antigravity jaisa bana do … aur sab chat save hona chahiye, user
+     jo karwaya hai usko us project mai dekh sake fir baad mai — project by
+     project save karna … mujhe production level bana hai"
+
+Two things, and they turned out to be the same thing.
+
+**THE TRANSCRIPT WAS IN ONE `localStorage` KEY PER PROJECT.** That is what made a
+second conversation impossible — there was nowhere to put it — and it is also
+why the footer said, honestly, *"saved in this browser only"*. One key means: one
+chat per film, gone on another computer, gone when somebody clears site data, and
+no way to keep "the sound pass" apart from "the titles pass".
+
+So the store moved, and the panel grew a row.
+
+**WHAT IS ON THE SERVER AND WHAT IS IN THE BROWSER — the line is the design.**
+
+    SERVER   the chats themselves: titles and transcripts, keyed by
+             (owner, project). They are the WORK, so they follow the account.
+    BROWSER  which chat was open, and a mirror of that ONE chat's turns.
+             "Where was I" is a fact about one screen; the mirror is what makes a
+             reopened panel paint instantly and survive a dead network. It is a
+             CACHE — the server is the truth — and it is one chat, not forty.
+
+`server/chat_sessions.py` is the store (Mongo, or a JSON file when Mongo is
+unreachable — the same `API_USER_STORE` switch `drafts.py` follows, so there is
+nothing extra to configure). Five routes went onto the existing `/editor-chat`
+router: list, create, read, save, delete.
+
+**THE BUG WORTH NAMING, because it is the expensive one.** `None` means "leave it
+alone" and `[]` means "it is empty", and that has to hold from the request body
+all the way into the document. A rename posts a title and no turns; an autosave
+posts turns and no title. Collapse those two with an `or` and **renaming a chat
+deletes its transcript** — invisible until it happens to somebody with a long
+one. Both directions are pinned by name.
+
+**THE CEILING IS A CEILING, NOT A BIN.** Forty chats per project. Over it, the
+store sweeps chats *nobody ever typed in* and then refuses out loud, naming the
+way to make room. It never deletes a conversation to make space. And a deleted
+project takes its chats with it, or they sit there for ever with nothing pointing
+at them.
+
+**AND THE OLD KEY IS RESCUED, ONCE.** Every existing user has a conversation
+sitting under the v1 key. Shipping without the migration would have looked, to
+the person who typed it, exactly like the new feature deleted their history. It
+is dropped only *after* the turns are actually on the server — a read that
+deleted as it went would lose the conversation to any failure in between, and a
+network is at its most likely to fail exactly there.
+
+**THE PANEL: A NAME, A CLOCK, AND A ＋ — NOT A TAB STRIP.**
+
+The request said "tab ka function" and the screenshot was an IDE's tab bar. A tab
+per chat is wrong for THIS panel and the reason is its width: it is 300–760px, so
+two tabs fill it, the rest scroll out of reach, and the first thing a tab strip
+truncates is the NAME — which is the only thing telling two conversations apart.
+What shipped is the same IDE's *other* row, the one in the second screenshot: the
+chat's name (click to rename), a clock that opens the list, and ＋ for a new one.
+Every row in that list shows its full name, at any panel width.
+
+It is a SECOND row rather than more buttons in the title bar, because on the
+floating dock that bar is the drag handle — three more press targets in it is
+three more ways to fail to pick the window up.
+
+**A CHAT IS NOT CREATED UNTIL SOMEBODY SPEAKS IN IT.** ＋ posts nothing; it empties
+the panel. The autosave files the chat when the first turn lands. Five presses of
+＋ therefore leave nothing behind — the same rule the editor learned about blank
+projects (E118). Chats are named from the first thing the PERSON said, never the
+agent's opening line, which is near-identical in every chat about one film.
+
+**THREE RACES, ALL REAL, ALL GUARDED.** (1) An id cannot say which conversation
+the panel is on — a new chat and the one before it are BOTH `""` until the first
+save returns, so a create landing after ＋ would adopt its id and yank the person
+back into the chat they just left, with an empty log on screen. An EPOCH counter
+tells them apart. (2) One write in flight at a time, through one promise chain —
+two overlapping PUTs can land in either order, and the older body arriving second
+is a chat that silently loses its last message. (3) The "Opening…" spinner belongs
+to the newest fetch by TOKEN, not to "is this still the open chat", because ＋
+mid-fetch leaves no open chat at all and a spinner keyed on that is never cleared.
+
+**AND THE LIST IS NOT FETCHED UNTIL THE PANEL HAS BEEN OPENED.** Every project
+load would otherwise spend a request on conversations for a panel nobody touched
+— including on accounts the chat is switched off for. It latches, so shutting the
+panel does not throw the list away.
+
+The filing cabinet is deliberately **not** behind `cap.editor-chat` or the quota:
+switching the chat off must stop new work, not make old conversations unreadable,
+and reading back what you already paid for is not a second charge.
+
+**Files.** New: `server/chat_sessions.py`, `client/src/animatic/agent/chat_sessions.js`
+(the rules), `client/src/animatic/agent/useChatSessions.js` (the hook that now
+owns `turns`). Changed: `server/editor_chat.py` (+5 routes), `server/schemas.py`
+(+5 models), `server/config.py`, `server/animatics.py` (a deleted project sweeps
+its chats), `client/src/api.js` (+5 helpers), `useEditorChat.js` (it borrows the
+transcript now and owns no persistence), `EditorChat.jsx`, `AnimaticEditor.jsx`,
+`editor-chat.css`.
+
+New **RULEBOOK E135, E136, E137**, and **E113** points at E135. New
+`tests/chat_sessions_check.py` (47 checks, no Mongo, no model, no quota) and
+`tests/chat_store_check.mjs` (44 checks, plain node);
+`tests/editor_chat_render_check.py` gains §6c. Fourteen suites green +
+`npm run build`.
+
+⚠ **NOT SEEN IN A RUNNING BROWSER BY ME** (G7). The three things worth trying by
+hand, in order: **rename a long chat and check the messages are still there**;
+open the panel on a project you have used before and check the old conversation
+came across as one chat; and press ＋ twice without typing — the list should still
+be empty.
+
+---
+
+### 2026-09-05 — THIRTEEN IDENTICAL DISSOLVES
+
+    "Dissolve on the cut hi use kar raha hai … in do shot ke bich mai konsa
+     badhiyan transition rahega waisa set kare"
+
+Confirmed working first, from the same screenshot: the E130/E131 sound fix landed
+live. The reply opened *"A devotional family film for Ganesh Chaturthi — I'll
+score it with a traditional sitar and flute bhajan"*, and the cues were **temple
+bell soft · brass bell ring · aarti oil lamp crackle · soft clapping bhajan ·
+river water flowing**, under **"sitar flute devotional bhajan"**. Yesterday the
+same board got "mouse click" and "corporate pop vlog". Persistence confirmed too.
+
+**And the transitions in the same plan were "Dissolve" thirteen times.**
+
+**WHY, AND IT WAS NOT LAZINESS.** The editor renders twelve transition kinds.
+What the planners were handed was twelve ids, a label, and a MECHANISM:
+`dissolve (Dissolve)`, `wipe — "an edge travels across"`. **Nothing anywhere
+said what a wipe is FOR.** Twelve interchangeable mechanisms have exactly one
+safe answer and the model gave it, thirteen times.
+
+Worse, the prompts were actively pushing that way — *"prefer the plainest kind"*,
+*"a wipe is a strong, old-fashioned statement; use one when you mean it and never
+for variety"*. Correct rules, and they governed **how many**. Nothing governed
+**which**, so "which" defaulted to "the same one, everywhere".
+
+**What was done**
+
+| | |
+|---|---|
+| `transitions.js` | Every kind gains a **`when`** — what it MEANS and where it belongs, not what it does. `dip`: black ends a chapter, white is a flash. `slide`: a list, a product, a reel that must keep moving. `angular`: time itself. ⚠ On the RECORD rather than in a prompt, so a thirteenth kind added without one fails a test instead of being a treatment the AI can render and never knowingly choose — the same half-wiring as E125. |
+| `capabilities.js` | The manifest carries `when` through. |
+| `director.py` | Its vocabulary trim keeps `when`. |
+| `editor_chat_agent.py` | So does the CHAT's trim — **the one table that keeps its prose**, while every other row there is cut to `id (label)` for tokens. Twelve short lines is what buys a real choice. |
+| `prompts.yaml` | Both prompts: **which transition is a decision separate from how many**, made per cut from the two shots either side — ask what CHANGED and let the answer pick. Straight cut when nothing much changed (still the commonest right answer), dissolve for time passing, dip for a chapter or a flash, wipe/slide for a move or a list, iris/box/split for a reveal, clock for time as the subject, blinds for a corporate divider, checker for playful. Plus: **the format sets the length** — a reel is 200-400ms, a 1000ms dissolve eats half a 2-second shot — and vary the length as well as the kind. ⚠ And both still say out loud that this is **not a licence for variety**. |
+| **Test** | **`tests/transition_choice_check.py`** (new). §§1-3 PAKKA: every kind has a `when`, twelve DIFFERENT ones, it survives both trims, and `note` — what a person reads on a chip — is untouched. §4 GUZARISH: the rule is still in both prompts. **Fails with `when` removed** — verified. |
+
+⚠ **AND THIS ONLY BECAME POSSIBLE BECAUSE OF E130.** Choosing from the PAIR of
+shots requires the shots to have descriptions, and they had none until the
+board's own words were plumbed through this morning.
+
+RULEBOOK: **E133** (a list of mechanisms with no meaning has one safe answer) —
+PAKKA. **E134** (how many and which are two decisions) — GUZARISH.
+
+⚠ **NOT SEEN IN A BROWSER BY ME.** 20 suites + `npm run build` green.
+
+### 2026-09-05 — THE CHAT WINDOW NOW RESIZES FROM ALL FOUR SIDES
+
+    "mai is chat bot ka panel mai aur function daalo — jaise abhi ek taraf se hi
+     chota bara kar karta hun, mai chahta hun ki charo taraf se chota bara kar sakun"
+
+The ✨ AI Editor's **floating** window had exactly one resize handle: the
+bottom-right corner. So a window sitting near the right edge of the screen could
+only be made bigger by first dragging it left — two gestures for one intention.
+It now takes **eight handles**: the four sides and the four corners, which is
+what every window on a desktop does.
+
+**THE PART THAT IS NOT OBVIOUS — AND THE REASON THE MATHS MOVED INTO A MODULE.**
+
+Dragging the **left** or **top** edge changes WHERE the window is at the same
+time as how big it is. The corner grip never had to: it hangs off `x, y` and only
+ever adds to `w, h`. The naive version of the new handles — `x + dx` with
+`w - dx`, clamped at the end — has a failure that does not throw and does not
+look like a bug in a diff:
+
+    hold the left edge, keep dragging right past the minimum width
+      → `w` stops at MIN_W, but `x` keeps moving
+      → the window stops shrinking and starts SLIDING across the screen,
+        dragging its right edge along with it
+
+So `panel_box.js` grew `resizeBox(box, dx, dy, edge)`, and the order inside it is
+the whole fix: **anchor the far edge, clamp the SIZE, then derive the position
+from the size.** The far edge is also the true maximum — a window whose left edge
+is dragged off the screen can only grow to `right - 8`, not to the viewport
+width. One function, read by compass letter (`n`, `s`, `e`, `w`, `ne`, `nw`,
+`se`, `sw`), so a ninth handle would need no new branch and no ninth clamp.
+
+**ONE TAB STOP, NOT EIGHT.** The corner stays the focusable one and its arrow
+keys already resize both axes; seven more stops between the composer and the rest
+of the page would buy the keyboard nothing, so the other seven are `aria-hidden`
+pointer affordances.
+
+**AND THE GRAB STRIPS HANG HALF OUTSIDE THE BORDER** — 5px out, the same trick
+`.ec-side-split` uses — because a handle pinned flush inside means the panel's own
+2px border does nothing and every near-miss lands on the film behind the window.
+The corners are declared after the edges so the diagonal wins where they meet, the
+edges stop 14px short of the corners so nothing overlaps at all, and every one
+carries `touch-action: none` or the browser claims the drag as a page scroll and
+the pointermoves simply stop arriving mid-drag.
+
+Files: `client/src/animatic/agent/panel_box.js` (new `resizeBox`, `RESIZE_EDGES`),
+`client/src/components/EditorChat.jsx` (eight handles, one handler),
+`client/src/styles/editor-chat.css` (the strips). New **RULEBOOK E132**, and
+**E113** now points at it. New `tests/panel_resize_check.mjs` — 39 checks, run with
+plain `node`, and the walk above is checked by name. `tests/editor_chat_render_check.py`
+§6a names all eight handles and pins the single tab stop; both green, plus
+`npm run build`.
+
+⚠ **NOT SEEN ON A REAL SCREEN BY ME** (G7) — a green build is not evidence that
+an edge drags. The one thing worth trying by hand is the left edge at the minimum
+width: it should refuse to get smaller and stay exactly where it is.
+
+---
+
+### 2026-09-05 — THE SOUND CAME FROM SOMEBODY ELSE'S FILM
+
+    "ye nahi ki kisi aur category ka dusre mai aa jaye — aisa nahi hona chahiye"
+
+A Diwali board — marigold garlands, lit diyas, a rangoli, a woman at a decorated
+puja table — came back from the ✨ AI Editor scored:
+
+    "pop bubble" · "camera shutter" · "digital beep" · "mouse click" ·
+    "glitch static"  … under "upbeat energetic corporate pop vlog"
+
+It reads as a taste failure. It is not one. **It is the only answer available to
+something that was handed this and nothing else:**
+
+    - Title: (untitled)
+    - 14 shot(s), 0:28 total, 9:16 at 24fps
+    1. [2.0s] Shot 1
+    2. [2.0s] Shot 2      … fourteen times
+
+**THE WORDS EXISTED THE WHOLE TIME — ON THE BOARD, NOT ON THE FRAME.**
+
+`boardFrom` sends `description: frame.description || frame.prompt`. **Neither
+field exists on `AnimaticFrame`**, and `frameForSave` carries neither — so that
+key has been `""` on every Director run and every chat turn since it was
+written. Nobody noticed, because an empty description is not an error.
+
+What a shot is OF lives on the storyboard PANEL the frame REFERENCES. A frame
+carries `src: {kind, storyboard_id, index}`; the panel behind it has
+`description`, `location`, `characters`, `dialogue`; its board has the real
+title, `genre`, `world`, `market` and the whole `script`. The animatic even
+records `params.source_storyboard_id`. **None of it had ever been asked for.**
+
+**What was done**
+
+| | |
+|---|---|
+| `server/common.py` | New **`fill_board_words`** — resolves each shot's `src` back to its panel and puts the description and location into the board, plus a `film` header (title, genre, world, market, language, logline from the script). Owner-checked exactly as `_voice_lines_of` is: frames are user-editable JSON, so a crafted `storyboard_id` must not read another account's script. Returns a NEW dict — `director.py` hashes the board it was given. A deleted board or a foreign id means "no words", never an error. |
+| `server/editor_chat.py`, `server/director.py` | One line each. **One fill serves both features**, because `board_digest` (chat) and `shot_digest` (Director) already read the same key. Free: a store read, no model call, no quota. |
+| `useDirectorRun.js` (`boardFrom`) | Sends `src` per shot so the server can resolve the exact panel — order-independent, and correct for a project mixing two boards. Read on the server and dropped: no tokens, no privacy cost. |
+| `editor_chat_agent.py` | The digest opens with **WHAT THIS FILM IS**, each shot line carries its location, and — the part that matters most — a film with no words is **told so in as many words**, and pointed at `look` and `ask`. A model that is not told it is blind does not know it is guessing. |
+| `director.py` | `_film_of` (fixed key order, for the determinism hash) + `location` on every shot. |
+| `prompts.yaml` + `director.sound_instruction()` | The same three rules in both, deliberately in the same words: **name the kind of film and whose world it is** (and, in the chat, say it in `reply` so the user can correct it in one word); **cue only what a microphone in that room would have picked up**; **name the bed by instrument or tradition**, never by a stock library's biggest folder. Plus: culture and faith are the user's and are never swapped; a film you cannot describe is not scored at all — look, or ask. The tech-vlog default is named out loud as the trap it is. |
+| **Test** | **`tests/sound_matches_film_check.py`** (new). §§1-4 are PAKKA — the words reach the prompt, only where the user left a blank, never across an owner boundary, and blindness is stated. §5 is GUZARISH — it proves the rules are still in BOTH prompts, which is the most a test can honestly claim about a prompt. §6 proves the browser puts `src` on the wire. **12 checks fail with the fill neutered** — verified. |
+
+RULEBOOK: **E130** (a pass that decides from content must be given the content,
+and told when it has none) — PAKKA. **E131** (whoosh/beep/click/"corporate" is
+what a model writes when it does not know the film; culture is never swapped) —
+GUZARISH, and it stays GUZARISH until a live run says otherwise.
+
+⚠ **NOT SEEN IN A BROWSER BY ME.** 18 suites + `npm run build` green.
+
+⚠ Noticed in passing and NOT fixed: `prompts.yaml` cites
+`tests/editor_chat_ask_check.py`, which does not exist in the repo.
+
+### 2026-09-05 — THE SOUND LANDED, THE PROJECT DID NOT
+
+    "raat mai band kar diya tha sound effects and music set karke layer pe, but
+     jab subah abhi khol raha hun to na koi sound effects and bg music hai"
+
+Three screenshots and one sentence that matters more than the other two. The
+panel worked this time: **"11 edits · Sound 10 · Music"**, Apply pressed, clips
+on the lanes. Then three separate things were wrong, and they turned out to be
+three separate bugs that had been sitting behind each other.
+
+**1 — THE SAVE. `trim_ms: 0`, and it cost a night's work.**
+
+Along the bottom of the first screenshot, in red:
+
+    {"type":"greater_than_equal","loc":["body","audio_tracks",0,"trim_ms"],
+     "msg":"Input should be greater than or equal to 100","input":0, …
+
+`placeSoundtrack` wrote `trim_ms: 0` on every clip it laid — meaning "no trim".
+`AnimaticAudio.trim_ms` is `int | None` with `ge=100`: absent means "play the
+whole file", and **0 is neither absent nor 100 or more**. FastAPI answers that
+with a 422, and **a 422 refuses the whole document** — frames, captions,
+durations, title, all of it. The autosave then re-sent the same rejected body on
+the next edit and was refused again. Nothing was ever written, all night.
+
+⚠ **AND IT WAS NOT ONLY THE CHAT.** 🎬 Make Video lays its soundtrack through
+the same function, so the Director's sound had never saved either — for as long
+as the sound passes have existed.
+
+⚠ **AND THE AUTOSAVE ONLY FIRED ON A CHANGE**, so after it failed nothing tried
+again until the user touched the project. They had gone to bed.
+
+**2 — THE MIX. Ten recordings playing on top of each other.**
+
+    "sound effects sab ek dusre ke clip ke upar tha aur sabka awaz aa raha tha"
+
+Same zero, second consequence: `trim_ms: 0` also means "play to the end of the
+recording" to the mixer, and a Freesound preview runs 20–30 seconds while a
+storyboard shot runs two. Ten cues on a 28-second film were ten 30-second files
+starting one after another and never stopping — which is exactly what the lane
+showed, every clip running off the end of its own shot. **`sfxCues` had measured
+`hold_ms` for every cue all along and `sfxPlacements` never read it.**
+
+**3 — THE TRANSPORT. Press play at 0 and nothing moves.**
+
+    "mai play dala raha tha 0 frame pe to play nhi ho raha tha, but jab timeline
+     ka cursor thoda aage se play kiya 2/3 sec se to hone laga"
+
+Audio is the master clock here on purpose — that is what stops the pictures
+drifting from the sound. But the clock was "the first element that is not
+paused", and **`el.play()` marks an element unpaused before the browser has
+decoded a single sample**: `paused === false`, `currentTime === 0`. So the tick
+computed the same time on every frame and the playhead sat at 0. Two seconds in,
+something is already decoded, which is why moving the cursor "fixed" it. It could
+not happen before the sound passes existed — a silent film has no master clock.
+
+**4 — AND THE CAP THAT WAS AN OPINION.** The four red lines in the screenshot
+("one pass fetches at most 10 different sounds") were a flat ten written into
+`sound_pass.js`, argued from the shared Freesound minute — a budget that belongs
+to the server, which already handles running out of it. The project had room for
+thirty-four more files. The user's ruling: **"user jitna maange utna mile"**.
+
+**What was done**
+
+| | |
+|---|---|
+| `client/src/animatic/audio_clips.js` | New `audioForSave` — a whitelist **and a clamp**. `frameForSave`/`assetForSave` stop a field being dropped; this also stops one being poisoned. Every number forced into the schema's range on the way out, so a bad value costs that value and never the project. Plus `MAX_AUDIO_FILES` and `audioFileCount`, moved here from `AnimaticEditor.jsx` so `sound_pass.js` can see the real ceiling. |
+| `useAnimaticProject.js` | Saves and SIGNS through `audioForSave` (both, or the project reads dirty forever). Failed autosaves now retry with a bounded backoff instead of failing once and waiting for an edit that never comes. |
+| `AnimaticEditor.jsx` | `lay()` writes `trim_ms: null`, never 0. `MAX_AUDIO_TRACKS` now reads the shared constant. |
+| `sound_pass.js` | Effects trimmed to their shot + `SFX_TAIL_MS` ring-out, clamped by the next cue and by the file. Music's uncut loops are `null`. `MAX_SFX_SOUNDS` is the project's room (`soundRoom`), not a house number; `MAX_SFX_CLIPS` 32 → 64. |
+| `chat_turn.js` | The PREVIEW asks the same room question the apply does, so the count on the button is the count that happens. |
+| `audio_mix.js` / `useTimelineTransport.js` | `clockRead` + `CLOCK_STALL_MS`: a master clock must have decoded data **and** a timestamp that moves. Otherwise the wall clock drives and hands back the instant it starts. |
+| `api.js` | `readableDetail` — a 422 is said in words with the field named, instead of `JSON.stringify` painting pydantic across the screen. |
+| `server/config.py` | `MAX_ANIMATIC_AUDIO_TRACKS` 16 → 48, so the only ceiling left is a real one. |
+| **Tests** | **`tests/audio_save_contract_check.py`** (new) — drives the real placements through the real `AnimaticAudio`, and asserts the raw shape is **still refused** so it cannot pass against the broken code. **`tests/transport_clock_check.py`** (new) — the cold/decoded/stalled/recovered sequence, frame by frame. `director_sound_check.py` § 4b for the trim, `editor_chat_check.py` for the room. All verified to fail without the fix. |
+
+RULEBOOK: **E126** (a 422 refuses the document, so clamp on the way out),
+**E127** (an automatic sound is trimmed to its shot), **E128** (unpaused is not
+playing), **E129** (a ceiling must be a fact, not an opinion).
+
+⚠ **NOT SEEN IN A BROWSER BY ME.** 11 suites + `npm run build` green; the user's
+own test is what confirms it.
+
+### 2026-09-05 — THE CUES ARRIVED AND THE PANEL NEVER GOT THEM
+
+    "see"
+
+A screenshot, and the top half of it is the E123 fix working in the real app:
+
+    4 things I couldn't use
+      “door slam” — one pass fetches at most 10 different sounds
+      “running footsteps” — … “heavy breathing” … “thunder rumble”
+
+Four cues dropped by the ten-distinct-sounds ceiling means **fourteen arrived**.
+The model is now doing exactly what was asked. And the button under it said
+
+    0 edits  ·  [ Apply 0 edits ]  ·  Nothing has changed yet
+
+**THE TURN WAS RIGHT AND THE ROW WAS SHORT.** `normaliseTurn` returns five
+payloads — `plan`, `sound`, `ask`, `passes`, `look` — and `useEditorChat.send`
+builds the row the panel draws from **by naming each field**. It named three.
+
+⚠ **`sound` — AND IT IS NOT A LABEL BUG.** The count comes from
+`turn.sound?.sfx`, so ten surviving cues and a bed read as zero. But `apply()`
+opens with
+
+    if ((!steps.length && !turn?.sound) || running) return;
+
+so on a turn whose only payload is sound, **the button did literally nothing when
+pressed**. Sound has never once reached a timeline through this panel — not since
+the feature shipped. Every earlier round of this bug hid behind an empty `sfx`.
+
+⚠ **`passes` — THE PAID DOORS WERE NEVER DRAWN EITHER.** `EditorChat.jsx` renders
+the buttons from `turn.passes`. The live battery had just proved the server offers
+them correctly (`kind=ask · doors=veo · ask(2 options)`), and the panel could not
+have shown one. ✨ Animate / 🎙 Voiceover / 🖼 Animatic images: offered, never
+drawn.
+
+⚠ **THE TELL WAS ALREADY IN THE FILE.** `toStore` — the localStorage projection
+twenty lines up — reads `t.passes`. It was written for a field the live row never
+had. **Two projections of one object disagreed and neither failed out loud**; that
+disagreement is the thing to notice next time, in any file.
+
+⚠ **AND IT IS THE SAME MISTAKE AS THIS MORNING'S**, in a different language and a
+different file: E124 was a `JsonRequest` rebuilt without its `capability`. An
+object copied field by field loses whatever you forget to name, and loses it in
+silence. The new RULEBOOK row is written about that shape, not about the chat.
+
+**THE TEST IS THE INTERESTING HALF.** Guarding `sound` and `passes` by name would
+guard only the two already fixed. So `tests/editor_chat_check.py` asks the REAL
+`normaliseTurn` what keys a turn can carry — handing it steps, sound and an offer
+at once — and fails unless the hook's row copies every one of them. A sixth
+payload added tomorrow fails this until it is carried. ⚠ It reads source, which is
+a deliberate trade: the projection lives inside a React hook and is not exported,
+so there is nothing to import.
+
+**Files:** `client/src/animatic/agent/useEditorChat.js` (two fields),
+`tests/editor_chat_check.py`.
+
+**Verified:** green, and **proven to fail without the fix** — reverted, and the two
+new checks report *“missing from the agent row”*. All suites green;
+`npm run build` green.
+
+⚠ **STILL NOT SEEN BY ME IN A BROWSER.** What this predicts on the next run is
+specific and worth checking against: the button should read **“Apply 11 edits”**
+(ten cues plus one bed) on that same board, the four drop lines should still be
+there, and pressing it should put audio on the timeline. If the count is right and
+the press still does nothing, the fault is in the apply run, not in the row.
+
+New **RULEBOOK E125**. ⚠ **Not committed — the user is doing that.**
+
+### 2026-09-05 — THE BATTERY RAN, AND FOUND THE REPAIR CALLING VERTEX
+
+    "abhi api key update kiye hai check kar ke bato chal raha hai kya ek koi chota test"
+    "okay jao magar ye v free wala hai to aisa chalo tumhara kaam ho jaye aur kuchh
+     bache to mai check kar sakta hun"
+
+A fresh key arrived, so the battery from the last entry got its run — **budgeted,
+because the key is a free one and the person testing in a browser afterwards needs
+what is left.** Free-tier caps count REQUESTS PER DAY, not tokens, so
+`tests/chat_live_battery.py` learned to take case names and **four** were chosen
+over nine, one per distinct mechanism: TRANSITIONS (steps across a whole board and
+the house cap lifting), TEXT (a step whose `args` must arrive), EFFECTS
+(`args.params` — an array INSIDE args, the E123 risk), VIDEO (the `passes` branch,
+which is not a plan at all).
+
+**FIRST, THE KEY, FOR FREE.** `models.list()` — 0.5s, 54 models, `gemini-3.5-flash`
+among them. It costs no quota and it separates "the key is wrong" from "the key is
+spent", which are the two things a 403 and a 429 look alike from.
+
+**THEN A SMALL TURN — AND THE `required` FIX HELD.** A four-shot board, the sentence
+that started all this:
+
+    47.7s · one attempt, one call · music "festive sitar celebration"
+    sfx: shot 1 temple bell · shot 2 matchstick strike
+         shot 3 child laughing running · shot 4 fireworks crackle
+
+⚠ **47.7s IS THE SLOWEST TEXT TURN YET MEASURED** — the others were 16–25s. Under
+the old **70s** budget that is uncomfortably close; under 120s it is unremarkable.
+One sample, but it is the first independent support for F12's raise.
+
+**THE BATTERY: TWO PASSED, TWO FAILED, AND THE FAILURES WERE NOT THE SAME KIND.**
+
+    TRANSITIONS   20.1s  kind=plan · steps=add_transition x13
+    TEXT          73.0s  FAILED: 403 PERMISSION_DENIED … aiplatform.googleapis.com
+    EFFECTS       28.4s  kind=plan · steps=add_effect x28
+    VIDEO         15.3s  FAILED: 503 — the model is busy
+
+`add_transition x13` on a fourteen-shot board is **every cut**: E106's lift working
+on live evidence for the first time. VIDEO's 503 is a spike and means nothing.
+
+⚠ **BUT `aiplatform.googleapis.com` IS VERTEX, AND THE CHAT RUNS ON THE DEVELOPER
+API.** That is not a flaky provider, that is the wrong provider — and reading for
+it found a one-line hole in `llm_json`.
+
+**THE BUG.** Two functions hand back a NEW `JsonRequest` built from an old one —
+`as_prompt_schema` (schema moved into the prompt) and `_repair_request` (mend your
+own broken answer). **Neither carried `capability`.** An empty capability is not a
+small thing: `resolve_provider(capability="")` falls back to `TEXT_PROVIDER`, which
+in this repo's `.env` is **vertex**, while the chat is on the Developer API with
+`GEMINI_KEY_CHAT`. So a chat answer with a missing brace bought a repair — and the
+repair went to **Vertex, with no credentials for it**:
+
+    403 PERMISSION_DENIED … aiplatform.googleapis.com … CONSUMER_INVALID
+
+An error about credentials, on a call whose only fault was a missing brace, on a
+key that was perfectly good. ⚠ **AND THE SILENT VERSION IS THE WORSE ONE**: on a
+deployment where BOTH backends have credentials nothing fails — the mend is simply
+billed to the other capability's key, which is exactly what `get_client`'s
+`provider|key_env` cache key was built to prevent, re-entering by the back door.
+
+⚠ **`images` IS THE SAME QUESTION WITH THE OPPOSITE ANSWER, AND BOTH ARE NOW
+WRITTEN DOWN.** `as_prompt_schema` MUST carry the pictures — it is the same call
+with the schema moved, and dropping them sends a LOOK out blind to answer about a
+film it was never shown (it was dropping them). `_repair_request` MUST NOT — a mend
+quotes the model's own broken text back and asks it to close the braces; five
+stills re-uploaded to do that is real money and thirty seconds for nothing.
+
+**THEN THE TWO FAILED CASES AGAIN, TWO CALLS:**
+
+    TEXT          37.0s  kind=plan · steps=add_text x1
+    VIDEO         14.4s  kind=ask · doors=veo · ask(2 options)
+
+VIDEO is the paid-door rail behaving exactly as designed: it does not plan, it
+**asks**, and it hands over a real `veo` button rather than a price.
+
+**Files:** `llm_json.py` (both builders), `tests/director_timeout_check.py`,
+`tests/chat_live_battery.py` (case selection).
+
+**Verified:** `tests/director_timeout_check.py` **83 checks, all passed**, with a
+new section that asserts both builders AND drives a real `complete_json` through a
+fake transport whose first answer is broken, reading the capability the adapter was
+handed on **both** calls — the fields alone would not have caught that a repair is
+a second call. **Proven to fail without the fix: `['chat', '']`.** All other suites
+green; `npm run build` green.
+
+⚠ **WHAT IS LIVE-PROVEN NOW: SOUND, TRANSITIONS, TEXT, EFFECTS, VIDEO.** Still
+unrun: **DURATION, MOTION, IMAGES, CAPTIONS** — left deliberately, so the user has
+quota for the browser. They repeat mechanisms already proven (a step with args; a
+paid door), which is why they were the four dropped.
+
+New **RULEBOOK E124**. ⚠ **Not committed — the user is doing that.**
+
+### 2026-09-05 — IT WAS ONE WORD IN THE SCHEMA: `required`
+
+    "dekho fir se ohi aaya please fix kro … mujhe production level bana hai …
+     tum baar baar aise nhi chalna achha baat nhi hai"
+
+Third screenshot of the same turn, and the frustration is earned: two rounds had
+now ended with the app being *honest* about doing nothing. This round the guessing
+stopped and **the real model was asked directly** — `GEMINI_KEY_CHAT` is in `.env`,
+`editor_chat_agent.chat()` runs without a browser or a server, and one turn is
+~20 seconds. That should have been the first move, not the third.
+
+**RUN 1 — THE FINDING, IMMEDIATELY.**
+
+    [llm_json] editor chat DONE in 17.3s — 1 attempt(s), 1 model call(s), of a 120s budget
+    [editor-chat] plan — reply 257 chars, 1 step(s), 0 dropped, 0 sfx + music
+
+    SOUND: {"sfx": [], "music": {"query": "festive warm sitar acoustic indian celebration"}}
+
+✅ **The clock is fine** — 17.3s of a 120s budget, so F12 is confirmed in practice
+and the timeout half is closed. ❌ **`sfx` is empty**, while the `reply` names the
+very effects it did not send: *"the lighting of the lamps, the rustle of gifts,
+and the fireworks"*. The model knew what it wanted.
+
+**FOUR FIXES THAT DID NOT WORK, AND THEY ARE THE POINT OF THIS ENTRY.**
+
+1. **E106 applied to sound in `prompts.yaml`** — the SOUND rule said *"SPARINGLY,
+   AND NEVER ONE PER SHOT"*, a house default written as a law, and *"story wise"*
+   is exactly the ask it refuses. Lifted when the words are there. → `sfx: []`.
+2. **The field's own `description`** — it still said *"One per shot that needs a
+   sound. Sparingly."*, sitting on the very slot being filled, arguing with the
+   prompt. Rewritten to *"an empty list is a refusal"*. → `sfx: []`.
+3. **The TURN prompt, under the verb list** — dumping the prompt showed why the
+   model reaches for a `note`: the turn carries **400 lines** headed *"WHAT THIS
+   EDITOR CAN DO — the only words you may use"*, and sound is not in it (correctly:
+   it is not a verb). A paragraph in the system prompt is a long way from that.
+   So the rule was moved directly under the list. → `sfx: []`.
+4. **The field path in the USER'S OWN MESSAGE** — *"Put one entry in sound.sfx for
+   every shot."* → `sfx: []`.
+
+**RUN 5 — THE RAW REPLY, WHICH IS WHAT SETTLED IT.** Wrapping the real adapter to
+capture the model's text BEFORE `_coerce_sound` touched it:
+
+    "sound": { "music": { "query": "diwali celebration sitar flute warm festive" } }
+
+**There is no `sfx` key.** The coercer was innocent all along; the model never
+writes the field.
+
+**RUN 6 — ONE LINE, AND IT WORKED.** `"required": ["sfx"]` on the `sound` object,
+nothing else changed:
+
+    "sfx": [{"shot": 1, "query": "temple bell puja"},
+            {"shot": 5, "query": "sand pouring rustle"},
+            … fourteen of them …
+            {"shot": 12, "query": "fireworks crackle"}]
+
+⚠ **THE RULE, AND IT IS NOT ABOUT SOUND.** On native structured output, a property
+that is not in `required` is one the model may **simply not write** — not fill
+badly, not leave empty: omit the key. **Words do not make a model fill a slot the
+schema says it may skip.**
+
+**AND THE SAME BUG WAS ALREADY BITING SOMEWHERE ELSE.** An audit of every object in
+`reply_schema` found `plan.steps[]` requiring only `verb` — and one of the runs
+above had already shown the consequence, unrecognised at the time: a step arrived
+as `{"verb": "note"}` with no `args`, and the panel printed *"no arguments this
+verb understands"* over an empty plan. Now `["verb", "args"]` (shared with the
+Director, and right for it too). ⚠ Nothing INSIDE `args` can be required — it is a
+flat union of every verb's argument names — so *"write the object"* is the
+strongest thing sayable there.
+
+⚠ **WHAT WAS DELIBERATELY LEFT OPTIONAL.** The five payloads at the root (`plan`,
+`sound`, `ask`, `look`, `passes`) — a turn carries ONE of them. And `sound.music`,
+which arrived in all four runs unasked; requiring it would push a music bed onto
+somebody who asked for one door slam.
+
+**Files:** `editor_chat_agent.py` (the `sound` schema), `director.py`
+(`plan_schema`'s step), `prompts.yaml` (E106-on-sound, the note rule, the turn
+prompt), `tests/editor_chat_check.py`.
+
+**Verified:** the sound fix is **proven live**, six real calls on
+`gemini-3.5-flash`. `tests/editor_chat_check.py` green with a new section that
+walks every object in `reply_schema` and pins its `required` list **as an exact
+map** — a property added without a decision fails it, because a test guarding only
+the two known-bad fields would let the third through in silence. Also green:
+`editor_chat_doors`, `editor_chat_render`, `chat_layers`, `chat_provider`,
+`director_timeout` (75), `director_contract`, `director_determinism`,
+`director_language`, `director_sound`, `plan_script`, `transition`;
+`npm run build`.
+
+⚠ **WHAT IS NOT VERIFIED, AND IT IS A REAL GAP.** A nine-message battery —
+transitions, text, effects, duration, motion, and the three paid doors — was
+written and **could not run: the free key's daily quota is spent** (HTTP 429 on
+every one). Only SOUND is live-proven today. The battery is
+`tests/chat_live_battery.py` and takes one command when quota returns.
+
+New **RULEBOOK E123**. ⚠ **Not committed — the user is doing that.**
+
+### 2026-09-05 — THE CLOCK WAS FIXED AND THE TURN STILL DID NOTHING
 
     "see" / "see image also"
 
@@ -28126,7 +28916,359 @@ still occasionally be safety-filtered.
 
 ## 🎯 Current State / Next Steps
 
-### 🟠 NEWEST: TIMEOUT GAYA — PAR CHAT NE JHOOTH BOL DIYA (2026-09-05)
+### 🟠 NEWEST: TRANSITION AB HAR CUT PAR SOCH KAR CHUNA JAYEGA (2026-09-05)
+
+    "Dissolve on the cut hi use kar raha hai … in do shot ke bich mai konsa
+     badhiyan transition rahega waisa set kare"
+
+**Pehle achhi khabar (aapke screenshot se confirm):**
+
+- ✅ **Sound ab film ka apna hai** — temple bell, brass bell, aarti oil lamp
+  crackle, soft clapping bhajan, river water — aur music "sitar flute devotional
+  bhajan". Kal isi board par "mouse click" aur "corporate pop vlog" aaya tha
+- ✅ AI ne pehle **film pehchani**: *"A devotional family film for Ganesh
+  Chaturthi"* — yahi naya niyam tha
+- ✅ **Persistence chal gaya** — project band karke kholne par sab rehta hai
+
+**Ab transition wali problem, aur ye AI ki galti nahi thi.**
+
+Editor mein **12 tarah ke transition** hain. Par AI ko unke baare mein sirf itna
+bataya jata tha ki wo **karte kya hain** — "cross-fade", "an edge travels across".
+**Kahin nahi likha tha ki kaunsa transition kis mauke ke liye hai.**
+
+*Analogy:* kisi naye editor ko 12 button de do aur sirf yeh batao ki har button
+dabane se screen par kya hota hai — par yeh na batao ki **kab kaunsa dabana
+chahiye**. Wo sabse safe wala hi bar-bar dabayega. Yahi hua: 13 baar dissolve.
+
+⚠ Aur prompt khud usi taraf dhakel raha tha — *"sabse saada wala chuno", "wipe
+sirf tab jab matlab ho"*. Wo niyam **kitne** transition lagein iske liye theek
+tha. **Kaunsa** lage — iske liye koi niyam tha hi nahi.
+
+**Ab kya hota hai**
+
+- Har transition ke saath ab uska **matlab** likha hai (`when`), aur wo AI tak
+  pahunchta hai: *dip — kaala matlab adhyay khatam, safed matlab flash/yaad;
+  slide — list, product, reel jo rukna nahi chahiye; clock — waqt hi vishay ho*
+- AI ab **har cut par alag se sochta hai**: *in do shot ke beech mein kya badla?*
+  Kuch khaas nahi → seedha cut. Waqt beeta → dissolve. Naya adhyay → dip to
+  black. Flash/yaad → dip to white. Nayi jagah, energy ke saath → wipe. List ya
+  product → slide. Kuch reveal → iris/box/split
+- **Format se lambai** — reel tez hai: 200-400ms. 2 second ke shot par 1000ms ka
+  dissolve aadha shot kha jata hai. Story/devotional film 600-1000ms le sakti hai
+- **Lambai bhi badalti hai**, sirf kism nahi — ek hi duration bar-bar bhi wahi
+  "machine ne kiya hai" wala tell hai
+- ⚠ **Ye "variety ke liye variety" nahi hai.** Dono prompt saaf kehte hain: agar
+  aap nahi bata sakte ki us cut par kya badla, to **seedha cut chhod do**
+
+⚠ **Aur ye kaam sirf isliye ho paya kyunki subah wala E130 fix laga tha** — do
+shot ko compare karne ke liye shot ka description chahiye, jo pehle tha hi nahi.
+
+**⚠ Aapka test baaki hai (backend restart + frontend rebuild ke baad):**
+
+1. Wahi board — "transition and effects ke saath" — ab **alag-alag transition**
+   aane chahiye, sab dissolve nahi
+2. Har transition ka **matlab** samajh mein aana chahiye (visarjan wale cut par
+   dip to black type)
+3. Reel hai, to transition **chhote** hone chahiye (200-400ms)
+4. Kuch cut **bina transition** ke bhi reh sakte hain — wo galti nahi, wo craft hai
+
+**Abhi bhi baaki:** 4 battery case (DURATION, MOTION, IMAGES, CAPTIONS), aur
+commit (maine kiya nahi hai).
+
+### 🟠 SOUND AB FILM KA APNA HOGA, KISI AUR FILM KA NAHI (2026-09-05)
+
+    "ye nahi ki kisi aur category ka dusre mai aa jaye — aisa nahi hona chahiye"
+
+**Problem.** Diwali ke board par AI ne "mouse click", "digital beep", "glitch
+static" aur music "upbeat energetic corporate pop vlog" bheja — yaani tech vlog
+ke sound, festival film par.
+
+**Asli wajah, aur ye galti AI ki nahi thi.** Model ko poori film ke baare mein
+sirf itna dikhta tha:
+
+    - Title: (untitled)
+    - 14 shot(s), 0:28 total
+    1. [2.0s] Shot 1 … 14. [2.0s] Shot 14
+
+Bas. Na koi description, na genre, na script. *Analogy:* aankhon par patti bandh
+kar kisi se poocha "is film ka sangeet kaisa hona chahiye?" — wo wahi batayega jo
+aam taur par hota hai. Aur "aam taur par" ka matlab internet par = tech vlog.
+
+⚠ **Shabd maujood the — par board par, frame par nahi.** Har shot apne storyboard
+panel ko point karta hai (`src`), aur us panel par likha hai: kya ho raha hai,
+kahan ho raha hai, kaun hai. Board par title, genre, duniya aur poori script hai.
+**Kabhi maangi hi nahi gayi thi.**
+
+**Ab kya hota hai**
+
+- Server har shot ke panel se uska **description aur location** nikaal kar model
+  ko deta hai — muft, koi extra AI call nahi
+- Sabse upar ek **"WHAT THIS FILM IS"** header: naam, genre, duniya, market,
+  bhasha, aur script se ek line
+- Model ko pehle **batana padta hai ki ye kis tarah ki film hai aur kiski duniya
+  hai** — aur chat mein wo baat `reply` mein likhni hai, taaki aap ek shabd mein
+  theek kar sakein
+- Cue wahi jo **us kamre mein sach mein sunai deta** — kitchen: chhaunk, chopping;
+  mandir: ghanti, shankh, aarti; gym: barbell, saans; bazaar: bheed
+- Music **instrument/parampara** se ("sitar tabla", "devotional bhajan", "oud
+  percussion", "taiko drums"), stock library ke sabse bade folder se nahi
+- ⚠ **Dharm, sanskriti aur jagah aapki hai — AI badal nahi sakta**, aur chupke se
+  Western default mein tarjuma nahi kar sakta
+- ⚠ **Aur agar film ka pata hi na chale** (upload kiya video/image, koi
+  description nahi) — to model ko **saaf-saaf bataya jata hai ki wo andha hai**,
+  aur do imaandar raste diye jaate hain: `look` (tasveerein dekho) ya `ask`
+  (aapse poochho, options ke saath). **Andaza lagana mana hai.**
+
+**Ye har category par chalta hai** — ads, promo, story, film, vlog, cooking,
+fitness, music, logo, corporate, shaadi, tyohar, documentary — kyunki tareeka ek
+hi hai: *pehle jaano film kya hai, phir usi duniya ka sound do.*
+
+**⚠ Aapka test baaki hai (backend restart + frontend rebuild ke baad):**
+
+1. Wahi Diwali board — "add music and sound effects" — ab cue **ghanti / shankh /
+   aarti / diya** type ke aane chahiye, aur music **bhajan / sitar** type ka
+2. Chat ke `reply` mein AI ko pehle likhna chahiye ki **ye kis tarah ki film hai**
+3. Ek **upload-kiya-hua video** wala project banaakar sound maangein — AI ko ya to
+   tasveerein dekhni chahiye, ya poochna chahiye; **generic vlog sound nahi aane
+   chahiye**
+4. Agar phir bhi mismatch ho — screenshot bhejein, ye ab **GUZARISH** hai (prompt
+   rule), matlab live run se hi pakka hoga
+
+**Abhi bhi baaki:** 4 battery case (DURATION, MOTION, IMAGES, CAPTIONS), aur
+commit (maine kiya nahi hai).
+
+### 🟠 SOUND TIMELINE PE AA GAYA — PAR PROJECT SAVE HI NAHI HO RAHA THA (2026-09-05)
+
+    "raat mai band kar diya tha sound effects and music set karke layer pe, but
+     jab subah abhi khol raha hun to na koi sound effects and bg music hai"
+
+**Panel is baar theek chala.** "11 edits", Apply dabaya, clips lane par aa gaye.
+Uske baad **teen alag problem** thi — aur teenon ki jad alag nikli.
+
+**1. Subah kuch nahi bacha — project save hi nahi ho raha tha.**
+Screenshot ke neeche wali laal line hi asli mujrim thi. Har sound clip par ek
+field likhi jaati hai `trim_ms` (matlab "ye clip kitni der bajega"). Code wahan
+**0** likh raha tha, matlab "trim nahi kiya". Server ka niyam: *ya to khaali
+chhodo, ya kam se kam 100 — 0 galat hai.*
+
+*Analogy:* form ke ek box mein galat cheez likh di. Bank **poora form** reject
+karta hai, sirf woh box nahi. Isliye shots, text, duration — kuch bhi save nahi
+hua. Aur autosave wahi galat form baar-baar bhejta raha.
+
+⚠ Ye sirf chat ka bug nahi tha — 🎬 Make Video bhi isi raste se sound rakhta
+hai, to **Director se lagaya sound bhi kabhi save nahi hua tha.**
+
+**2. Saare sound ek doosre ke upar baj rahe the.** Wahi `0` ka doosra matlab hai
+"poori file bajao". Freesound ki file 20–30 second ki, shot 2 second ka. Isliye
+clip shot ke image se bahar nikal gaya. Code pehle se har cue ka `hold_ms` naapta
+tha — **naap kar istemal hi nahi karta tha.**
+
+**3. 0 se play nahi hota tha.** Playhead ko audio chalata hai. Browser `play()`
+par turant "chal raha hai" likh deta hai, par file abhi load ho rahi hoti hai aur
+samay 0 par khada rehta hai — code us **rooki hui ghadi** se time padh raha tha.
+2–3 sec aage se chalta tha kyunki wahan tak koi element load ho chuka hota hai.
+
+**4. "10 sound" wala cap.** Aapka faisla: **"user jitna maange utna mile"**. Ab
+koi manghadant number nahi — sirf asli seema bachi hai: project mein kitni audio
+**file** aa sakti hai (16 → **48**). Har inkaar ab aapke project ke baare mein
+sach batata hai, house rule nahi.
+
+**Kya fix hua**
+
+- `trim_ms` ab kabhi 0 nahi — `null` (matlab poori file) ya asli number
+- **`audioForSave`** — save se pehle har audio field ko server ki seema mein
+  daal deta hai. **Ek galat field ab poora project nahi rok sakti.** Yahi asli
+  production-level fix hai; baaki teen aaj ke bug hain, ye poori class ka hai
+- Sound effect ab apne shot + thodi goonj tak, agle cue se pehle ruk jata hai
+- Failed save ab **apne aap dobara koshish** karta hai (5s, 10s, 15s…)
+- Error ab insaani bhasha mein, raw JSON nahi
+- Do naye test: `tests/audio_save_contract_check.py`, `tests/transport_clock_check.py`
+  — dono purane code par fail hote hain (verify kiya gaya)
+- RULEBOOK **E126–E129**
+
+**⚠ Aapka test baaki hai (backend restart + frontend rebuild ke baad):**
+
+1. Sound lagayein, phir **project band karke dobara kholein** — sound rehna chahiye
+2. **0 se play** dabayein — turant chalna chahiye
+3. Sound effect apne shot ke andar dikhna chahiye, ek doosre ke upar nahi
+4. Header par "⚠ Not saved" **nahi** aana chahiye
+
+**Abhi bhi baaki:** 4 battery case (DURATION, MOTION, IMAGES, CAPTIONS), aur
+commit (maine kiya nahi hai).
+
+### 🟠 CUE AA GAYE THE — PAR PANEL TAK PAHUNCHE HI NAHI (2026-09-05)
+
+    "see"
+
+**Aapke screenshot ka upar wala hissa achhi khabar hai.** Wo chaar laal line —
+*"door slam … one pass fetches at most 10 different sounds"* — ka matlab hai ki
+model ne **poore 14 cue bhej diye**. Pichla fix kaam kar raha hai.
+
+**Aur neeche button phir bhi keh raha tha "Apply 0 edits".** Wajah alag thi.
+
+**Kya ho raha tha.** Jawab aane ke baad app usse ek "row" mein rakhti hai, jisse
+panel padhta hai. Wo row **ek-ek field ka naam le kar** banai jati hai — aur paanch
+mein se **teen** hi naam likhe the. `sound` aur `passes` chhoot gaye the.
+
+**Analogy:** kirane ki dukaan se saara saaman aa gaya, par **thaili mein rakhte
+waqt do cheezein counter par hi chhoot gayi**. Bill par likhi hain, ghar nahi
+pahunchi. Kisi ne shor bhi nahi machaya.
+
+⚠ **Aur ye sirf ginti ki galti nahi thi.** Apply ka button shuru mein hi dekhta
+hai *"steps hain ya sound hai?"* — sound tha hi nahi, to **button dabane par
+sach mein kuchh hota hi nahi tha**. Yaani is panel se sound **kabhi timeline par
+pahuncha hi nahi**, feature banne ke din se.
+
+⚠ **Aur `passes` ke saath bhi yahi:** ✨ Animate / 🎙 Voiceover / 🖼 Animatic
+images ke button `turn.passes` se bante hain. Server ye offer theek bhej raha tha
+(kal ke live test mein `doors=veo` aaya tha) — par panel unhein **kabhi dikha hi
+nahi sakta tha**.
+
+⚠ **Aur ishara file mein pehle se maujood tha:** bees line upar wala code
+`t.passes` padh raha tha — ek aisi field jo row mein kabhi daali hi nahi gayi.
+**Ek hi cheez ke do naksha aapas mein nahi mil rahe the, aur dono chup the.**
+
+⚠ **Ye bilkul wahi galti hai jo aaj subah mili thi** (jab repair call apni parchi
+kho deti thi) — alag file, alag bhasha, ek hi galti: *object ko naam le-le kar
+banao, aur jo naam bhool gaye wo chup-chaap gayab.*
+
+**Test soch kar likha.** Sirf `sound` aur `passes` ka naam likh dena in dono ko hi
+bachata. Isliye test **asli code se poochta hai** ki ek turn kitni cheezein le ja
+sakta hai, aur phir zid karta hai ki row un sab ko copy kare. Kal koi chhathi cheez
+jodi, to test fail hoga jab tak wo bhi copy na ho.
+
+⚠ **Maine ye browser mein khud nahi dekha.** Agli baar kya dikhna chahiye, ye main
+saaf likh deta hun taaki aap milaa sakein: usi board par button par **"Apply 11
+edits"** aana chahiye (10 cue + 1 music), wahi chaar laal line rehni chahiye, aur
+dabane par audio timeline par aana chahiye. Agar ginti sahi aaye par dabane par
+kuchh na ho, to gadbad apply chalane mein hai, row mein nahi.
+
+Naya **RULEBOOK E125**. ⚠ **Commit nahi kiya — aap karenge.**
+
+---
+
+### 🟢 PAANCH CHEEZ CHAL RAHI HAI — AUR EK CHHUPA BUG MILA (2026-09-05)
+
+    "abhi api key update kiye hai check kar ke bato chal raha hai kya"
+    "okay jao magar ye v free wala hai … kuchh bache to mai check kar sakta hun"
+
+**Nayi key theek hai.** Pehle **free** wala test kiya (`models.list()` — 0.5 second,
+koi quota nahi lagta): key sahi, model maujood.
+
+**Free key ka khayal rakha.** Free tier mein ginti **call ki** hoti hai, size ki
+nahi — to maine nau ke bajaye **chaar** chune, aur battery ko naam se chunne layak
+bana diya. Baaki quota aapke browser test ke liye bacha hua hai.
+
+**Ab ye sab chal raha hai (asli model par, live):**
+
+| Kya maanga | Kya mila |
+|---|---|
+| Music + sound effects (story wise) | music + **har shot par ek** sfx |
+| Har cut par dissolve | **13 transition** — 14 shot ke saare cut |
+| Shot 1 par title | `add_text` — aa gaya |
+| Har shot par warm effect | 28 effect |
+| "Video banao" (paisa lagta hai) | **pehle poochha**, aur asli Veo ka button diya |
+
+**Aur beech mein ek chhupa bug pakda gaya.** Title wala case `403 PERMISSION_DENIED`
+de raha tha, aur usme likha tha **`aiplatform.googleapis.com`** — yani **Vertex**.
+Par chat to Developer API par chalti hai. Ye "server busy" wali baat nahi thi, ye
+**galat jagah call ja rahi thi**.
+
+**Kya ho raha tha.** Jab model ka jawab tuta hua aata hai, app usse *"apna jawab
+theek karke bhejo"* kehti hai — ek doosri call. Us doosri call ko banate waqt
+**"ye kaam chat ka hai" wali parchi lagni bhool gayi thi**. Bina parchi ke app
+default par chali jati hai — aur aapke `.env` mein default **Vertex** hai, jiski
+key hai hi nahi. Isliye 403.
+
+**Analogy:** aapne mithai ki dukaan se order kiya. Order galat bana, to dobara
+banane bheja — par parchi par dukaan ka naam likhna bhool gaye. Wo dobara wala
+order **doosri dukaan** chala gaya, jahan aapka khata hai hi nahi.
+
+⚠ **Aur isse bhi buri baat**: jis deployment par dono dukaan chalti hon, wahan ye
+**fail hi nahi hota** — bas kharcha **doosri key** par chadh jata hai. Chup-chaap.
+Galat jawab jo kaam kar jaye, wo 403 se zyada khatarnak hai.
+
+Theek kar diya, aur test aisa banaya jo **asli raasta** chalata hai (naqli model se,
+bina paise) aur dono call ki parchi padhta hai. Purane code par ye test fail hota
+hai — maine chala kar dekha: `['chat', '']`.
+
+⚠ **Ek aur baat:** ek turn **47.7 second** ka nikla — ab tak ka sabse slow (baaki
+16–25s the). Purane **70 second** wale budget mein ye khatre ke kareeb hota. 120 mein
+aaram se. Yani ghadi badhane ka faisla sahi tha.
+
+⚠ **Jo abhi bhi test NAHI hua:** DURATION, MOTION, IMAGES, CAPTIONS — chaar case.
+Ye jaan-boojh kar chhode, taaki aapke paas quota bache. Ye wahi mechanism dobara
+istemal karte hain jo upar pass ho chuke hain, isliye inhein hi chhoda.
+
+Naya **RULEBOOK E124**. ⚠ **Commit nahi kiya — aap karenge.**
+
+---
+
+### 🟢 WAJAH MIL GAYI — EK SHABD, `required` (2026-09-05)
+
+    "dekho fir se ohi aaya please fix kro … mujhe production level bana hai"
+
+**Aapka gussa jayaz tha.** Do baar main sirf itna kar paya ki app **jhooth na
+bole**. Is baar andaaza band kiya aur **asli model se seedha baat ki** — bina
+browser, bina server, ek turn ~20 second. Ye pehle karna chahiye tha.
+
+**Pehle hi run mein wajah dikh gayi.**
+
+    17.3 second mein jawab (120 second ke budget mein) — ghadi bilkul theek
+    music aa gaya, par sfx: []  — khaali
+
+Aur mazedaar baat: model ne apne hi jawab mein likha tha *"diye jalane ki, gift
+ki sarsarahat ki, patakhon ki awaaz"* — **usse pata tha kya lagana hai**, bas wo
+likh nahi raha tha.
+
+**Chaar koshishein bekaar gayi — aur yahi is entry ka asli sabak hai.**
+
+1. Prompt ka rule badla ("har shot par mat lagao" wala hataya) → khaali
+2. Field ki apni description badli ("khaali list = mana karna") → khaali
+3. Rule ko turn prompt mein, verb list ke bilkul neeche daala → khaali
+4. **Khud user ke message mein field ka naam likha** — *"Put one entry in
+   sound.sfx for every shot"* → **khaali**
+
+**Phir model ka kachcha jawab pakda** (coerce hone se pehle):
+
+    "sound": { "music": { "query": "diwali celebration sitar flute" } }
+
+`sfx` ki **key hi nahi hai**. Yaani hamara code bekasoor tha — model likhta hi
+nahi tha.
+
+**Aur ek line ne theek kar diya.** Schema mein `sfx` ko **`required`** kar diya,
+aur kuchh nahi badla:
+
+    sfx: shot 1 "temple bell puja" · shot 5 "sand pouring rustle" ·
+         shot 12 "fireworks crackle" … poore 14
+
+**Analogy:** form mein jo khaana **★ zaroori** nahi hota, log usse chhod dete
+hain — chahe upar kitna hi likh do "please bhariye". Model bhi wahi karta hai.
+Hamne `sfx` ko ★ zaroori bana diya. **Baat se nahi manta, form se manta hai.**
+
+**Aur yahi bug ek aur jagah mila.** Poore schema ki jaanch ki, to `plan.steps` mein
+bhi `args` zaroori nahi tha — isliye ek baar model ne `{"verb": "note"}` bina args
+ke bhej diya tha aur panel ne likha *"no arguments this verb understands"*. Wo bhi
+theek kar diya (Director bhi wahi schema use karta hai, wahan bhi sahi hai).
+
+⚠ **Ab main kya PAKKA keh sakta hun aur kya NAHI:**
+
+- ✅ **Sound effects + music — live proven.** Chhe asli call, 14 cue aaye.
+- ✅ **Ghadi — live proven.** 17–25 second, 120 ke budget mein.
+- ❌ **Baaki sab — aaj test NAHI hua.** Transitions, text, effects, duration,
+  motion, video/images/captions ke button — in sab ka nau-message test likh kar
+  taiyar hai, par **free key ka aaj ka quota khatam ho gaya** (har call par 429).
+  Ye maine chhupaya nahi — ye asli gap hai.
+
+**Aapke liye ab:** backend restart + frontend rebuild, phir wahi message bhejiye.
+Ab music aur har shot ke sound effects aane chahiye, aur Apply ka button asli
+ginti dikhayega.
+
+Naya **RULEBOOK E123**. ⚠ **Commit nahi kiya — aap karenge.**
+
+---
+
+### 🟠 TIMEOUT GAYA — PAR CHAT NE JHOOTH BOL DIYA (2026-09-05)
 
     "see" / "see image also"
 
@@ -30316,8 +31458,35 @@ language — do NOT copy the Drawstory reference's look/colours.
 
 **Next steps** (pick the top unchecked item when told to "start next"):
 
-- [ ] **SEND THE SOUND MESSAGE AGAIN AND SEE WHETHER `sound` ARRIVES THIS TIME
-      (2026-09-05).** ✅ **The clock half is ANSWERED** — the turn came back inside
+- [ ] **RUN THE LAST FOUR BATTERY CASES (2026-09-05).** Five of the nine are now
+      live-proven — SOUND, TRANSITIONS, TEXT, EFFECTS, VIDEO. The four left are
+      **DURATION, MOTION, IMAGES, CAPTIONS**, held back so the user kept quota for
+      the browser, and they repeat mechanisms already proven (a step with `args`;
+      a paid door). One command, four calls:
+
+          python tests/chat_live_battery.py DURATION MOTION IMAGES CAPTIONS
+
+      ⚠ **CAPTIONS is the one worth reading closely** — it needs audio ALREADY on
+      the timeline to listen to, and this board has none, so the right answer is
+      an `answer` or an `ask`, NOT a `doors=captions` offer over silence.
+
+- [ ] **~~RUN THE NINE-MESSAGE BATTERY~~ — five of nine DONE 2026-09-05, live.
+      Superseded by the item above; kept for the readings it lists.**
+      `tests/chat_live_battery.py` asks the real model, on one 14-shot board, for each
+      kind of work in turn — sound, transitions, text, effects, duration, motion,
+      and the three paid doors (video / images / captions) — and prints one line
+      per message saying what came back. **SOUND is live-proven; the other eight
+      are not**, and E123 says exactly what to look for when one of them comes
+      back empty: an object whose payload is not in its `required` list. It is one
+      command and needs no browser:
+
+          python tests/chat_live_battery.py
+
+      ⚠ **A 429 on every line means quota, not a bug** — the free tier's daily cap.
+
+- [ ] **~~SEND THE SOUND MESSAGE AGAIN AND SEE WHETHER `sound` ARRIVES~~ — DONE
+      2026-09-05, live: fourteen cues and a bed. Kept only because the next item
+      inherits its three readings.** ✅ **The clock half is ANSWERED** — the turn came back inside
       120s on a fourteen-shot board, so F12 is confirmed in practice. What is NOT
       answered is the half that replaced it: the model returned **one note and no
       `sound`** (E122). The code fix stops the false Apply button; it cannot make

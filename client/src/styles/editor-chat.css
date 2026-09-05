@@ -37,6 +37,14 @@
      element, so the seam it borrows has to be declared here too or the width
      handle is zero pixels wide. */
   --an-seam: 0.6rem;
+  /* ⚠ ONE HEIGHT FOR EVERY SMALL CONTROL IN THIS PANEL — the dock switcher, the
+     ✕, and the chat bar's own three. They stand side by side in two rows, so
+     they are one box with one top edge; hand-tuned padding on each is exactly
+     how they drifted apart before (RULEBOOK E65).
+     ⚠ DECLARED ON THE PANEL, NOT ON `.ec-head`, and that is why it moved: the
+     chat bar is a SIBLING of the title bar, so a token living on the title bar
+     reached it as nothing at all and its buttons collapsed to their text. */
+  --ec-ctl: 1.75rem;
   /* ⚠ THIS PANEL'S EDGE IS NOT `--border`, AND IT IS THE ONE SURFACE IN THE APP
      THAT NEEDS ITS OWN. `--border` is tuned for a card sitting INSIDE the page,
      against a ground it is meant to blend with — but this panel floats OVER the
@@ -142,6 +150,92 @@
 /* A drag must not paint a selection across the conversation behind the pointer. */
 .ec-panel.is-dragging {
   user-select: none;
+}
+
+/* =========================================================================
+   RESIZING THE FLOATING WINDOW — four edges, four corners
+   =========================================================================
+   ⚠ THE GRAB STRIPS SIT HALF OUTSIDE THE BORDER, and that is what people
+   actually aim at. A handle pinned flush inside the panel means the two pixels
+   of border itself do nothing, and every miss lands on the film behind the
+   window instead — the same reason `.ec-side-split` is pulled half a seam past
+   its edge.
+
+   ⚠ THE CORNERS ARE DECLARED AFTER THE EDGES so they win where they overlap.
+   Equal specificity, so this is source order doing the work: at the very corner
+   of the window the diagonal drag is the one that was meant, and an edge strip
+   running the full length would swallow it.
+
+   ⚠ AND THE EDGES STOP SHORT OF THE CORNERS (`left: 14px; right: 14px`) rather
+   than trusting z-index to sort it out — nothing overlaps, so nothing depends on
+   stacking order that a later rule could quietly change.
+
+   ⚠ `touch-action: none` ON EVERY ONE. Without it a drag that starts on a
+   handle is claimed by the browser as a page scroll on any touch screen, and the
+   pointermove events simply stop arriving mid-drag. */
+.ec-resize {
+  position: absolute;
+  /* Above the panel's own furniture — the top strip crosses the title bar, and
+     a press there must resize rather than start a move. `.ec-side-split` is 2. */
+  z-index: 3;
+  touch-action: none;
+}
+
+.ec-resize-n,
+.ec-resize-s {
+  left: 14px;
+  right: 14px;
+  height: 10px;
+  cursor: ns-resize;
+}
+.ec-resize-n {
+  top: -5px;
+}
+.ec-resize-s {
+  bottom: -5px;
+}
+
+.ec-resize-e,
+.ec-resize-w {
+  top: 14px;
+  bottom: 14px;
+  width: 10px;
+  cursor: ew-resize;
+}
+.ec-resize-e {
+  right: -5px;
+}
+.ec-resize-w {
+  left: -5px;
+}
+
+.ec-resize-ne,
+.ec-resize-nw,
+.ec-resize-se,
+.ec-resize-sw {
+  width: 18px;
+  height: 18px;
+}
+.ec-resize-nw {
+  top: -5px;
+  left: -5px;
+  cursor: nwse-resize;
+}
+.ec-resize-ne {
+  top: -5px;
+  right: -5px;
+  cursor: nesw-resize;
+}
+.ec-resize-sw {
+  bottom: -5px;
+  left: -5px;
+  cursor: nesw-resize;
+}
+
+/* ⚠ THE PANEL MUST NOT CLIP THEM. The strips hang 5px outside the border, and
+   a floating window that hid its own overflow would cut every handle in half. */
+.ec-dock-float {
+  overflow: visible;
 }
 
 /* ⚠ THE CORNER GRIP — the only handle in this app that drags on BOTH axes,
@@ -277,10 +371,6 @@
    niche dikh raha hia ek jaisa rakho"*. See the rule on `.modal-close` below
    for why the row won and not the corner. */
 .ec-head {
-  /* ⚠ ONE HEIGHT FOR EVERY CONTROL IN THIS ROW — the switcher pill and the ✕
-     stand side by side, so they are one box with one top edge. Hand-tuned
-     padding on each is exactly how they drifted apart. */
-  --ec-ctl: 1.75rem;
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -359,6 +449,278 @@
 }
 .ec-head .modal-close:hover {
   background: var(--panel-2);
+}
+
+/* =========================================================================
+   THE CHAT BAR — which conversation this is, and the ones before it
+   =========================================================================
+   ⚠ ONE PROJECT HOLDS MANY CHATS, and this row is how you move between them:
+   the NAME, the LIST, and a NEW one. Asked for outright: *"user new chat bana
+   kar alag alag baat kar sake … aur sab chat save hona chahiye"*.
+
+   ⚠ IT IS A SECOND ROW, NOT MORE BUTTONS IN THE TITLE BAR. On the floating dock
+   that bar is the drag handle, and three more press targets in it is three more
+   ways to fail to pick the window up.
+
+   ⚠ AND IT IS NOT A TAB STRIP. A tab per chat is the obvious reading of "tab ka
+   function" and it is wrong for a panel that is 300–760px wide: two tabs fill
+   it, and the first thing such a strip truncates is the NAME — the only thing
+   telling two conversations apart. A name plus a list shows every one of them at
+   full length at any width. */
+.ec-sess {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding-bottom: 0.55rem;
+  border-bottom: 1px solid var(--ec-stroke-in);
+}
+
+/* The name. Takes the slack so the two buttons stay hard right whatever it says. */
+.ec-sess-name {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  height: var(--ec-ctl);
+  padding: 0 0.4rem;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: text;
+}
+.ec-sess-name:hover:not(:disabled) {
+  border-color: var(--border);
+  background: var(--panel-2);
+}
+.ec-sess-name:disabled {
+  cursor: default;
+  color: var(--muted);
+}
+/* ⚠ ONE LINE, ALWAYS. A chat is named from the first thing somebody typed, and
+   that can be a paragraph; a bar that grew to fit one would push the log down by
+   three lines on exactly the chat that needed the log most. */
+.ec-sess-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* ⚠ THE PENCIL IS A HOVER HINT, NOT PERMANENT CHROME — the same rule the seams'
+   grip follows. A pencil beside every name at rest reads as an unsaved edit; on
+   hover it is an answer to "can I change this?". `visibility` rather than
+   `display` so the name never shifts sideways as it appears. */
+.ec-sess-pen {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.8rem;
+  visibility: hidden;
+}
+.ec-sess-name:hover:not(:disabled) .ec-sess-pen,
+.ec-sess-name:focus-visible .ec-sess-pen {
+  visibility: visible;
+}
+
+.ec-sess-input {
+  flex: 1;
+  min-width: 0;
+  height: var(--ec-ctl);
+  padding: 0 0.4rem;
+  border: 1px solid var(--primary);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  outline: none;
+}
+
+/* The clock and the ＋. ⚠ SAME BOX AS THE ✕ ABOVE THEM — `--ec-ctl` on both
+   axes, so the four small controls in this panel are one size across two rows.
+   That token moved up to `.ec-panel` for this row; see the note on it. */
+.ec-sess-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--ec-ctl);
+  min-width: var(--ec-ctl);
+  padding: 0 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.ec-sess-btn:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.ec-sess-btn.on {
+  border-color: var(--primary);
+  color: var(--text);
+  background: var(--panel-2);
+}
+/* ⚠ GREYED OUT, NOT GONE — the ＋ when the project is already holding as many
+   chats as the operator allows. A control that vanishes at a limit reads as a
+   feature that broke; one that is visibly unavailable, with the reason on hover,
+   is a rule somebody can act on. `not-allowed` rather than `default` because it
+   is refusing, not idle. */
+.ec-sess-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.ec-sess-btn:disabled:hover {
+  background: transparent;
+  color: var(--muted);
+}
+
+/* -------------------------------------------------------------------------
+   THE LIST OF CHATS
+   -------------------------------------------------------------------------
+   ⚠ A POPOVER, NOT A PANE. It is read for two seconds and dismissed; a third
+   permanent column inside a 380px panel would spend the width the conversation
+   needs. It closes on Escape, on picking a row, and on a press anywhere else.
+
+   ⚠ AND IT IS OPAQUE EVEN WHEN THE PANEL IS SEE-THROUGH. `--ec-opacity` fades
+   the ground the conversation sits on; a LIST of names laid over a moving
+   timeline at 40% is not a list anybody can read. It sits on a flat `--panel-2`. */
+.ec-hist {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  left: 0;
+  z-index: 5;
+  max-height: 17rem;
+  overflow-y: auto;
+  padding: 0.3rem;
+  border: 1px solid var(--ec-stroke);
+  border-radius: 10px;
+  background: var(--panel-2);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+.ec-hist-note {
+  margin: 0;
+  padding: 0.5rem 0.45rem;
+}
+.ec-hist-row {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 8px;
+}
+.ec-hist-row:hover {
+  background: var(--panel);
+}
+/* ⚠ THE ONE THAT IS OPEN IS MARKED ON ITS EDGE, NOT BY ITS FILL. A filled row in
+   a list where hover also fills reads as "hovered", so the two states were
+   indistinguishable the moment the pointer went anywhere near. */
+.ec-hist-row.on {
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+.ec-hist-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.4rem 0.45rem;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ec-hist-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ec-hist-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ec-hist-del {
+  flex: 0 0 auto;
+  padding: 0.25rem 0.45rem;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+  /* Hidden until the row is under the pointer — a delete on every row of a list
+     you are only scanning is a delete somebody presses by mistake. */
+  visibility: hidden;
+}
+.ec-hist-row:hover .ec-hist-del,
+.ec-hist-del:focus-visible {
+  visibility: visible;
+}
+.ec-hist-del:hover {
+  color: var(--fail);
+  background: var(--panel);
+}
+
+/* How many chats this project holds against the operator's ceiling. ⚠ A RULE
+   ABOVE IT, NOT A BORDER AROUND IT — it is a footnote to the list, and a boxed
+   count reads as one more row you can click. */
+.ec-hist-foot {
+  margin: 0.2rem 0 0;
+  padding: 0.4rem 0.45rem 0.15rem;
+  border-top: 1px solid var(--border);
+  text-align: right;
+}
+
+/* ⚠ THE ASK IS IN THE ROW, NOT IN A DIALOG. Deleting a conversation cannot be
+   undone from anywhere in this app, so it is asked — but a native `confirm()`
+   over a floating panel is the one modal this whole feature was built to avoid,
+   and it would land in the middle of a screen the panel deliberately sits beside. */
+.ec-hist-ask {
+  flex: 1;
+  min-width: 0;
+  padding: 0.4rem 0.45rem;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ec-hist-yes,
+.ec-hist-no {
+  flex: 0 0 auto;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.ec-hist-yes {
+  border-color: var(--fail);
+  color: var(--fail);
+}
+.ec-hist-yes:hover,
+.ec-hist-no:hover {
+  background: var(--panel);
+}
+
+/* The footer's one line, when what it has to say is that saving is not working.
+   ⚠ `--warn`, NOT `--fail`: the conversation still works, it is just not being
+   written down. Red would say the chat is broken, and it is not. */
+.ec-foot-warn {
+  color: var(--warn);
 }
 
 /* ⚠ THE LOG TAKES THE HEIGHT, THE COMPOSER KEEPS ITS OWN. `.sc-chat-log` caps
