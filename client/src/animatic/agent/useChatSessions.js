@@ -55,6 +55,8 @@ function rowFor(sessionId, turns, title) {
   return {
     session_id: sessionId,
     title: title || "",
+    // Automatic until somebody renames it — see `renamedRef` and the autosave.
+    title_locked: false,
     turn_count: (turns || []).filter((t) => t && t.role === "user").length,
     created_at: "",
     updated_at: new Date().toISOString(),
@@ -146,6 +148,18 @@ export default function useChatSessions({ animaticId, enabled = true, projectSig
     try {
       const out = await api.editorChatSessions(id);
       const rows = Array.isArray(out?.sessions) ? out.sessions : [];
+      // ⚠ WHICH CHATS WERE NAMED BY HAND IS THE SERVER'S ANSWER, NOT THIS TAB'S
+      // MEMORY. `renamedRef` is emptied by a reload, and a panel that had
+      // forgotten would send the first line of the chat back up as its title on
+      // the very next message — a chat renamed to "chat 1" reading "is
+      // shorts/reel ke hisaab se sound effects and…" again. Reported from a
+      // live test. The store refuses that write anyway; this is what keeps the
+      // list on screen from flickering to the wrong name in between.
+      rows.forEach((r) => {
+        if (!r || !r.session_id) return;
+        if (r.title_locked) renamedRef.current.add(r.session_id);
+        else renamedRef.current.delete(r.session_id);
+      });
       setSessions(rows);
       setLimit(out?.limit || 0);
       setError("");
@@ -304,6 +318,7 @@ export default function useChatSessions({ animaticId, enabled = true, projectSig
             // ⚠ THE CHAT IS BORN HERE, NOT AT THE ＋ BUTTON. See the header.
             const made = await api.editorChatSessionCreate(jobId, {
               title,
+              titleAuto: true,
               turns: body,
             });
             const sid = made?.session_id || "";
@@ -328,7 +343,14 @@ export default function useChatSessions({ animaticId, enabled = true, projectSig
             // ⚠ THE TITLE ONLY EVER GOES UP WHILE IT IS STILL AUTOMATIC. Once a
             // person has renamed a chat, the first line of it must never come
             // back and overwrite the name they chose.
-            ...(title && !renamedRef.current.has(sessionId) ? { title } : {}),
+            //
+            // ⚠ AND `titleAuto` SAYS SO OUT LOUD, because this ref is not a
+            // durable answer: a reload empties it, and the reload is exactly
+            // when the panel would otherwise rename a chat somebody had named.
+            // The server holds the lock; this only saves it a pointless write.
+            ...(title && !renamedRef.current.has(sessionId)
+              ? { title, titleAuto: true }
+              : {}),
           });
           savedRef.current = encoded;
           writeMirror(jobId, sessionId, body);
@@ -389,7 +411,7 @@ export default function useChatSessions({ animaticId, enabled = true, projectSig
       const clean = String(title || "").trim();
       if (!animaticId || !sessionId) return;
       renamedRef.current.add(sessionId);
-      setRow(sessionId, { title: clean });
+      setRow(sessionId, { title: clean, title_locked: !!clean });
       chainRef.current = chainRef.current
         .catch(() => {})
         .then(() => api.editorChatSessionSave(animaticId, sessionId, { title: clean }))
@@ -435,7 +457,7 @@ export default function useChatSessions({ animaticId, enabled = true, projectSig
       return;
     }
     renamedRef.current.delete(sessionId);
-    setRow(sessionId, { title: "", turn_count: 0 });
+    setRow(sessionId, { title: "", title_locked: false, turn_count: 0 });
     writeMirror(animaticId, sessionId, []);
     savedRef.current = "[]";
     chainRef.current = chainRef.current

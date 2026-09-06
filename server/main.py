@@ -1251,6 +1251,9 @@ def _summarise_board(job: Job) -> StoryboardSummary:
         cover_url=drawn[0][1] if drawn else None,
         shared=bool(token),
         share_token=token,
+        # ⚠ THE SAME KEY THE FILTER READS (`params.workflow`), so a card can
+        # never disagree with the query that selected it. See StoryboardSummary.
+        workflow=str(params.get("workflow") or ""),
         # ⚠ CACHED ON `updated_at`, so this is a disk walk once per
         # edit and not once per poll. See `dir_bytes` in common.py.
         size_bytes=_dir_bytes(_board_dir(job.job_id), job.updated_at),

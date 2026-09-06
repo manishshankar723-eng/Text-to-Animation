@@ -85,7 +85,20 @@ def check(label, good, detail=""):
 # exactly the path a new user takes and on no other.
 BOARD_ID = "board1"
 BOARD_NAME = "TTBB EP One"
+# ⚠ A BOARD MADE IN ANOTHER WORKFLOW — a copy refined in 🖼 Image to Animatic
+# Image, which carries `params.workflow` and is therefore invisible to a caller
+# that asks `GET /storyboards` with no tag. Animating one is the whole point of
+# making it, so this editor's picker must list it.
+COPIED_ID = "board2"
+COPIED_NAME = "Ganesh Utsav (refined)"
 PANELS = 3
+# ⚠ ENOUGH BOARDS TO OVERFLOW THE WINDOW. The account that reported the bug had
+# 22; the picker must stay usable at that size, which is what section "the
+# footer" below presses.
+FILLER = [
+    {"job_id": f"filler{i}", "character_name": f"Board number {i}", "panel_count": 12}
+    for i in range(20)
+]
 
 PROJECT = {
     "id": "probe",
@@ -156,8 +169,28 @@ def route_api(route, request):
 
     # --- the storyboard library the picker lists -----------------------------
     if re.search(r"/storyboards(\?|$)", url):
-        send({"items": [{"job_id": BOARD_ID, "character_name": BOARD_NAME,
-                         "panel_count": PANELS}]})
+        # ⚠ THE QUERY IS RECORDED, NOT JUST ANSWERED. `GET /storyboards` filters
+        # by WORKFLOW: with no tag it returns only Script to Storyboard's own
+        # boards, and `workflow=*` returns every board whatever its tag. This
+        # picker asked with no tag, so a board refined in 🖼 Image to Animatic
+        # Image was silently missing from it — see the check below.
+        EVENTS.append(("list", url))
+        # ⚠ **A CROWDED ACCOUNT, NOT A TIDY ONE — THAT IS THE POINT OF `FILLER`.**
+        # This stub used to answer with one board, and a one-row dialog fits any
+        # window, so the check below could never have failed. The live account
+        # that reported "import nahi ho raha hai" had 22 boards: the list grew
+        # taller than the screen and carried Cancel and Import off the bottom of
+        # a `position: fixed` overlay that does not scroll. A fixture has to be
+        # as big as the report or it tests nothing.
+        send({"items": [
+            {"job_id": BOARD_ID, "character_name": BOARD_NAME, "panel_count": PANELS},
+            # ⚠ A BOARD FROM ANOTHER WORKFLOW. A real server only sends this row
+            # when it was asked with `workflow=*`; the check below reads the query
+            # the picker really made rather than trusting this stub.
+            {"job_id": COPIED_ID, "character_name": COPIED_NAME,
+             "panel_count": PANELS, "workflow": "animatic-image"},
+            *FILLER,
+        ]})
         return
 
     # --- the MEDIA LIBRARY's own picture route -------------------------------
@@ -401,8 +434,73 @@ def main():
             check("the picker opens and lists the storyboards",
                   BOARD_NAME in page.inner_text(".an-board-list"),
                   page.inner_text(".an-board-list")[:120])
+            # ⭐ THE FILTER BUG, 2026-09-06. Two screenshots side by side: the
+            # dashboard said "22 boards ready" and this very dialog listed 17.
+            # The dialog opened perfectly — the board they wanted simply was not
+            # in it, which is the worst shape a filter bug can take. `AnimaticLibrary`
+            # and `FinalVideoLibrary` both ask with `workflow=*`; only this door
+            # disagreed, and `GET /storyboards`'s own docstring says downstream
+            # workflows must ask that way or "the copies are a dead end".
+            asked = [u for (kind, u) in EVENTS if kind == "list"]
+            check("⭐ THE PICKER ASKS FOR EVERY WORKFLOW'S BOARDS, not just the untagged ones",
+                  bool(asked) and all("workflow=%2A" in u or "workflow=*" in u for u in asked),
+                  " | ".join(asked)[:200])
+            check("…so a board refined in another workflow is offered here too",
+                  COPIED_NAME in page.inner_text(".an-board-list"),
+                  page.inner_text(".an-board-list")[:200])
+            # ⚠ AND IT SAYS WHICH WORKFLOW IT CAME FROM. A copy keeps the
+            # original's NAME, so a list of every workflow's boards draws pairs
+            # of identical rows unless the tag is on them.
+            check("…and it is labelled, so two boards of the same name are telling apart",
+                  "Image to Animatic Image" in page.inner_text(".an-board-list"),
+                  page.inner_text(".an-board-list")[:200])
 
-            page.click(".an-board-opt")
+            # -----------------------------------------------------------------
+            # ⭐ THE FOOTER IS ON SCREEN — "import nahi ho raha hai", 2026-09-06
+            # -----------------------------------------------------------------
+            # With 22 boards the dialog grew past the bottom of the window and
+            # took Cancel and Import off the screen with it. Nothing errored and
+            # nothing said so; the button simply could not be reached, on an
+            # overlay that is `position: fixed` and does not scroll the page.
+            # ⚠ THE QUESTION IS "IS IT INSIDE THE VIEWPORT", not "is it in the
+            # DOM" — it was always in the DOM. That is the whole difference
+            # between this check and one a grep could have written.
+            print("\n＋ …and the Import button is still reachable with a full list")
+            # ⚠ **ON A LAPTOP, NOT ON THE 1200px TEST WINDOW.** The rest of this
+            # file wants a tall viewport so the timeline is not cramped — and a
+            # tall viewport is exactly what hides this bug: 22 rows fit in 1200px
+            # and the footer never leaves. The report came from a normal laptop.
+            # Checked at 1366×768 and put back afterwards, so nothing below this
+            # inherits the smaller window.
+            page.set_viewport_size({"width": 1366, "height": 768})
+            page.wait_for_timeout(120)
+            rows = page.query_selector_all(".an-board-opt")
+            check("the dialog really is holding a crowded list",
+                  len(rows) >= 20, f"{len(rows)} rows")
+            btn = page.query_selector(".an-board-modal button.primary")
+            bb = btn.bounding_box() if btn else None
+            vh = page.evaluate("window.innerHeight")
+            check("⭐ IMPORT IS INSIDE THE WINDOW, not pushed off the bottom",
+                  bool(bb) and bb["y"] + bb["height"] <= vh,
+                  f"button bottom={None if not bb else round(bb['y'] + bb['height'])} viewport={vh}")
+            cancel = page.query_selector(".an-board-modal .btn.ghost")
+            cb = cancel.bounding_box() if cancel else None
+            check("…and so is Cancel, which is the way out",
+                  bool(cb) and cb["y"] + cb["height"] <= vh,
+                  f"cancel bottom={None if not cb else round(cb['y'] + cb['height'])} viewport={vh}")
+            check("…and the heading did not get pushed off the top either",
+                  page.query_selector(".an-board-modal h2").bounding_box()["y"] >= 0)
+            # ⚠ AND THE LIST IS WHAT ABSORBED IT — it scrolls inside itself, so
+            # the footer stays put rather than the whole card scrolling and
+            # putting Import at the end of a long scroll.
+            check("…because the LIST scrolls, not the card",
+                  page.evaluate(
+                      "(() => { const l = document.querySelector('.an-board-list');"
+                      " return l.scrollHeight > l.clientHeight + 4; })()"))
+            page.set_viewport_size({"width": 1600, "height": 1200})
+            page.wait_for_timeout(120)
+
+            page.click(f".an-board-opt:has-text('{BOARD_NAME}')")
             page.click(".an-board-modal button.primary")
             # The import SPANS a save now, so the button spins for a round trip
             # before anything appears. Waiting on the modal closing is waiting on

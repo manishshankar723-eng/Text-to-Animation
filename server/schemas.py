@@ -1128,6 +1128,16 @@ class StoryboardSummary(BaseModel):
     cover_url: str | None = None
     shared: bool = False
     share_token: str | None = None
+    # WHICH WORKFLOW MADE IT. Empty for Script to Storyboard's own boards;
+    # `"animatic-image"` for a copy refined in 🖼 Image to Animatic Image.
+    #
+    # ⚠ IT IS ON THE CARD BECAUSE A COPY KEEPS THE ORIGINAL'S NAME. A picker that
+    # asks for every workflow (`workflow="*"` — what the animatics and video
+    # screens must do, see `list_storyboards`) therefore draws the same title
+    # twice with nothing to tell them apart. Reported live on 2026-09-06: six
+    # pairs of identical rows in the editor's import dialog. The filter was
+    # right; the LIST was unreadable, which is its own bug.
+    workflow: str = ""
     # Bytes on disk: every panel, upload and rendered file this project
     # owns. 0 means nothing generated yet, and the client draws that the
     # same way as "no folder" — both are "nothing here" to a reader.
@@ -3804,6 +3814,10 @@ class EditorChatSessionSummary(BaseModel):
     session_id: str = ""
     # Empty until the first message names it — see `titleFor` in the browser.
     title: str = ""
+    # ⚠ TRUE ONCE A PERSON HAS RENAMED THIS CHAT BY HAND. Sent so a panel that
+    # has just been reloaded still knows not to let the first line of the chat
+    # rename it back. The refusal itself is the server's — see `save_session`.
+    title_locked: bool = False
     # How many times the PERSON spoke. What the list is really saying is "was
     # anything done in here", and the agent's own replies do not answer that.
     turn_count: int = 0
@@ -3860,6 +3874,8 @@ class EditorChatSession(BaseModel):
 
     session_id: str = ""
     title: str = ""
+    # True once a person has renamed this chat by hand — see the summary above.
+    title_locked: bool = False
     turns: list[dict] = Field(default_factory=list)
     created_at: str = ""
     updated_at: str = ""
@@ -3875,6 +3891,9 @@ class EditorChatSessionCreate(BaseModel):
     """
 
     title: str = ""
+    # See `EditorChatSessionUpdate.title_auto` — a chat is born with an
+    # automatic title, so a create says so too rather than being born locked.
+    title_auto: bool = False
     turns: list[dict] = Field(default_factory=list)
 
 
@@ -3888,6 +3907,13 @@ class EditorChatSessionUpdate(BaseModel):
     """
 
     title: str | None = None
+    # ⚠ "THIS TITLE WAS MADE FROM THE FIRST LINE, NOT CHOSEN BY A PERSON."
+    # The autosave sets it; the rename box does not. A chat that has been
+    # renamed by hand refuses every automatic title after that, in the store —
+    # see `chat_sessions.save_session`. Defaulting to False is the safe half:
+    # an old client that never sends it is treated as renaming by hand, which
+    # keeps a name rather than losing one.
+    title_auto: bool = False
     turns: list[dict] | None = None
 
 

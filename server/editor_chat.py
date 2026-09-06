@@ -580,6 +580,7 @@ def create_session(
         job_id,
         sid,
         title=_title(body.title),
+        title_auto=bool(body.title_auto),
         turns=_trim(body.turns or [], keep),
     )
     return EditorChatSession(**row)
@@ -631,6 +632,11 @@ def write_session(
         job_id,
         session_id,
         title=None if body.title is None else _title(body.title),
+        # ⚠ A NAME A PERSON CHOSE OUTRANKS THE FIRST LINE OF THE CHAT. The
+        # autosave marks its title automatic; the rename box does not, and that
+        # is what locks it. The store is where the refusal lives, so a reload,
+        # a second tab and a retried autosave all obey it.
+        title_auto=bool(body.title_auto),
         # ⚠ `_trim` PASSES `None` STRAIGHT THROUGH. A rename sends no turns, and
         # a trim that turned that into `[]` would delete the transcript — the
         # exact bug the `None`/`[]` split exists to prevent.

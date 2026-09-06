@@ -800,6 +800,25 @@ def _purge_animatic(job_id: str, owner: str = "") -> None:
     every conversation about it behind for ever with nothing pointing at them —
     invisible, un-deletable, and still holding what the person typed. An empty
     `owner` sweeps nothing rather than guessing, and says so in the log.
+
+    ⚠ **AND THE RECORD ITSELF — WHICH THIS DID NOT DO, FOR AS LONG AS IT HAS
+    EXISTED.** It removed the folder and the chats and left the job row in the
+    store, so `DELETE /animatics/{id}` answered 204 and the project came
+    straight back on the next visit to the library: same title, same date, and a
+    SIZE COLUMN READING "—" because its files really were gone. Reported live on
+    2026-09-06 — *"maine abhi delete kiya tha … phir se dekh raha hun to dikha
+    raha hai"* — with a screenshot showing exactly that empty size beside a
+    project that had been deleted minutes earlier.
+
+    ⚠ **IT COST THE SWEEP TOO, SILENTLY.** `list_animatics` purges ghost
+    projects and logs "swept: empty and never named" — but the row survived, so
+    the same ghost was re-swept on EVERY list call for ever, rmtree'ing a folder
+    that was not there. The log said the work was done each time.
+
+    ⚠ **AND EVERY OTHER DELETE ROUTE IN THIS APP ALREADY DID IT** —
+    `main.py`, `plans.py`, `videos.py` all call `get_store().delete(job_id)`.
+    Only the projects one had its record deletion in the docstring and not in
+    the body.
     """
     folder = _animatic_dir(job_id)
     if os.path.isdir(folder):
@@ -807,6 +826,15 @@ def _purge_animatic(job_id: str, owner: str = "") -> None:
             shutil.rmtree(folder)
         except OSError:
             logger.exception("[animatic %s] could not remove %s", job_id, folder)
+    # ⚠ THE RECORD LAST, NOT FIRST. A row removed before its folder is a project
+    # nobody can see and nobody can retry the cleanup of — the files would be
+    # orphaned on disk with nothing left pointing at them. This order leaves the
+    # worst case as "the row is still there and Delete works again", which is
+    # recoverable by pressing the button a second time.
+    try:
+        get_store().delete(job_id)
+    except Exception:
+        logger.exception("[animatic %s] could not remove its record", job_id)
     if owner:
         try:
             gone = chat_sessions.delete_project(owner, job_id)

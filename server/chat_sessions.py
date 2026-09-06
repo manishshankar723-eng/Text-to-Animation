@@ -80,6 +80,7 @@ def _summarise(doc: dict) -> dict:
     return {
         "session_id": doc.get("session_id", ""),
         "title": doc.get("title", ""),
+        "title_locked": bool(doc.get("title_locked")),
         "turn_count": sum(1 for t in turns if (t or {}).get("role") == "user"),
         "created_at": doc.get("created_at", ""),
         "updated_at": doc.get("updated_at", ""),
@@ -91,6 +92,8 @@ def _public(doc: dict) -> dict:
     return {
         "session_id": doc.get("session_id", ""),
         "title": doc.get("title", ""),
+        # ⚠ SENT UP SO A RELOADED PANEL STILL KNOWS. See `save_session`.
+        "title_locked": bool(doc.get("title_locked")),
         "turns": doc.get("turns") or [],
         "created_at": doc.get("created_at", ""),
         "updated_at": doc.get("updated_at", ""),
@@ -209,6 +212,7 @@ def save_session(
     session_id: str,
     *,
     title: str | None = None,
+    title_auto: bool = False,
     turns: list | None = None,
 ) -> dict:
     """Create or overwrite one chat. Returns the stored record.
@@ -221,12 +225,34 @@ def save_session(
     ⚠ `created_at` IS WRITTEN ONCE. On Mongo that is `$setOnInsert`, not `$set` —
     an upsert that re-stamped it would make every chat look new on every keypress
     and shuffle a list that is ordered by time.
+
+    ⚠ `title_auto=True` MEANS "THIS NAME WAS MACHINE-MADE FROM THE FIRST LINE",
+    AND A NAME A PERSON CHOSE ALWAYS BEATS IT. Once a chat has been renamed by
+    hand the store carries `title_locked`, and every automatic title after that
+    is dropped here — not merely skipped in the browser. Reported from a live
+    test: a chat renamed to *"chat 1"* went back to reading *"is shorts/reel ke
+    hisaab se sound effects and…"* the next time a message was sent in it,
+    because the only memory of the rename lived in one tab's React ref and a
+    reload emptied it. THE GUARD BELONGS WITH THE DATA, so a reload, a second
+    tab and a retried autosave all obey it.
     """
     owner = _key(email)
     now = _now_iso()
     patch: dict = {"updated_at": now}
     if title is not None:
-        patch["title"] = title
+        if title_auto:
+            # A hand-picked name is never overwritten by the first line of the
+            # chat. `title_locked` is missing on every chat written before this
+            # existed, which reads as False — an old chat that was never renamed
+            # keeps behaving exactly as it did.
+            current = get_session(owner, job_id, session_id)
+            if not (current and current.get("title_locked")):
+                patch["title"] = title
+        else:
+            patch["title"] = title
+            # ⚠ CLEARING THE NAME UNLOCKS IT. "Clear chat" makes a conversation
+            # new again, name and all, so the next first line may name it.
+            patch["title_locked"] = bool(title.strip())
     if turns is not None:
         patch["turns"] = turns
 
@@ -239,6 +265,7 @@ def save_session(
                 "job_id": job_id,
                 "session_id": session_id,
                 "title": "",
+                "title_locked": False,
                 "turns": [],
                 "created_at": now,
             }
@@ -259,8 +286,13 @@ def save_session(
                 # ⚠ ONLY FOR THE HALF THAT WAS NOT SENT. A default inserted
                 # beside the field it defaults would be Mongo writing the same
                 # path twice in one update, which is an error, not a fallback.
-                **({} if title is not None else {"title": ""}),
-                **({} if turns is not None else {"turns": []}),
+                # ⚠ AND IT IS `patch` THAT IS ASKED, NOT THE ARGUMENTS — a
+                # dropped automatic title (above) leaves `title` set and
+                # `patch["title"]` absent, and reading the argument here would
+                # be Mongo refusing the write on a path it was never given.
+                **({} if "title" in patch else {"title": ""}),
+                **({} if "title_locked" in patch else {"title_locked": False}),
+                **({} if "turns" in patch else {"turns": []}),
             },
         },
         upsert=True,

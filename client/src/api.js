@@ -2374,10 +2374,13 @@ export function editorChatSessions(id) {
 // project that does not exist yet, so the first message is what CREATES it.
 // Those turns happened before there was anything to save them against, and this
 // is how they arrive rather than being lost.
-export function editorChatSessionCreate(id, { title = "", turns = [] } = {}) {
+export function editorChatSessionCreate(
+  id,
+  { title = "", turns = [], titleAuto = false } = {}
+) {
   return request(`/editor-chat/${id}/sessions`, {
     method: "POST",
-    body: { title, turns },
+    body: { title, turns, title_auto: !!titleAuto },
   });
 }
 
@@ -2392,9 +2395,22 @@ export function editorChatSession(id, sessionId) {
 // down to the store. A rename sends a title and no turns; an autosave sends
 // turns and no title. Sending both halves every time would make a rename that
 // raced an autosave overwrite the newer transcript with the older one.
-export function editorChatSessionSave(id, sessionId, { title, turns } = {}) {
+// ⚠ `titleAuto` IS "THIS NAME CAME FROM THE FIRST LINE OF THE CHAT", AND IT IS
+// WHAT KEEPS A RENAME. The autosave sets it; the rename box does not. Once a
+// person has named a chat the SERVER refuses every automatic title after that,
+// so a reload, a second tab and a retried save all obey it — the browser's own
+// memory of "this one was renamed" is emptied by a reload, and a chat renamed
+// to "chat 1" used to go back to reading its first message on the next turn.
+export function editorChatSessionSave(
+  id,
+  sessionId,
+  { title, turns, titleAuto = false } = {}
+) {
   const body = {};
-  if (title !== undefined) body.title = title;
+  if (title !== undefined) {
+    body.title = title;
+    body.title_auto = !!titleAuto;
+  }
   if (turns !== undefined) body.turns = turns;
   return request(`/editor-chat/${id}/sessions/${sessionId}`, {
     method: "PUT",

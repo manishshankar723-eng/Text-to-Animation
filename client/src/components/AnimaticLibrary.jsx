@@ -41,6 +41,30 @@ const LEGACY_UNTITLED = ["Untitled animatic"];
 // never sent to one — `AnimaticEditor` swaps it for `null` on the way in.
 export const NEW_DRAFT = "new";
 
+/**
+ * WHICH WORKFLOW A STORYBOARD WAS MADE IN, in the words the sidebar uses.
+ *
+ * ⚠ **IT EXISTS BECAUSE A COPY KEEPS THE ORIGINAL'S NAME.** Both pickers that
+ * offer boards to animate ask for EVERY workflow's — they have to, because a
+ * board refined in 🖼 Image to Animatic Image is exactly the thing you then want
+ * to animate (`GET /storyboards`, `workflow="*"`). The first thing that showed up
+ * on a real account was six pairs of identical rows: "TTBB_EP_One · 42 panels"
+ * twice, "dance video · 8 panels" twice, with nothing to choose between them.
+ * Reported live 2026-09-06.
+ *
+ * ⚠ **ONLY THE TAGGED ONES GET A LABEL.** Script to Storyboard's boards carry no
+ * `workflow` at all, and labelling them "Script to Storyboard" would put a word
+ * on every row to distinguish the few that need it — which is how a list stops
+ * being scannable. The tag is drawn when there IS one, and not otherwise.
+ *
+ * ⚠ AND THE KEY IS THE SERVER'S (`params.workflow`), not a page id: `Sidebar`'s
+ * rows are keyed `create-animatic-image` while the board is tagged
+ * `animatic-image`. Two spellings of one thing is exactly what this map is for.
+ */
+export const WORKFLOW_LABEL = {
+  "animatic-image": "Image to Animatic Image",
+};
+
 /** Is this title the placeholder — this one, an older one, or nothing at all? */
 export function isUntitled(title) {
   const t = (title || "").trim();
@@ -510,6 +534,10 @@ export default function AnimaticLibrary({ onOpen }) {
                   <span className="muted">
                     {b.panel_count} panel{b.panel_count === 1 ? "" : "s"} ·{" "}
                     {b.aspect_ratio || "16:9"}
+                    {/* ⚠ WHICH WORKFLOW, when it is not the default one — this
+                        list asks for all of them and a copy keeps the original's
+                        name. See WORKFLOW_LABEL. */}
+                    {b.workflow ? ` · ${WORKFLOW_LABEL[b.workflow] || b.workflow}` : ""}
                   </span>
                   {busyId === b.job_id && <span className="spinner-inline" />}
                 </button>

@@ -497,6 +497,94 @@ check(
 
 
 # ===========================================================================
+print("\n12 · ⚠ A NAME A PERSON CHOSE IS NEVER TAKEN BACK BY THE FIRST LINE\n")
+# ===========================================================================
+# Reported from a live test: a chat was renamed to "chat 1", a message was sent
+# in it a while later, and the row went back to reading "is shorts/reel ke
+# hisaab se sound effects and…". The browser DID know not to do that — but it
+# knew it in a React ref, which a reload empties, and the next autosave then
+# posted the first line of the chat as its title. So the refusal lives in the
+# STORE now: `title_auto` says "this name was made from the first line", and a
+# chat that has been renamed by hand drops every one of those.
+named_film = project(ME, "Renaming")
+auto = "is shorts/reel ke hisaab se sound effects aur background music lago"
+
+r = client.post(
+    f"/editor-chat/{named_film}/sessions",
+    headers=mine,
+    json={"title": auto, "title_auto": True, "turns": turns(auto)},
+)
+nsid = r.json()["session_id"]
+check("a new chat is named by its first line", r.json()["title"], auto)
+check("…and that name is not locked", r.json()["title_locked"], False)
+
+r = client.put(
+    f"/editor-chat/{named_film}/sessions/{nsid}",
+    headers=mine,
+    json={"title": "add a music bed", "title_auto": True, "turns": turns(auto, "b")},
+)
+check("…so a later first line may still rename it", r.json()["title"], "add a music bed")
+
+r = client.put(
+    f"/editor-chat/{named_film}/sessions/{nsid}",
+    headers=mine,
+    json={"title": "chat 1"},
+)
+check("renaming by hand answers 200", r.status_code, 200)
+check("…the name changed", r.json()["title"], "chat 1")
+check("⚠ …AND THE STORE REMEMBERS IT WAS A PERSON", r.json()["title_locked"], True)
+
+# ⚠ THE CHECK THIS SECTION EXISTS FOR — the autosave of the next message.
+r = client.put(
+    f"/editor-chat/{named_film}/sessions/{nsid}",
+    headers=mine,
+    json={"title": auto, "title_auto": True, "turns": turns(auto, "b", "c")},
+)
+check("⚠ AN AUTOMATIC TITLE DOES NOT OVERWRITE A RENAME", r.json()["title"], "chat 1")
+check("…and it is still locked", r.json()["title_locked"], True)
+check("…while the conversation was still saved", len(r.json()["turns"]), 6)
+
+r = client.get(f"/editor-chat/{named_film}/sessions", headers=mine)
+row = next(x for x in r.json()["sessions"] if x["session_id"] == nsid)
+check("…the list says the chosen name too", row["title"], "chat 1")
+check("…and carries the lock, so a reloaded panel knows", row["title_locked"], True)
+
+# Clear chat makes a conversation new again, name and all — so the lock lifts.
+r = client.put(
+    f"/editor-chat/{named_film}/sessions/{nsid}",
+    headers=mine,
+    json={"title": "", "turns": []},
+)
+check("clearing a chat drops the name", r.json()["title"], "")
+check("⚠ …and unlocks it", r.json()["title_locked"], False)
+
+r = client.put(
+    f"/editor-chat/{named_film}/sessions/{nsid}",
+    headers=mine,
+    json={"title": auto, "title_auto": True, "turns": turns(auto)},
+)
+check("…so the next first line may name it again", r.json()["title"], auto)
+
+# ⚠ AND THE BROWSER HAS TO SAY WHICH KIND OF TITLE IT IS SENDING. The server
+# treats a missing `title_auto` as a rename, so an autosave that forgot the flag
+# would freeze every chat's name at its first message.
+hook = open(
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                 "client", "src", "animatic", "agent", "useChatSessions.js"),
+    encoding="utf-8",
+).read()
+check("the browser's autosave marks its title automatic", "titleAuto: true" in hook)
+check(
+    "⚠ …and the rename box does NOT",
+    re.search(r"editorChatSessionSave\([^)]*\{ title: clean \}\)", hook) is not None,
+)
+check(
+    "…and a reloaded panel takes the lock from the server",
+    "r.title_locked" in hook,
+)
+
+
+# ===========================================================================
 print()
 shutil.rmtree(_TMP, ignore_errors=True)
 if failures:

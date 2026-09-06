@@ -201,7 +201,7 @@ import { ACTION_API } from "../animatic/agent/actions.js";
 // pane lists the LIBRARY now (`MediaBin`), so the component has no reader here —
 // its file-name sort still does, on every upload path.
 import { sortFiles } from "./FrameStrip.jsx";
-import { NEW_DRAFT, UNTITLED, isUntitled } from "./AnimaticLibrary.jsx";
+import { NEW_DRAFT, UNTITLED, WORKFLOW_LABEL, isUntitled } from "./AnimaticLibrary.jsx";
 import Timeline, { formatTime } from "./Timeline.jsx";
 import Icon from "./Icon.jsx";
 // The account dropdown, shared with the sidebar — see AccountMenu.jsx for why
@@ -6031,6 +6031,23 @@ export default function AnimaticEditor({
    * The list is fetched on every open rather than cached: boards are made in
    * another workflow entirely, so a list from ten minutes ago can easily be
    * missing the one the user just drew.
+   *
+   * ⚠ **EVERY WORKFLOW'S BOARDS (`"*"`), NOT JUST THE UNTAGGED ONES.** This
+   * asked with no argument, which `listStoryboards` reads as *"Script to
+   * Storyboard's own boards"* — so a board REFINED in 🖼 Image to Animatic Image
+   * carries `params.workflow` and was filtered out of this picker, silently.
+   * Reported live on 2026-09-06 with two screenshots side by side: the dashboard
+   * said **"22 boards ready"** and this dialog listed **17** — *"user dono jagah
+   * se import kar sake apne Storyboard ko"*. The dialog opened perfectly; the
+   * board they wanted simply was not in it, which is the worst shape a filter
+   * bug can take because nothing is missing until you know what to look for.
+   *
+   * ⚠ **AND THE ROUTE ALREADY SAID SO.** `GET /storyboards` documents `"*"` as
+   * *"what the downstream workflows (animatics, video) ask for: a board refined
+   * in Image to Animatic Image is exactly the thing you then want to animate,
+   * and filtering it out would make the copies a dead end."* This editor IS that
+   * downstream workflow — `AnimaticLibrary` and `FinalVideoLibrary` both ask
+   * with `"*"` and only this one door disagreed with them.
    */
   function openBoardImport(track = null) {
     setBoardImport({ track });
@@ -6038,7 +6055,7 @@ export default function AnimaticEditor({
     setBoardError("");
     setBoardList(null);
     api
-      .listStoryboards()
+      .listStoryboards("*")
       .then((res) => setBoardList(res.items || res || []))
       .catch((e) => {
         setBoardList([]);
@@ -12687,6 +12704,16 @@ export default function AnimaticEditor({
                           {b.panel_count
                             ? `${b.panel_count} panel${b.panel_count === 1 ? "" : "s"}`
                             : "no panels drawn yet"}
+                          {/* ⚠ WHICH WORKFLOW MADE IT, because a copy KEEPS THE
+                              ORIGINAL'S NAME. This list asks for every workflow's
+                              boards (it has to — a board refined in 🖼 Image to
+                              Animatic Image is exactly the thing you then want to
+                              animate), and the first thing that showed up was six
+                              pairs of identical rows with no way to tell which was
+                              which. The tag is only drawn when there IS one:
+                              Script to Storyboard's own boards carry no tag and
+                              would gain a label that says nothing. */}
+                          {b.workflow ? ` · ${WORKFLOW_LABEL[b.workflow] || b.workflow}` : ""}
                         </span>
                       </span>
                     </button>

@@ -1066,6 +1066,39 @@
   gap: 0.45rem;
   margin-top: 1rem;
 }
+/* ⚠ **THE LIST SCROLLS, NOT THE CARD — AND THIS IS THE WHOLE OF "IMPORT NAHI HO
+   RAHA HAI".** Reported live on 2026-09-06 against an account with 22 boards:
+   the picker opened, listed every one of them, and the dialog grew past the
+   bottom of the window — taking **Cancel and Import off the screen with it**.
+   Nothing was broken and nothing said so; the button the user needed simply was
+   not reachable, on a `position: fixed` overlay that does not scroll the page.
+   `.an-xchg-modal` had already learned this exact lesson ("a dialog taller than
+   the window puts Download off the bottom of the screen with no way to reach
+   it") — it just did it for itself instead of for every list dialog.
+
+   ⚠ **THE LIST, NOT THE CARD, BECAUSE THE FOOTER MUST NEVER LEAVE.** Scrolling
+   the whole card (which is what `.an-xchg-modal` does, correctly, for a report
+   that is ONE block of prose) would put Import at the bottom of a long scroll —
+   reachable, but only after you have scrolled past every board. Capping the list
+   pins the heading above it and the buttons below it, so the way out and the way
+   on are on screen whatever the account holds.
+
+   ⚠ **AND IT IS A `min()` OF BOTH UNITS.** `vh` alone leaves a tall monitor with
+   an absurdly long list; `rem` alone puts the footer off a short laptop screen
+   again, which is the bug. Whichever is smaller is the one that is right. */
+.an-board-list {
+  max-height: min(52vh, 24rem);
+  overflow-y: auto;
+  /* Room for the scrollbar, so the last row's border is not sat on by it. */
+  padding-right: 0.25rem;
+}
+/* ⚠ AND THE CARD ITSELF IS CAPPED AS A BACKSTOP. The list cap is what keeps the
+   footer visible; this is what stops a very short window (a laptop with devtools
+   open) from pushing the heading off the top instead. */
+.an-board-modal {
+  max-height: 88vh;
+  overflow-y: auto;
+}
 .an-ws-opt,
 .an-board-opt {
   display: flex;
