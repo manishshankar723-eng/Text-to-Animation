@@ -75,6 +75,7 @@ const {
   forgetMirror,
   isFull,
   labelFor,
+  matchSessions,
   readLegacy,
   readMirror,
   readOpen,
@@ -174,6 +175,48 @@ console.log("\n[1b] ⚠ IS THERE ROOM FOR ANOTHER CHAT — asked BEFORE ＋ open
   check("…and so is a missing one", isFull([said(1)], undefined) === false);
   check("an empty project has room", isFull([], 1) === false);
   check("a missing list is not full", isFull(undefined, 5) === false);
+}
+
+// ===========================================================================
+console.log("\n[1c] the search box over the chat list\n");
+// ===========================================================================
+// Asked for after the list had grown past a glance: *"isme search box dalo"*.
+//
+// ⚠ EVERY WORD MATCHES, IN ANY ORDER — this is the whole reason it is a rule in
+// the module and not an `includes` in the panel. A chat is NAMED FROM A WHOLE
+// SENTENCE somebody typed, so the two words they remember it by come from
+// opposite ends of that sentence, and a plain substring search answers "no such
+// chat" over a chat that is right there.
+{
+  const rows = [
+    {
+      session_id: "a",
+      title: "is shorts/reel ke hisaab se sound effects and background music lago",
+    },
+    { session_id: "b", title: "chat 2" },
+    { session_id: "c", title: "" },
+  ];
+  const ids = (q) => matchSessions(rows, q).map((r) => r.session_id).join(",");
+
+  check("an empty box hides nothing", matchSessions(rows, "") === rows);
+  check("…and so does one with only spaces", matchSessions(rows, "   ").length === 3);
+  check("a word finds its chat", ids("effects") === "a");
+  check(
+    "⚠ TWO WORDS FROM OPPOSITE ENDS STILL FIND IT",
+    ids("sound music") === "a",
+    ids("sound music")
+  );
+  check("…and the order they are typed in does not matter", ids("music sound") === "a");
+  check("case is ignored", ids("SOUND") === "a");
+  check("extra spaces between words are ignored", ids("sound    music") === "a");
+  check("a word that is in no chat finds none", ids("dissolve") === "");
+  // ⚠ IT SEARCHES WHAT IS ON THE ROW, WHICH FOR AN UNNAMED CHAT IS "New chat".
+  // Searching a title that does not exist yet would leave the one row a person
+  // is most likely to be hunting for — the one they have not named — unfindable.
+  check("an unnamed chat is found by what its row says", ids("new chat") === "c");
+  check("…and by half of it", ids("chat") === "b,c");
+  check("a missing list is not a crash", matchSessions(undefined, "x").length === 0);
+  check("…nor is a missing query", matchSessions(rows, undefined).length === 3);
 }
 
 // ===========================================================================

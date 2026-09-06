@@ -315,12 +315,45 @@ check("…and the description says which verb takes which, so the union is not a
       in both["properties"]["kind"].get("description", ""),
       both["properties"]["kind"].get("description", ""))
 
-# ⚠ NOT REQUIRED WHEN A VERB IN THE BATCH HAS NO `kind` AT ALL. A schema that
-# demands one from a `note` is a schema the batch cannot answer — which fails
-# the whole pass instead of dropping one step.
+# ---------------------------------------------------------------------------
+# ⚠ THE SAME BUG, A FOURTH TIME — THROUGH ITS OWN THIRD FIX.
+# ---------------------------------------------------------------------------
+# Live on 2026-09-06: *"add effects and transition in my story images"* on a
+# 14-shot reel, ten transitions perfect and FOURTEEN rows of "add_effect: the
+# step named no effect to add" — with the enum above already shipped. The
+# requirement was written `all(row.get("family"))`, so ONE companion verb in the
+# brief with no `kind` of its own — a `set_effect_param`, a `note` — turned it
+# off for `add_effect` too. It is `any(...)` now: a `kind` written on a verb that
+# does not take one is filtered off BY VERB in `fold_steps` before it can reach
+# the client, so demanding it costs a wasted field and saves a whole pass.
 withnote = kind_of({"verbs": ["add_effect", "note"]})
-check("⚠ …BUT NEVER REQUIRED OF A VERB THAT TAKES NO `kind`",
-      "kind" not in (withnote.get("required") or []), str(withnote.get("required")))
+check("⚠ STILL REQUIRED WHEN ONE VERB IN THE BATCH TAKES NO `kind` — THE 4th REPEAT",
+      "kind" in (withnote.get("required") or []), str(withnote.get("required")))
+check("…and the description says which verbs ignore it, so the field is not a puzzle",
+      "note takes no kind" in withnote["properties"]["kind"].get("description", ""),
+      withnote["properties"]["kind"].get("description", ""))
+dialled_batch = kind_of({"verbs": ["add_effect", "set_effect_param"]})
+check("⚠ …AND A `set_effect_param` BESIDE IT DOES NOT SWITCH IT OFF EITHER",
+      "kind" in (dialled_batch.get("required") or []), str(dialled_batch.get("required")))
+# ⚠ AND A STRAY `kind` ON A VERB THAT TAKES NONE REALLY IS THROWN AWAY — which
+# is the whole reason requiring it is safe. Never assert this from memory.
+stray, _ = director.fold_steps(
+    [{"verb": "note", "args": {"text": "held shot 3", "kind": "vignette"}}],
+    {"verbs": [{"id": "note", "args": ["text"]}]},
+)
+check("⚠ …BECAUSE A `kind` A VERB DOES NOT TAKE IS FILTERED OFF BY VERB",
+      len(stray) == 1 and "kind" not in stray[0]["args"], str(stray))
+
+# ⚠ A TASK THAT NAMED NO VERBS STILL GETS THE ENUM. It is choosing from the
+# whole editor on purpose, so `kind` cannot be REQUIRED there — `delete_shot`
+# has none — but before this it was handed a bare `{"type": "string"}`: the
+# exact unconstrained field that lost the effects three times over.
+wide = kind_of({})
+check("⚠ AN UN-NARROWED BATCH GETS THE ENUM TOO, not a bare string",
+      set(wide["properties"]["kind"].get("enum") or [])
+      == {"vignette", "grain", "dissolve", "wipe"}, str(wide["properties"].get("kind")))
+check("…and is never REQUIRED to write one, because most verbs have no kind",
+      "kind" not in (wide.get("required") or []), str(wide.get("required")))
 
 # ⚠ AND AN OLDER CLIENT — a manifest with no `family` — CHANGES NOTHING.
 old_vocab = {"verbs": [{"id": "add_effect", "args": REAL_FX_ARGS}], "effects": [{"id": "grain"}]}
@@ -384,6 +417,45 @@ dialled, _ = director.fold_steps(
 )
 check("⚠ AND `params` WRITTEN AS AN OBJECT IS READ, not silently dropped",
       len(dialled) > 0 and dialled[0]["args"].get("params") == {"amount": "0.4"}, str(dialled))
+# ⚠ THE KIND HIDDEN IN `params`. The schema has to offer `params` as free
+# {name, value} pairs, so a model that skipped `kind` puts its choice in there —
+# the answer is inside the step while the step is dropped for having no answer.
+inparams, _ = director.fold_steps(
+    [{"verb": "add_effect", "args": {
+        "shot": 7, "params": [{"name": "effect", "value": "vignette"},
+                              {"name": "amount", "value": "0.3"}]}},
+     {"verb": "add_effect", "args": {"shot": 8, "params": {"fx": "grain"}}}],
+    {"verbs": [{"id": "add_effect", "args": REAL_FX_ARGS}]},
+)
+check("⚠ AN EFFECT NAMED INSIDE `params` IS LIFTED OUT, not dropped",
+      len(inparams) > 0 and inparams[0]["args"].get("kind") == "vignette", str(inparams[:1]))
+check("…and its real dials survive the lift",
+      len(inparams) > 0 and inparams[0]["args"].get("params", {}).get("amount") == "0.3",
+      str(inparams[:1]))
+check("…in the object form of `params` as well",
+      len(inparams) > 1 and inparams[1]["args"].get("kind") == "grain", str(inparams[1:2]))
+# ⚠ THE FLOOR UNDER EVERYTHING: THE NOTE. It only ever fires on a step that was
+# about to be thrown away, and one match or nothing — two ids in a note is a
+# sentence, not a choice.
+FLOOR_VOCAB = {
+    "verbs": [{"id": "add_effect", "args": REAL_FX_ARGS, "family": "effects"}],
+    "effects": [{"id": "vignette"}, {"id": "grain"}],
+}
+noted, _ = director.fold_steps(
+    [{"verb": "add_effect", "args": {"shot": 3},
+      "note": "vignette to hold the eye on the diya"},
+     {"verb": "add_effect", "args": {"shot": 4},
+      "note": "a vignette here, not grain"},
+     {"verb": "add_effect", "args": {"shot": 5, "kind": "grain"},
+      "note": "vignette would be wrong"}],
+    FLOOR_VOCAB,
+)
+check("⚠ A KIND NAMED ONLY IN THE NOTE IS READ BACK before the step is lost",
+      len(noted) > 0 and noted[0]["args"].get("kind") == "vignette", str(noted[:1]))
+check("⚠ …BUT TWO NAMES IN ONE NOTE IS A SENTENCE, NOT A CHOICE — nothing invented",
+      len(noted) > 1 and "kind" not in noted[1]["args"], str(noted[1:2]))
+check("⚠ …AND A STEP THAT NAMED ITS KIND IS NEVER SECOND-GUESSED",
+      len(noted) > 2 and noted[2]["args"].get("kind") == "grain", str(noted[2:3]))
 # ⚠ A TASK WITH NO VERB LIST IS NOT NARROWED, and must not be: the model is then
 # choosing from the whole editor on purpose, and an empty allow-list silently
 # meaning "nothing" would produce a batch that can write no steps at all.

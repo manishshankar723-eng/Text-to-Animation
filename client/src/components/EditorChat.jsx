@@ -135,7 +135,11 @@ import {
 import { DOOR_LABEL } from "../animatic/agent/chat_turn.js";
 // ⚠ NAMING A CHAT AND DATING IT ARE RULES, NOT MARKUP — the same split
 // `panel_box.js` makes above. See that module's header.
-import { agoLabel, labelFor } from "../animatic/agent/chat_sessions.js";
+import {
+  agoLabel,
+  labelFor,
+  matchSessions,
+} from "../animatic/agent/chat_sessions.js";
 import { capabilities } from "../animatic/agent/capabilities.js";
 
 /** Remembered only when the operator picked "let each person choose". */
@@ -431,7 +435,42 @@ export default function EditorChat({
   // native dialog over a floating panel is the one modal this feature spent its
   // whole design avoiding. The row asks in place instead.
   const [askDelete, setAskDelete] = useState("");
+  // What is typed in the list's search box. ⚠ IT NARROWS WHAT IS DRAWN, IT DOES
+  // NOT ASK THE SERVER. `useChatSessions` already holds every chat this project
+  // has — the list is names only, never transcripts — so a search that re-fetched
+  // would turn a keystroke into a network call for rows already on screen.
+  const [histQuery, setHistQuery] = useState("");
+  // Which row of the list is being renamed, and what is half-typed in it:
+  // `{ id, text }` or `null`. ⚠ THE SAME REASONING AS `renaming` ABOVE — an
+  // empty name mid-edit is a real state, so the text lives in here rather than
+  // beside a boolean that `Boolean("")` would throw away.
+  const [rowRename, setRowRename] = useState(null);
   const sessRef = useRef(null);
+  const findRef = useRef(null);
+  const rowRenameRef = useRef(null);
+  // ⚠ THE LATEST COMMIT, WHERE A LISTENER CAN REACH IT. `closeHist` is made once
+  // and the outside-press listener holds that one copy, so anything it read from
+  // state directly would be the state as it was when the list OPENED. Refreshed
+  // on every render, this is how the press that shuts the list can still save
+  // what was half-typed into it. (Assigned below `commitRowRename`'s hoisted
+  // declaration, which is why this can be set during render.)
+  const commitRowRenameRef = useRef(() => {});
+
+  // Shut the list and put it back the way it opens. ⚠ THE SEARCH BOX IS EMPTIED
+  // WITH IT: a popover that reopens still filtered by something typed a minute
+  // ago looks exactly like chats have gone missing, and this box is about the
+  // glance you are having now, not a view somebody saved.
+  const closeHist = useCallback(() => {
+    // ⚠ A HALF-TYPED NAME IS SAVED, NOT THROWN AWAY. Clicking away from the
+    // panel unmounts the row's box, and an unmounted input never fires the
+    // `onBlur` that would have filed it — so the press that closes the list
+    // would silently discard the name somebody had just finished typing.
+    commitRowRenameRef.current();
+    setHistOpen(false);
+    setAskDelete("");
+    setHistQuery("");
+    setRowRename(null);
+  }, []);
 
   // ⚠ CLOSES ON A PRESS ANYWHERE ELSE, ON `pointerdown` RATHER THAN `click`.
   // A click listener fires after the press has already moved focus, so dragging
@@ -439,16 +478,14 @@ export default function EditorChat({
   useEffect(() => {
     if (!histOpen) return undefined;
     const away = (e) => {
-      if (!sessRef.current?.contains(e.target)) {
-        setHistOpen(false);
-        setAskDelete("");
-      }
+      if (!sessRef.current?.contains(e.target)) closeHist();
     };
+    // ⚠ THE TWO BOXES INSIDE THE LIST STOP THIS THEMSELVES. Escape in the search
+    // box clears it first, and Escape in a row's rename box cancels that rename —
+    // both call `stopPropagation`, so the key never reaches here while there is
+    // something smaller to undo. Escape on the list itself closes the list.
     const esc = (e) => {
-      if (e.key === "Escape") {
-        setHistOpen(false);
-        setAskDelete("");
-      }
+      if (e.key === "Escape") closeHist();
     };
     window.addEventListener("pointerdown", away);
     window.addEventListener("keydown", esc);
@@ -456,7 +493,28 @@ export default function EditorChat({
       window.removeEventListener("pointerdown", away);
       window.removeEventListener("keydown", esc);
     };
+  }, [histOpen, closeHist]);
+
+  // ⚠ THE SEARCH BOX TAKES THE CURSOR WHEN THE LIST OPENS, FROM AN EFFECT KEYED
+  // ON `histOpen` — NOT from a ref callback the way the rename boxes do it. That
+  // idiom (§6d) is right when the box is the only field on screen; there are TWO
+  // fields in this popover, and a callback that re-runs on every render would
+  // yank the cursor out of a row's rename box the moment anything re-rendered.
+  useEffect(() => {
+    if (!histOpen) return;
+    findRef.current?.focus({ preventScroll: true });
   }, [histOpen]);
+
+  // The same, for the row being renamed: focused and selected ONCE, when the box
+  // opens on that row — `rowRename.id` is the dependency, so typing in it (which
+  // only changes `.text`) never re-selects what has been typed. That is the bug
+  // §6d was paid for, arriving through a different door.
+  useEffect(() => {
+    const el = rowRenameRef.current;
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    el.select();
+  }, [rowRename?.id]);
 
   const renameOpen = renaming !== null;
 
@@ -471,9 +529,34 @@ export default function EditorChat({
     store.rename(store.activeId, clean);
   }
 
+  /** The same commit, for the box that opens on a row of the list. */
+  function commitRowRename() {
+    const edit = rowRename;
+    setRowRename(null);
+    if (!edit?.id) return;
+    const clean = edit.text.trim();
+    const row = (store?.sessions || []).find((r) => r.session_id === edit.id);
+    // ⚠ AN EMPTY NAME IS A REQUEST FOR THE AUTOMATIC ONE BACK, not a chat called
+    // "" — the same rule the bar's own rename box follows, and the server treats
+    // a cleared name as "this one may be named by its first line again".
+    if (clean === (row?.title || "")) return;
+    store?.rename(edit.id, clean);
+  }
+
+  // ⚠ REFRESHED EVERY RENDER, SO THE LISTENER ABOVE SEES TODAY'S TEXT. See the
+  // note on the ref itself. A stale copy here is a rename that is filed with
+  // whatever the box held when the list opened, which is usually nothing at all.
+  commitRowRenameRef.current = commitRowRename;
+
   if (!open) return null;
 
   const busy = chat.sending || chat.running;
+
+  // What the 🕘 list draws: every chat this project has, narrowed by the search
+  // box. ⚠ THE NARROWING IS A RULE IN `chat_sessions.js`, NOT AN `includes` HERE
+  // — every word matching in any order is the difference between finding "sound
+  // music" in a chat named from a whole sentence and finding nothing at all.
+  const shownSessions = matchSessions(store?.sessions, histQuery);
 
   // ⚠ **TALKING IS FREE, APPLYING IS NOT — TWO DIFFERENT BUSYS, ON PURPOSE.**
   // `busy` gates the composer and stays exactly as it was: a person is allowed
@@ -689,8 +772,8 @@ export default function EditorChat({
           type="button"
           className={`ec-sess-btn ${histOpen ? "on" : ""}`}
           onClick={() => {
-            setHistOpen((v) => !v);
-            setAskDelete("");
+            if (histOpen) closeHist();
+            else setHistOpen(true);
           }}
           aria-expanded={histOpen}
           aria-haspopup="menu"
@@ -716,7 +799,7 @@ export default function EditorChat({
           disabled={store?.full}
           onClick={() => {
             store?.newChat();
-            setHistOpen(false);
+            closeHist();
           }}
           title={
             store?.full
@@ -730,6 +813,60 @@ export default function EditorChat({
 
         {histOpen && (
           <div className="ec-hist" role="menu" aria-label="Chats in this project">
+            {/* ⚠ THE SEARCH BOX ONLY EXISTS WHEN THERE IS SOMETHING TO SEARCH.
+                A field over "No saved chats yet" is a control that cannot do
+                anything, on the one screen that is trying to explain itself.
+                ⚠ AND IT SITS STILL WHILE THE ROWS SCROLL UNDER IT — a search
+                that scrolls out of a 17rem popover is a search you have to go
+                and find again. */}
+            {store?.sessions?.length > 0 && (
+              <div className="ec-hist-find">
+                <span className="ec-hist-find-ico" aria-hidden="true">⌕</span>
+                <input
+                  ref={findRef}
+                  type="text"
+                  className="ec-hist-find-input"
+                  value={histQuery}
+                  placeholder="Search chats…"
+                  aria-label="Search chats in this project"
+                  onChange={(e) => setHistQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    // ⚠ ESCAPE EMPTIES THE BOX BEFORE IT CLOSES THE LIST. Losing
+                    // the whole popover because you mistyped one letter is the
+                    // small rudeness that makes people stop using a filter.
+                    if (e.key === "Escape" && histQuery) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setHistQuery("");
+                    } else if (e.key === "Enter") {
+                      // Enter opens what you were looking for. A search box that
+                      // does nothing on Enter reads as broken.
+                      e.preventDefault();
+                      const first = shownSessions[0];
+                      if (first) {
+                        store.open(first.session_id);
+                        closeHist();
+                      }
+                    }
+                  }}
+                />
+                {histQuery && (
+                  <button
+                    type="button"
+                    className="ec-hist-act"
+                    onClick={() => {
+                      setHistQuery("");
+                      findRef.current?.focus({ preventScroll: true });
+                    }}
+                    title="Clear the search"
+                    aria-label="Clear the search"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            )}
+
             {store?.listing && !store?.sessions?.length ? (
               <p className="ec-hist-note tiny muted">
                 <span className="spinner-inline" /> Reading this project's chats…
@@ -740,15 +877,51 @@ export default function EditorChat({
               <p className="ec-hist-note tiny muted">
                 No saved chats yet — send a message and this one is kept.
               </p>
+            ) : !shownSessions.length ? (
+              /* ⚠ "NOTHING MATCHES" IS NOT "NOTHING IS HERE", and it says which
+                 words it looked for — otherwise a stray character in the box
+                 reads as a project whose chats have vanished. */
+              <p className="ec-hist-note tiny muted">
+                No chat matches “{histQuery.trim()}”.
+              </p>
             ) : (
-              store.sessions.map((row) => (
+              shownSessions.map((row) => (
                 <div
                   key={row.session_id}
                   className={`ec-hist-row ${
                     row.session_id === store.activeId ? "on" : ""
                   }`}
                 >
-                  {askDelete === row.session_id ? (
+                  {rowRename?.id === row.session_id ? (
+                    /* ⚠ THE RENAME HAPPENS IN THE ROW, NOT UP IN THE BAR. The bar
+                       renames THE OPEN CHAT, so renaming any other one used to
+                       mean opening it first — which loads a transcript nobody
+                       asked for and loses the place you were in. */
+                    <input
+                      ref={rowRenameRef}
+                      type="text"
+                      className="ec-hist-input"
+                      value={rowRename.text}
+                      maxLength={120}
+                      aria-label={`Rename ${labelFor(row)}`}
+                      onChange={(e) =>
+                        setRowRename({ id: row.session_id, text: e.target.value })
+                      }
+                      onBlur={commitRowRename}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          commitRowRename();
+                        } else if (e.key === "Escape") {
+                          // Cancels the rename, and STOPS THERE — see the note on
+                          // the window listener above.
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setRowRename(null);
+                        }
+                      }}
+                    />
+                  ) : askDelete === row.session_id ? (
                     <>
                       <span className="ec-hist-ask tiny">Delete this chat?</span>
                       <button
@@ -776,7 +949,7 @@ export default function EditorChat({
                         className="ec-hist-open"
                         onClick={() => {
                           store.open(row.session_id);
-                          setHistOpen(false);
+                          closeHist();
                         }}
                       >
                         <span className="ec-hist-title">{labelFor(row)}</span>
@@ -789,15 +962,41 @@ export default function EditorChat({
                           {agoLabel(row.updated_at) ? ` · ${agoLabel(row.updated_at)}` : ""}
                         </span>
                       </button>
-                      <button
-                        type="button"
-                        className="ec-hist-del"
-                        onClick={() => setAskDelete(row.session_id)}
-                        title="Delete this chat"
-                        aria-label={`Delete ${labelFor(row)}`}
-                      >
-                        ✕
-                      </button>
+                      {/* ⚠ BOTH ACTIONS ARE HOVER CHROME, AND THE OPEN CHAT KEEPS
+                          THEM ON. A pencil and a cross beside every row of a list
+                          you are only scanning is a rename and a delete somebody
+                          presses by mistake; hidden entirely, they are two
+                          features nobody finds. The row you are on is the one you
+                          are acting on, so it shows them at rest. */}
+                      <span className="ec-hist-acts">
+                        <button
+                          type="button"
+                          className="ec-hist-act"
+                          onClick={() => {
+                            setAskDelete("");
+                            setRowRename({
+                              id: row.session_id,
+                              text: row.title || "",
+                            });
+                          }}
+                          title="Rename this chat"
+                          aria-label={`Rename ${labelFor(row)}`}
+                        >
+                          ✎
+                        </button>
+                        <button
+                          type="button"
+                          className="ec-hist-act del"
+                          onClick={() => {
+                            setRowRename(null);
+                            setAskDelete(row.session_id);
+                          }}
+                          title="Delete this chat"
+                          aria-label={`Delete ${labelFor(row)}`}
+                        >
+                          ✕
+                        </button>
+                      </span>
                     </>
                   )}
                 </div>

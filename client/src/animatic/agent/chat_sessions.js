@@ -114,6 +114,35 @@ export function labelFor(row) {
 }
 
 /**
+ * The 🕘 list, narrowed by what is typed in its search box.
+ *
+ * ⚠ EVERY WORD MUST MATCH, IN ANY ORDER — not one substring. A chat is named
+ * from a whole sentence somebody typed ("is shorts/reel ke hisaab se sound
+ * effects and background music lago"), so the two words they later search by
+ * are usually from opposite ends of it: "sound music" finds NOTHING as a plain
+ * substring, and it is exactly what a person types. Case and repeated spaces
+ * are ignored for the same reason.
+ *
+ * ⚠ AND IT SEARCHES THE LABEL — WHAT IS ACTUALLY ON THE ROW — including
+ * "New chat" for the ones nobody has named. The list carries no transcripts
+ * (the server drops them on purpose, so a dozen titles are not megabytes), so
+ * searching what was SAID is not something this list can honestly offer, and a
+ * box that quietly missed the message you remembered would be worse than none.
+ */
+export function matchSessions(rows, query) {
+  const list = rows || [];
+  const terms = String(query || "")
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!terms.length) return list;
+  return list.filter((row) => {
+    const hay = labelFor(row).toLowerCase();
+    return terms.every((t) => hay.includes(t));
+  });
+}
+
+/**
  * "now", "12m", "3h", "5d", or a date once it is older than a week.
  *
  * ⚠ IT NEVER SAYS "0m". A chat saved four seconds ago reading "0m ago" looks

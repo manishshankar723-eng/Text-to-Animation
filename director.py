@@ -712,7 +712,62 @@ def _canonical_args(raw: dict, allowed: set) -> dict:
                         break
             out[canon] = value
             break
+    # ⚠ **THE FLOOR UNDER THE FLOOR: THE CHOSEN KIND, WRITTEN INTO `params`.**
+    # `plan_schema` has to ask for `params` as free `{name, value}` PAIRS — effect
+    # and transition parameters are per-kind and cannot be typed there — and that
+    # is an open door. A model that has not written `kind` writes
+    # `params: [{"name": "effect", "value": "vignette"}]`, and the name it chose
+    # is sitting inside the step while the step is dropped for naming no effect
+    # at all. Lifted out; never invented.
+    #
+    # ⚠ THE PAIR IS LEFT IN `params` ON PURPOSE. Every validator on the other
+    # side keeps only the parameters the chosen kind really declares
+    # (`add_effect` in `actions.js`), so removing it here would buy nothing and
+    # would mean rebuilding a shape that arrives in three of them.
+    if "kind" in allowed and not str(out.get("kind") or "").strip():
+        pairs = out.get("params")
+        bag: dict = {}
+        if isinstance(pairs, dict):
+            bag = {str(k).strip().lower(): v for k, v in pairs.items()}
+        elif isinstance(pairs, list):
+            for pair in pairs:
+                if isinstance(pair, dict) and str(pair.get("name") or "").strip():
+                    bag[str(pair["name"]).strip().lower()] = pair.get("value")
+        for key in ("kind", *_ARG_ALIASES["kind"]):
+            candidate = bag.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                out["kind"] = candidate.strip()
+                break
     return out
+
+
+def _kind_in_note(note: Any, family: str, vocabulary: dict) -> str:
+    """The ONE id of `family` named in a step's note, or `""`. Pure.
+
+    ⚠ **THE LAST FLOOR, AND IT ONLY EVER FIRES ON A STEP THAT WAS GOING TO BE
+    THROWN AWAY.** A step whose `kind` is missing is dropped, and the note beside
+    it — "vignette to hold the eye on the diya" — usually says exactly which one
+    the model picked. Reading it back is strictly better than losing the edit,
+    and the person still sees and approves every step before it lands.
+
+    ⚠ **ONE MATCH OR NOTHING.** Two ids in one note ("a dissolve, not a wipe")
+    is a sentence, not a choice, and guessing which half is meant would be
+    inventing an edit. The ids come off the manifest the client sent, matched on
+    whole words so `grain` does not match "graininess".
+    """
+    text = str(note or "").strip().lower()
+    if not text or not family:
+        return ""
+    hits: list[str] = []
+    for item in (vocabulary.get(family) or []):
+        if not isinstance(item, dict):
+            continue
+        one_id = str(item.get("id") or "").strip()
+        if not one_id or one_id in hits:
+            continue
+        if re.search(r"(?<![a-z0-9_])%s(?![a-z0-9_])" % re.escape(one_id.lower()), text):
+            hits.append(one_id)
+    return hits[0] if len(hits) == 1 else ""
 
 
 def plan_schema(vocabulary: dict) -> dict:
@@ -815,6 +870,11 @@ def fold_steps(raw: Any, vocabulary: dict) -> tuple[list[dict], list[dict]]:
     the left edge of the frame, which is worse, because it looks deliberate.
     """
     known = {v.get("id"): set(v.get("args") or []) for v in (vocabulary.get("verbs") or [])}
+    # Which list each verb's `kind` has to come out of — see `_kind_in_note`.
+    families = {
+        v.get("id"): str(v.get("family") or "").strip()
+        for v in (vocabulary.get("verbs") or [])
+    }
     steps: list[dict] = []
     dropped: list[dict] = []
     items = raw if isinstance(raw, list) else []
@@ -866,6 +926,13 @@ def fold_steps(raw: Any, vocabulary: dict) -> tuple[list[dict], list[dict]]:
             if value is None or (isinstance(value, str) and not value.strip()):
                 continue
             args[name] = value
+        # ⚠ A MISSING `kind` IS READ BACK OUT OF THE NOTE BEFORE THE STEP IS
+        # LOST. Last resort, and it changes nothing for a step that named its
+        # kind properly — see `_kind_in_note` for why one match or nothing.
+        if "kind" in allowed and not str(args.get("kind") or "").strip():
+            found = _kind_in_note(step.get("note"), families.get(verb), vocabulary)
+            if found:
+                args["kind"] = found
         if not args:
             dropped.append({"index": index, "verb": verb, "why": "no arguments this verb understands"})
             continue

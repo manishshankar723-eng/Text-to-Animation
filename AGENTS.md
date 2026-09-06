@@ -308,7 +308,9 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-09-06 — **THE VOICEOVER CAN LEAVE GOOGLE (Phase 3).** `VOICE_PROVIDER=sarvam` reads the dialogue on Sarvam's Bulbul v3 — eleven Indian languages, billed in rupees, and ⚠ **the only backend here that reads HINGLISH** (Hindi in Latin script) as one sentence instead of as bad English. `VOICE_PROVIDER=deepgram` reads it on Aura-2 (English only) against the SAME $200 of free credit the captions already use. Unset, nothing moved and Google still reads it. ⚠ **THE THING THAT WOULD HAVE RUINED A FILM WAS THE STAGE DIRECTION**: `prompt_for` sends Gemini *"Read this line as an elderly man:"* — which is the only way an age reaches that model — and the other two would have READ THAT SENTENCE OUT LOUD, in a paid run. `direction_for`, `prompt_for` and `estimate` are all provider-aware now; off Google the age arrives as CASTING and, on Sarvam, as PACE. ⚠ **SPEECH IS BYTES ON A CLOCK**, so both clients demand 24 kHz/16-bit/mono and REFUSE anything else — there is no resampler on this install, and a 22,050 Hz answer would play 9% slow *and* move every caption built from it; `tts._assert_house_format()` fails at import if the three modules disagree. ⚠ **AND A RUN THAT CANNOT WORK IS REFUSED BEFORE IT SPENDS**: Aura has no Hindi and Bulbul has no Spanish, so the free `tts.preflight()` runs when the 🎙 dialog OPENS (the sentence on screen, **See the price** disabled) and again before the job is queued — a voiceover is one call PER LINE, and finding out on line 1 of 40 is a half-finished paid run. A saved sheet survives the switch: "Kore" is translated through its persona into the new backend's cast, never dropped. Also fixed: the confirm dialog said *"Google bills the actual amount"* for every run, including Deepgram captions — it names the real biller now. Files: new `sarvam.py`, new `tests/tts_providers_check.py`, plus `deepgram.py` (a SPEAK half beside its LISTEN half), `tts.py`, `captions.py`, `server/animatics.py`, `server/schemas.py`, `client/src/components/AnimaticEditor.jsx`, `.env.example`. New **RULEBOOK D8**. ⚠ **AND THE FOUR CAVEATS IT SHIPPED WITH WERE CLOSED THE SAME DAY** (*"sab ko fix karo … production level"*): Sarvam's request shape now comes from the vendor's own **generated SDK** rather than from prose (`sarvamai` 0.1.32 posts `language_code`, and the 44 speaker names and 11 language codes come from the same file — when two docs disagree, read the generated client); the age casting is **`.env`-tunable** (`SARVAM_CAST=grandfather:anand,child:shruti@1.15`, validated against the real roster, a typo logged and ignored rather than fatal); **a promise a backend cannot keep is now PRINTED** — only Google has real child voices, so each persona carries a note and the sheet's own lines fold into one advisory, as a SOFT warning that never reads as an error; and **all seven Aura-2 languages are cast**, not just English, which matters because on that backend the voice NAME *is* the language — `/v1/speak` has no language parameter, so Spanish sent to `aura-2-thalia-en` is read with English phonetics and billed for. `tests/tts_providers_check.py` is now 12 sections / **153 checks**. ⚠ **STILL NOT LIVE-VERIFIED — no real Sarvam or Deepgram TTS call has been made**, and that is the only open item. ⚠ **Edge-TTS deliberately not built** — it is the Edge browser's private endpoint, not a Microsoft API.
+**Last updated:** 2026-09-06 — **THE CHAT LIST GOT A SEARCH BOX, AND EVERY ROW GOT RENAME AND DELETE.** *"isme search box dalo … aur dekho ref image ko, kaise edit name mtlb rename ka aur delete ka aa raha hai"*, over a screenshot of this app's own session list. The 🕘 popover now opens with a sticky search box and each row carries **✎** and **✕** as hover chrome, with the open chat keeping them on. ⚠ **THE SEARCH MATCHES EVERY WORD IN ANY ORDER, NOT ONE SUBSTRING** — a chat is named from a whole sentence somebody typed, so the two words they later remember it by come from opposite ends of it: *"sound music"* finds nothing as a substring and is exactly what a person types. It is `matchSessions` in `chat_sessions.js`, beside `labelFor`, rather than an `includes` in the panel, and it searches the LABEL so the unnamed rows are findable as "New chat". ⚠ **AND RENAMING HAPPENS IN THE ROW** — the bar renames the chat that is OPEN, so renaming any other one meant opening it first, loading a transcript nobody asked for and losing the place you were in. ⚠ **THE §6d FOCUS TRAP CAME BACK THE MOMENT THERE WERE TWO BOXES ON ONE SCREEN**: that guarded ref callback re-runs on every render, which is harmless for a lone field and, with a search box beside a rename box, yanks the cursor out of whichever one you are typing in — both focus from an effect keyed on what opened them (`[histOpen]`, `[rowRename?.id]`), still selecting the old name exactly once. ⚠ **AND A PRESS OUTSIDE COMMITS A HALF-TYPED NAME** instead of discarding it: closing the popover unmounts the box and an unmounted input never fires the `onBlur` that would have filed it, so the listener reaches the live commit through a ref (a `useCallback([])` would read the state as it was when the list opened). Escape clears the search before it closes the list; the delete still asks in the row, never a `confirm()`. Files: `client/src/animatic/agent/chat_sessions.js`, `client/src/components/EditorChat.jsx`, `client/src/styles/editor-chat.css`. New `tests/chat_store_check.mjs` §1c (12 checks) and `tests/editor_chat_render_check.py` §6f (16 checks), **every one proved red against the previous panel**; `chat_sessions_check`, `editor_chat_check`, `editor_chat_render_check`, `chat_store_check.mjs` and `npm run build` all pass. New **RULEBOOK E161** (PAKKA). ⚠ **NOT CLICKED IN A BROWSER (G2)** — the hover states, the sticky search box and the in-row rename have been built and pinned by source-reading tests, not seen on screen. Top of Next Steps.
+
+**Previously:** 2026-09-06 — **THE VOICEOVER CAN LEAVE GOOGLE (Phase 3).** `VOICE_PROVIDER=sarvam` reads the dialogue on Sarvam's Bulbul v3 — eleven Indian languages, billed in rupees, and ⚠ **the only backend here that reads HINGLISH** (Hindi in Latin script) as one sentence instead of as bad English. `VOICE_PROVIDER=deepgram` reads it on Aura-2 (English only) against the SAME $200 of free credit the captions already use. Unset, nothing moved and Google still reads it. ⚠ **THE THING THAT WOULD HAVE RUINED A FILM WAS THE STAGE DIRECTION**: `prompt_for` sends Gemini *"Read this line as an elderly man:"* — which is the only way an age reaches that model — and the other two would have READ THAT SENTENCE OUT LOUD, in a paid run. `direction_for`, `prompt_for` and `estimate` are all provider-aware now; off Google the age arrives as CASTING and, on Sarvam, as PACE. ⚠ **SPEECH IS BYTES ON A CLOCK**, so both clients demand 24 kHz/16-bit/mono and REFUSE anything else — there is no resampler on this install, and a 22,050 Hz answer would play 9% slow *and* move every caption built from it; `tts._assert_house_format()` fails at import if the three modules disagree. ⚠ **AND A RUN THAT CANNOT WORK IS REFUSED BEFORE IT SPENDS**: Aura has no Hindi and Bulbul has no Spanish, so the free `tts.preflight()` runs when the 🎙 dialog OPENS (the sentence on screen, **See the price** disabled) and again before the job is queued — a voiceover is one call PER LINE, and finding out on line 1 of 40 is a half-finished paid run. A saved sheet survives the switch: "Kore" is translated through its persona into the new backend's cast, never dropped. Also fixed: the confirm dialog said *"Google bills the actual amount"* for every run, including Deepgram captions — it names the real biller now. Files: new `sarvam.py`, new `tests/tts_providers_check.py`, plus `deepgram.py` (a SPEAK half beside its LISTEN half), `tts.py`, `captions.py`, `server/animatics.py`, `server/schemas.py`, `client/src/components/AnimaticEditor.jsx`, `.env.example`. New **RULEBOOK D8**. ⚠ **AND THE FOUR CAVEATS IT SHIPPED WITH WERE CLOSED THE SAME DAY** (*"sab ko fix karo … production level"*): Sarvam's request shape now comes from the vendor's own **generated SDK** rather than from prose (`sarvamai` 0.1.32 posts `language_code`, and the 44 speaker names and 11 language codes come from the same file — when two docs disagree, read the generated client); the age casting is **`.env`-tunable** (`SARVAM_CAST=grandfather:anand,child:shruti@1.15`, validated against the real roster, a typo logged and ignored rather than fatal); **a promise a backend cannot keep is now PRINTED** — only Google has real child voices, so each persona carries a note and the sheet's own lines fold into one advisory, as a SOFT warning that never reads as an error; and **all seven Aura-2 languages are cast**, not just English, which matters because on that backend the voice NAME *is* the language — `/v1/speak` has no language parameter, so Spanish sent to `aura-2-thalia-en` is read with English phonetics and billed for. `tests/tts_providers_check.py` is now 12 sections / **153 checks**. ⚠ **STILL NOT LIVE-VERIFIED — no real Sarvam or Deepgram TTS call has been made**, and that is the only open item. ⚠ **Edge-TTS deliberately not built** — it is the Edge browser's private endpoint, not a Microsoft API.
 
 **Previously:** 2026-09-06 — **A CHAT THE USER RENAMED WENT BACK TO BEING NAMED BY ITS FIRST MESSAGE.** *"mai chat ko rename kiya tha chat 1 … fir prompt daala to chat ka name prompt ke words ban gaya — agar user rename kar diya hai to wahi naam hamesha rahna chahiye"*. Renamed to **"chat 1"**, a message sent in it later, and the row in 🕘 went back to reading *"is shorts/reel ke hisaab se sound effects and…"*. ⚠ **THE BROWSER DID KNOW NOT TO DO THAT — IT KNEW IT IN A PLACE THAT DOES NOT SURVIVE.** `useChatSessions` kept the renamed chats in a React ref (`renamedRef`) and skipped sending a title for those; **a ref is emptied by a reload**, and nothing ever fills it again, so the first autosave after the panel was reopened posted the first line of the chat as its title and the chosen name was gone for good. A second tab and a retried save had the same hole. ⚠ **SO THE REFUSAL MOVED TO THE STORE, WHICH IS THE ONLY PLACE ALL THREE PASS THROUGH.** A title now travels with `title_auto` — true from the autosave, absent from the rename box — and `chat_sessions.save_session` writes `title_locked` when a person names a chat and **drops** every automatic title on a locked one. **Clear chat unlocks it**, because that makes a conversation new again, name and all. The listing carries `title_locked` so a reloaded panel takes the answer from the server instead of guessing, and the row on screen never flickers to the wrong name. Files: `server/chat_sessions.py`, `server/schemas.py`, `server/editor_chat.py`, `client/src/api.js`, `client/src/animatic/agent/useChatSessions.js`. `tests/chat_sessions_check.py` gains **§12 — 18 checks**, including the exact live sequence (rename → next message → name survives) and a read of the browser source proving the autosave marks its title automatic and the rename box does not; `chat_sessions_check`, `editor_chat_check`, `editor_chat_doors_check` and `chat_store_check.mjs` all pass. New **RULEBOOK E160** (PAKKA). ⚠ **NOT CLICKED IN A BROWSER (G2)** — the flow is proved through the routes and the store, not through the panel. ⚠ **AND ONE THING WAS DESTROYED IN THIS VISIT, RECORDED HONESTLY:** a patch script opened this file for writing and then died on an encoding error, emptying all 32,874 lines of it. The committed copy was restored and the uncommitted summary above re-typed from what was still on screen — **one section's write-up (＋ Add layer → Storyboard images) was lost**; its code and its RULEBOOK row (E156) are untouched. See **RULEBOOK G1**: build the bytes, write a temp file, rename it over the target — never open the real file for writing.
 
@@ -29336,6 +29338,97 @@ still occasionally be safety-filtered.
 ---
 
 ## 🎯 Current State / Next Steps
+
+### ✅ THE EFFECTS THAT VANISHED, A FOURTH TIME — AND THE HOLE WAS IN THEIR OWN FIX (2026-09-06)
+
+Reported with a screenshot: *"see error chat mai mai effets and transition manga
+tha bas"*. **10 transitions applied perfectly, and all 14 effects thrown away** —
+fourteen folded rows of *"add_effect: the step named no effect to add"*, on the
+same 14-shot reel, on the day E154's enum fix shipped.
+
+**Why it came back.** `_pin_kind` in `editor_chat_agent.py` made `kind` an enum
+of the real effect ids — correct — and then required it only
+`if all(row.get("family") for row in rows)`: *only when EVERY verb in the batch
+takes a kind.* The reasoning written beside it was that demanding a `kind` from a
+`note` would make the schema unanswerable. **It does not.** `args` is a flat
+union and `director.fold_steps` filters every step's arguments **by verb**, so a
+`kind` on a verb that has none is discarded before it ever reaches the browser.
+What `all(...)` actually did was hand any brief that listed **one** companion
+verb beside `add_effect` — a `set_effect_param`, a `note` — a `kind` field that
+was enumerated but **optional**, and the model simply did not write it.
+
+A second, wider hole beside it: `_pin_kind` only ran **inside** the narrowing
+branch, so a task whose brief named no verbs at all (legal, and what the planner
+writes for a broad goal) got `kind` as a bare `{"type": "string"}` — no enum,
+nothing required.
+
+**What changed.**
+
+- `_pin_kind` requires `kind` when **any** verb in the batch takes one, and says
+  in the field's own description which verbs ignore it.
+- It now runs for **every** batch. An un-narrowed one gets the **enum** but never
+  the requirement — most verbs in the whole editor have no `kind`, and
+  `delete_shot` must not be asked for one.
+- **Two floors under the schema, because the schema has now been the "last line"
+  three times and failed three times** (E147's rule, applied again):
+  `director._canonical_args` **lifts a kind written into `params`** — which the
+  schema has to offer as free `{name, value}` pairs — and the new
+  `director._kind_in_note` **reads a kind named only in the step's note** before
+  the step is dropped, **one match or nothing**. Both fire only on a step that
+  was already lost, and the person still approves every step.
+
+Files: `editor_chat_agent.py` (`_pin_kind`, `batch_schema`), `director.py`
+(`_canonical_args`, `_kind_in_note`, `fold_steps`).
+`tests/editor_chat_work_check.py` grew 12 checks — the one that used to assert
+*"never required of a verb that takes no kind"* was **encoding the bug** and is
+now inverted. Whole Python suite passes (`director_*`, `editor_chat_*`,
+`chat_layers`).
+
+**RULEBOOK E154 amended** (PAKKA). ⚠ **Server-side only — no client rebuild
+needed, but the server must be restarted to pick it up.** ⚠ **Not re-run live
+(G2)**: the schema and both floors are pinned by tests, the actual reel has not
+been asked for effects again.
+
+
+### ✅ THE CHAT LIST: A SEARCH BOX, AND RENAME/DELETE ON EVERY ROW (2026-09-06)
+
+Asked for over a screenshot of this app's own session list: *"isme search box
+dalo … aur dekho ref image ko, kaise edit name mtlb rename ka aur delete ka aa
+raha hai"*.
+
+The 🕘 list now opens with a **search box** that stays put while the rows
+scroll under it, and every row carries **✎ rename** and **✕ delete** as hover
+chrome (the open chat keeps them on). Renaming happens **in the row** — the bar
+renames the chat that is OPEN, so renaming any other one used to mean opening it
+first, which loads a transcript nobody asked for and loses your place.
+
+Three things that were not obvious:
+
+- **The search matches every word, in any order** — a chat is named from a whole
+  sentence somebody typed, so the words they hunt by come from opposite ends of
+  it. *"sound music"* finds nothing as a substring. It is `matchSessions` in
+  `chat_sessions.js`, next to `labelFor`, so the rule is testable and the panel
+  cannot quietly disagree with it. Unnamed rows are findable as "New chat".
+- **⚠ The §6d focus trap returns the moment a screen has two boxes.** A
+  guarded ref callback is right for a lone field; with a search box and a rename
+  box in one popover it re-runs on every render and pulls the cursor out of the
+  other one. Both focus from an effect keyed on what opened them.
+- **A press outside saves a half-typed name.** Closing the popover unmounts the
+  box, and an unmounted input never fires the `onBlur` that would have filed it.
+
+Escape clears the search before it closes the list; the delete still asks in the
+row, never a `confirm()`.
+
+Files: `client/src/animatic/agent/chat_sessions.js` (`matchSessions`),
+`client/src/components/EditorChat.jsx`, `client/src/styles/editor-chat.css`.
+`tests/chat_store_check.mjs` §1c (12 checks) and
+`tests/editor_chat_render_check.py` §6f (16 checks) are new and **every one of
+them was proved red against the previous panel**; `chat_sessions_check`,
+`editor_chat_check` and `npm run build` pass.
+
+New **RULEBOOK E161** (PAKKA). ⚠ **Not clicked in a browser (G2)** — the
+markup and the rule are pinned by tests, the hover states and the sticky search
+box have not been seen on screen.
 
 ### ✅ THE VOICEOVER CAN LEAVE GOOGLE — SARVAM AND DEEPGRAM AURA (Phase 3, 2026-09-06)
 

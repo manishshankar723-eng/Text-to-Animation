@@ -652,26 +652,116 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ec-hist-del {
+/* ✎ RENAME AND ✕ DELETE, ON THE ROW ITSELF. ⚠ THEY ARE HOVER CHROME AND THE
+   OPEN CHAT KEEPS THEM ON — the same rule the bar's own pencil follows. Two
+   live buttons beside every row of a list somebody is only scanning is a rename
+   and a delete pressed by mistake; hidden outright, they are two features
+   nobody ever finds. `visibility`, not `display`, so the title never shifts
+   sideways as they appear. */
+.ec-hist-acts {
   flex: 0 0 auto;
-  padding: 0.25rem 0.45rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.05rem;
+  padding-right: 0.15rem;
+}
+.ec-hist-act {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.4rem;
+  padding: 0.25rem 0.3rem;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: var(--muted);
   font-size: 0.8rem;
+  line-height: 1;
   cursor: pointer;
-  /* Hidden until the row is under the pointer — a delete on every row of a list
-     you are only scanning is a delete somebody presses by mistake. */
   visibility: hidden;
 }
-.ec-hist-row:hover .ec-hist-del,
-.ec-hist-del:focus-visible {
+.ec-hist-row:hover .ec-hist-act,
+.ec-hist-row.on .ec-hist-act,
+.ec-hist-row:focus-within .ec-hist-act,
+.ec-hist-act:focus-visible {
   visibility: visible;
 }
-.ec-hist-del:hover {
-  color: var(--fail);
+.ec-hist-act:hover {
+  color: var(--text);
   background: var(--panel);
+}
+/* ⚠ RED ON THE DELETE, ON HOVER ONLY. A permanently red cross in a list reads
+   as a row that is in trouble; red under the pointer reads as what it does. */
+.ec-hist-act.del:hover {
+  color: var(--fail);
+}
+
+/* The rename box that opens ON a row. ⚠ THE SAME SHAPE AS THE ROW IT REPLACES,
+   so the list does not jump by a pixel when it opens — a list that resizes
+   under the pointer is a list you click the wrong row in. */
+.ec-hist-input {
+  flex: 1;
+  min-width: 0;
+  margin: 0.2rem 0.25rem;
+  padding: 0.3rem 0.4rem;
+  border: 1px solid var(--primary);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  outline: none;
+}
+
+/* -------------------------------------------------------------------------
+   THE SEARCH BOX
+   -------------------------------------------------------------------------
+   ⚠ IT STAYS PUT WHILE THE ROWS SCROLL UNDER IT. The list caps at 17rem and a
+   project may hold fifty chats, so a search that scrolled away with the rows is
+   one you have to go and find again. `sticky` with a NEGATIVE top of the
+   popover's own padding, so it parks flush against the top edge instead of
+   leaving a 0.3rem gap for rows to show through.
+
+   ⚠ AND IT IS ONE FIELD, NOT A BORDERED BOX INSIDE A BORDERED BOX. The popover
+   already has an edge; a second one 4px inside it is the kind of nesting that
+   makes a small panel look busy. The magnifier says what the row is. */
+.ec-hist-find {
+  position: sticky;
+  top: -0.3rem;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: -0.3rem -0.3rem 0.25rem;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-2);
+}
+.ec-hist-find-ico {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1;
+}
+.ec-hist-find-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+  outline: none;
+}
+.ec-hist-find-input::placeholder {
+  color: var(--muted);
+}
+/* The ✕ that empties it is always visible while there IS something to empty —
+   it is not row chrome, it is the answer to "how do I get the rest back". */
+.ec-hist-find .ec-hist-act {
+  visibility: visible;
 }
 
 /* How many chats this project holds against the operator's ceiling. ⚠ A RULE

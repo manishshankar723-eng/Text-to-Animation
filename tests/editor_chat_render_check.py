@@ -623,6 +623,71 @@ def main() -> int:
     check("…in the warning colour, because it is a promise it cannot keep",
           "ec-foot-warn" in out["chatFullUnsaved"])
 
+    print("\n6f · The list itself: a search box, and rename/delete on every row\n")
+    # Asked for over a screenshot of the app's own session list: *"isme search box
+    # dalo … aur dekho ref image ko, kaise edit name mtlb rename ka aur delete ka
+    # aa raha hai, aisa karo"*.
+    #
+    # ⚠ NONE OF IT CAN BE RENDERED HERE. The list is a popover that opens on a
+    # click, and `renderToStaticMarkup` neither clicks nor runs effects — 6c pins
+    # that it is SHUT on first paint, which is the other half of the same fact. So
+    # this reads the mechanism out of the source, the way 6d does.
+    hist = src_text[src_text.index('className="ec-hist"'):]
+
+    check("the list has a search box", 'className="ec-hist-find-input"' in hist)
+    check("…with a placeholder that says what it searches",
+          "Search chats" in hist)
+    check("…and it is a controlled input",
+          bool(re.search(r'className="ec-hist-find-input".*?value=\{histQuery\}', hist, re.S)))
+    # ⚠ THE NARROWING IS A RULE IN THE MODULE, NOT AN `includes` IN THE PANEL.
+    # Every word matching in any order is the difference between finding
+    # "sound music" in a chat named from a whole sentence and finding nothing —
+    # pinned properly in `tests/chat_store_check.mjs` §1c, which can only guard
+    # the rule if the panel actually calls it.
+    check("⚠ …and the panel filters with the module's rule",
+          "matchSessions(store?.sessions, histQuery)" in src_text)
+    check("…nothing matching says so, rather than looking empty",
+          "No chat matches" in hist)
+    # ⚠ ESCAPE EMPTIES THE BOX BEFORE IT CLOSES THE LIST, and that needs the key
+    # stopped — the window listener that closes the popover is still listening.
+    check("⚠ Escape clears the search before it closes the list",
+          bool(re.search(r'e\.key === "Escape" && histQuery.*?stopPropagation', hist, re.S)))
+    # A box that reopened still filtered is a project whose chats look deleted.
+    check("…and closing the list empties the box",
+          bool(re.search(r"closeHist = useCallback\(\(\) => \{(.*?)\}", src_text, re.S)
+               and 'setHistQuery("")' in re.search(
+                   r"closeHist = useCallback\(\(\) => \{(.*?)\}", src_text, re.S).group(1)))
+
+    check("every row carries a rename", "Rename this chat" in hist)
+    check("…and a delete", "Delete this chat" in hist)
+    check("…both as row chrome, not as text", 'className="ec-hist-act' in hist)
+    # ⚠ THE DELETE STILL ASKS. Deleting a conversation cannot be undone from
+    # anywhere in this app, and the ask is in the row — never a native confirm().
+    check("⚠ …and the delete still asks in the row first",
+          "Delete this chat?" in hist and "confirm(" not in hist)
+    # ⚠ RENAMING FROM THE LIST DOES NOT OPEN THE CHAT. The bar renames the OPEN
+    # one, so renaming any other used to mean loading a transcript nobody asked
+    # for and losing the place you were in.
+    check("a row renames in place, without opening that chat",
+          'className="ec-hist-input"' in hist
+          and bool(re.search(r'className="ec-hist-input".*?value=\{rowRename\.text\}', hist, re.S)))
+
+    # ⚠ THE §6d TRAP, THROUGH A DIFFERENT DOOR. That guarded ref callback is
+    # right when the box is the ONLY field on screen. There are TWO fields in this
+    # popover now, and a callback that re-runs on every render would pull the
+    # cursor out of a row's rename box the moment anything re-rendered — so both
+    # of these focus from an EFFECT that runs once, keyed on what opened them.
+    check("⚠ the search box takes focus from an effect keyed on the list opening",
+          bool(re.search(r"findRef\.current\?\.focus\(\{ preventScroll: true \}\);\s*\},\s*\[histOpen\]",
+                         src_text, re.S)))
+    check("⚠ …and the row's rename box from one keyed on that row",
+          bool(re.search(r"rowRenameRef\.current(.*?)\}, \[rowRename\?\.id\]", src_text, re.S)))
+    m_row = re.search(r"rowRenameRef\.current(.*?)\}, \[rowRename\?\.id\]", src_text, re.S)
+    check("…which still selects the old name, so it need not be cleared first",
+          ".select()" in (m_row.group(1) if m_row else ""))
+    check("…and still does not scroll the panel to do it",
+          "preventScroll" in (m_row.group(1) if m_row else ""))
+
     print("\n6b · How see-through it is, and whose decision that is\n")
     check("the operator's number reaches the panel", "--ec-opacity:60" in
           out["seeThrough"].replace("--ec-opacity: 60", "--ec-opacity:60"),

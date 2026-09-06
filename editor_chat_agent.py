@@ -1441,7 +1441,8 @@ def work_batches(work: dict, shot_count: int) -> list[dict]:
     return out
 
 
-def _pin_kind(args: dict, rows: list[dict], vocabulary: dict) -> None:
+def _pin_kind(args: dict, rows: list[dict], vocabulary: dict,
+              narrowed: bool = True) -> None:
     """Turn the batch's `kind` from a bare string into the real list of ids.
 
     ⚠ **THIS IS THE THIRD ATTEMPT AT ONE BUG, AND THE FIRST THAT CANNOT LOSE.**
@@ -1503,16 +1504,37 @@ def _pin_kind(args: dict, rows: list[dict], vocabulary: dict) -> None:
         per_verb.append(f"{'/'.join(verbs)} takes one of: {', '.join(found)}")
     if not ids:
         return
+    # The verbs in this batch that take no `kind` at all, named so the model is
+    # not left guessing what to do with a field its step has no use for.
+    spare = sorted(row["id"] for row in rows if row.get("id") and not row.get("family"))
     props["kind"] = {
         "type": "string",
         "enum": ids,
-        "description": "Which one, exactly. " + ". ".join(per_verb) + ".",
+        "description": "Which one, exactly. " + ". ".join(per_verb) + "."
+        + ((" %s take%s no kind — put any value there, it is ignored."
+            % ("/".join(spare), "" if len(spare) > 1 else "s")) if spare else ""),
     }
-    # ⚠ REQUIRED ONLY WHEN EVERY VERB IN THIS BATCH TAKES ONE. A batch that may
-    # also write a `note` — which has no `kind` at all — would be unable to
-    # answer a schema that demanded it, and an unanswerable schema is a batch
-    # that fails outright rather than one step that gets dropped.
-    if all(row.get("family") for row in rows):
+    # ⚠ **REQUIRED WHEN *ANY* VERB IN THIS BATCH TAKES ONE — NOT WHEN EVERY ONE
+    # DOES, WHICH IS THE HOLE THE SAME BUG CAME BACK THROUGH.** This line read
+    # `all(...)` on the reasoning that a schema demanding a `kind` from a `note`
+    # is one the batch "cannot answer". It can, and cheaply: `args` is a FLAT
+    # union and `director.fold_steps` filters every step's arguments BY VERB, so
+    # a `kind` written on a verb that does not take one is thrown away before it
+    # reaches the client and costs nothing. What `all(...)` really did was let
+    # ONE companion verb in the brief — a `set_effect_param`, a `note`, anything
+    # the planning model listed beside `add_effect` — silently switch the
+    # requirement off for the effects as well.
+    #
+    # Live on 2026-09-06, the THIRD repeat of one bug and the second through its
+    # own fix: *"add effects and transition in my story images"* on a 14-shot
+    # reel, ten transitions perfect and FOURTEEN rows of *"add_effect: the step
+    # named no effect to add"*.
+    #
+    # ⚠ AND NEVER REQUIRED OF A BATCH THAT WAS NOT NARROWED (`narrowed=False`).
+    # A task naming no verbs is choosing from the WHOLE editor, where most verbs
+    # have no `kind`; demanding one there would be demanding it of `delete_shot`.
+    # Those batches still get the ENUM — see `batch_schema`.
+    if narrowed and any(row.get("family") for row in rows):
         required = [name for name in (args.get("required") or []) if name != "kind"]
         args["required"] = [*required, "kind"]
 
@@ -1531,9 +1553,17 @@ def batch_schema(vocabulary: dict, task: dict) -> dict:
 
     plan = plan_schema(vocabulary)
     allowed = [v for v in (task.get("verbs") or []) if v]
+    steps = ((plan.get("properties") or {}).get("steps") or {})
+    item_props = (steps.get("items") or {}).get("properties") or {}
+    args = item_props.get("args")
+    all_rows = [
+        v for v in (vocabulary.get("verbs") or [])
+        if isinstance(v, dict) and v.get("id")
+    ]
+    # Which verbs this batch's `kind` may come out of, and whether the batch was
+    # narrowed at all — both read at the bottom, for every batch. See there.
+    rows, narrowed = all_rows, False
     if allowed:
-        steps = ((plan.get("properties") or {}).get("steps") or {})
-        item_props = (steps.get("items") or {}).get("properties") or {}
         verb = item_props.get("verb")
         known = set(verb.get("enum") or []) if isinstance(verb, dict) else set()
         keep = [v for v in allowed if not known or v in known]
@@ -1560,17 +1590,21 @@ def batch_schema(vocabulary: dict, task: dict) -> dict:
         # off `verbVocab()` in `client/src/animatic/agent/actions.js`, which is
         # the only place it is real. `director._ARG_ALIASES` is the floor under
         # all of it: a synonym is now renamed rather than dropped.
-        args = item_props.get("args")
-        rows = [
-            v for v in (vocabulary.get("verbs") or [])
-            if isinstance(v, dict) and v.get("id") in set(keep)
-        ]
+        if keep:
+            rows, narrowed = [v for v in all_rows if v.get("id") in set(keep)], True
         wanted = {name for v in rows for name in (v.get("args") or [])}
         if wanted and isinstance(args, dict) and isinstance(args.get("properties"), dict):
             args["properties"] = {
                 name: spec for name, spec in args["properties"].items() if name in wanted
             }
-            _pin_kind(args, rows, vocabulary)
+    # ⚠ **PINNED FOR EVERY BATCH, NARROWED OR NOT.** This used to run only
+    # inside the narrowing branch above, so a task whose brief listed NO verbs —
+    # legal, and what the planning model writes when the goal is broad — was
+    # handed `kind` as a bare `{"type": "string"}`: no enum, nothing required,
+    # the exact field that has now lost a reel's effects three times. An
+    # un-narrowed batch gets the enum and never the requirement.
+    if isinstance(args, dict) and isinstance(args.get("properties"), dict):
+        _pin_kind(args, rows, vocabulary, narrowed)
     return {
         "type": "object",
         "properties": {
