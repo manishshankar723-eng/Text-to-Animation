@@ -338,6 +338,58 @@ def check_hardening(caps: dict):
     check("an answer with no JSON in it at all is not turned into one",
           llm_json.extract_json("I cannot help with that.") == "I cannot help with that.")
 
+    # -----------------------------------------------------------------------
+    # ⚠ AN ANSWER THAT STOPPED HALFWAY IS NOT AN ANSWER OF NOTHING.
+    # -----------------------------------------------------------------------
+    # Live on 2026-09-06, in a red banner over an 8-shot promo: *"shots 1–8: The
+    # model returned unusable JSON for the editor chat batch call — it would not
+    # parse: Unterminated string starting at: line 6 column 16 (char 87)."* One
+    # caption in the middle never closed its quote, and every COMPLETE step
+    # before it went in the bin with it — then the batch, then the job.
+    def salvaged(text):
+        return llm_json.salvage_json(llm_json.extract_json(text))
+
+    live = ('{"steps": ['
+            '{"verb": "add_text", "args": {"shot": 1, "text": "Hungry at work?"}}, '
+            '{"verb": "add_text", "args": {"shot": 2, "text": "Nothing in the fridge"}}, '
+            '{"verb": "add_text", "args": {"shot": 3, "text": "High delive')
+    kept = salvaged(live)
+    check("⚠ A CUT-OFF ANSWER KEEPS THE STEPS THAT DID ARRIVE",
+          kept and len(kept["steps"]) == 2, json.dumps(kept)[:140])
+    check("…and they are exactly what the model wrote, untouched",
+          kept["steps"][1]["args"]["text"] == "Nothing in the fridge",
+          json.dumps(kept["steps"][1]))
+    # ⚠ **AND NOT THE HALF-BUILT ONE.** The third step really did carry
+    # `"verb": "add_text"` and `"shot": 3` before the answer stopped, so a naive
+    # cut keeps it — a caption step with no caption, which every validator
+    # downstream then reports as a mistake the model never actually made.
+    check("⚠ …AND NEVER A STEP THE MODEL DID NOT FINISH",
+          all(s["args"].get("text") for s in kept["steps"]), json.dumps(kept))
+
+    # ⚠ IT CUTS, IT NEVER MENDS — so an answer with nothing complete in it is
+    # still a failure, and must stay one. Salvaging `{"kind": "plan"}` out of a
+    # cut-off turn would put an empty reply on screen and call it success.
+    for label, broken in (
+        ("nothing complete at all", '{"steps": [{"verb'),
+        ("an empty list and no more", '{"steps": ['),
+        ("a turn cut inside its reply", '{"kind": "plan", "reply": "I will add the ti'),
+        ("a key with no value", '{"kind": "plan", "repl'),
+    ):
+        check(f"⚠ …and {label} is STILL a failure", salvaged(broken) is None,
+              repr(salvaged(broken)))
+
+    check("an escaped quote inside a rescued caption survives it",
+          salvaged(r'{"steps": [{"text": "say \"hi\""}, {"text": "unclo'
+                   ) == {"steps": [{"text": 'say "hi"'}]},
+          repr(salvaged(r'{"steps": [{"text": "say \"hi\""}, {"text": "unclo')))
+    check("a whole plan whose LAST field was cut keeps the plan",
+          (salvaged('{"kind":"plan","plan":{"summary":"titles","steps":'
+                    '[{"verb":"note","args":{}}]},"soun') or {}).get("plan", {})
+          .get("summary") == "titles")
+    check("an answer that was already valid is returned unchanged",
+          salvaged('{"steps": [{"verb": "note", "args": {}}], "note": "ok"}')
+          == {"steps": [{"verb": "note", "args": {}}], "note": "ok"})
+
     print("\n⚠ AND A BROKEN ANSWER BUYS EXACTLY ONE REPAIR\n")
     request = llm_json.JsonRequest(
         system="s", prompt="p", schema={"type": "object",

@@ -76,7 +76,19 @@ import {
   rippleFrames,
 } from "../animatic/ripple.js";
 import { ASPECTS as BOARD_ASPECTS } from "../storyboardOptions.js";
-import { DEFAULT_FONT, cssLineHeight, ensureFontsLoaded, fontFamily } from "../animatic/fonts.js";
+import {
+  DEFAULT_FONT,
+  bestFontForText,
+  cssLineHeight,
+  ensureFontsLoaded,
+  fontFamily,
+} from "../animatic/fonts.js";
+import {
+  TEXT_STYLES,
+  listCustomStyles,
+  resolveTextStyle,
+  styleFromClip,
+} from "../animatic/text_styles.js";
 import {
   disableProp,
   enableProp,
@@ -536,6 +548,53 @@ function rgba(hex, alpha) {
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
 }
 
+/**
+ * "What should the subtitles look like" — one row, in both speech dialogs.
+ *
+ * ⚠ A SELECT, NOT THE `PresetPicker` SHELF THE INSPECTOR USES, and that is on
+ * purpose. In the inspector a look is applied instantly to a caption you are
+ * looking at, so a wall of buttons is the right shape: you can try six. Here
+ * nothing is applied until a PAID run finishes, so there is nothing to try and
+ * nothing to see — it is one decision to make before pressing a priced button,
+ * which is what a select is for, and it keeps a dialog that is already asking
+ * about tracks, languages and money from growing a gallery.
+ *
+ * ⚠ THE SAVED LOOKS ARE OFFERED TOO, read at render rather than held in state:
+ * this row is mounted only while a dialog is open, and somebody may have saved a
+ * style in the inspector since the editor loaded.
+ */
+function CaptionLookRow({ value, onChange }) {
+  const mine = listCustomStyles();
+  return (
+    <div className="an-prop-row">
+      <span className="an-prop-label">Look</span>
+      <select
+        className="an-select"
+        value={value}
+        // ⚠ THE EXPLANATION IS ON HOVER, not under the row. This dialog already
+        // carries two paragraphs of prose and a price.
+        title="How the captions this run writes will be styled. Every one of them can still be restyled afterwards."
+        onChange={(e) => onChange(e.target.value)}
+      >
+        {TEXT_STYLES.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.label}
+          </option>
+        ))}
+        {mine.length > 0 && (
+          <optgroup label="Saved on this device">
+            {mine.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.label}
+              </option>
+            ))}
+          </optgroup>
+        )}
+      </select>
+    </div>
+  );
+}
+
 // CSS `text-transform` for a caption's case. ⚠ The same three mappings
 // `_apply_case` implements in Pillow — "title" is `capitalize`, which upper-
 // cases first letters and leaves the rest alone.
@@ -643,12 +702,35 @@ function captionStyle(c, inZone = false) {
   // its centre and knows nothing about CSS), so this is the monitor disagreeing
   // with the film — the same shape of fault as the forced-opaque frame in
   // ProgramCanvas.jsx. THE PREVIEW AND THE EXPORT ARE ONE PICTURE.
+  //
+  // ⚠ AND A TURN IS THE SAME TRANSFORM, WHICH IS WHY THEY ARE BUILT TOGETHER
+  // RATHER THAN IN TWO `if`s. An element has ONE `transform` and ONE
+  // `transform-origin`: writing a second `style.transform` for the rotation
+  // would delete the scale (and, on a free caption, the centring translate all
+  // over again — the exact bug the note above is about). So both go into one
+  // string, in the order `scale() rotate()`, and both turn about the one origin
+  // the caption is anchored by.
+  //
+  // ⚠ `draw_texts` MATCHES THIS ORDER AND THIS ORIGIN. It builds the block at
+  // the scaled font size (that IS the scale, applied first) and then turns the
+  // finished block about the same anchor point — see `_rotate_about` in
+  // `animatic.py`. Scale-then-rotate about a shared origin is the one reading
+  // both sides can implement identically; rotate-then-scale is not the same
+  // picture unless the scale is uniform on both axes, and there is no reason to
+  // rely on that staying true.
   const scale = Number(c.scale);
+  const rotation = Number(c.rotation);
   const free = (c.place || "flow") === "free";
-  if (Number.isFinite(scale) && Math.abs(scale - 1) > 1e-6) {
-    style.transform = free
-      ? `translate(-50%, -50%) scale(${scale})`
-      : `scale(${scale})`;
+  const zoomed = Number.isFinite(scale) && Math.abs(scale - 1) > 1e-6;
+  const turned = Number.isFinite(rotation) && Math.abs(rotation) > 1e-6;
+  if (zoomed || turned) {
+    const moves = [];
+    // The centring translate a free caption is positioned by. It has to come
+    // FIRST and it has to be here at all — see the ⚠ note above.
+    if (free) moves.push("translate(-50%, -50%)");
+    if (zoomed) moves.push(`scale(${scale})`);
+    if (turned) moves.push(`rotate(${rotation}deg)`);
+    style.transform = moves.join(" ");
     style.transformOrigin = free
       ? "center center"
       : (c.position || "bottom") === "top"
@@ -1199,6 +1281,13 @@ export default function AnimaticEditor({
   const [speechFor, setSpeechFor] = useState(null);
   const [speechTrack, setSpeechTrack] = useState("");
   const [speechLanguage, setSpeechLanguage] = useState("");
+  // WHAT THE SUBTITLES THIS RUN WRITES SHOULD LOOK LIKE, by id out of
+  // `text_styles.js`. ⚠ CHOSEN BEFORE THE RUN RATHER THAN FIXED AFTERWARDS: a
+  // transcription is forty clips, and restyling forty clips by hand is the exact
+  // work the Look shelf exists to remove. The default is "subtitle", which is
+  // the white-on-a-scrim `caption_clips` has always written — so a run where
+  // nobody touches this is byte-for-byte the run it was before the shelf existed.
+  const [speechStyle, setSpeechStyle] = useState("subtitle");
   const [speechVoice, setSpeechVoice] = useState("Kore");
   const [speechReplace, setSpeechReplace] = useState(true);
   const [speechCaptions, setSpeechCaptions] = useState(true);
@@ -4318,6 +4407,38 @@ export default function AnimaticEditor({
 
   const patchText = (id, patch) =>
     setTexts((list) => list.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+
+  /**
+   * Give every caption on ONE ROW the look the named caption is wearing.
+   *
+   * ⚠ THE ROW, NOT THE PROJECT. A film has a Captions row and usually a text row
+   * of its own; restyling "every caption" would repaint a hand-set title
+   * somebody put on a different row an hour ago. The row is the unit the user
+   * can see, and it is exactly the unit a captions run writes.
+   *
+   * ⚠ ONE `setTexts`, SO IT IS ONE UNDO. The undo stack compares document
+   * snapshots, so forty clips changed inside one call is a single Ctrl+Z — where
+   * forty `patchText` calls would be forty presses to get back.
+   *
+   * ⚠ AND THE FONT IS RESOLVED PER CLIP, NOT COPIED. `applyTextStyle` runs the
+   * style's face through `bestFontForText` against THAT caption's own words, so
+   * a run holding one English line among forty Hindi ones does not get Anton
+   * stamped onto the Hindi. Same rule `caption_clips` keeps on the server, and
+   * the reason this goes through the styles module rather than spreading fields.
+   */
+  function restyleLane(sourceId) {
+    setTexts((list) => {
+      const source = list.find((c) => c.id === sourceId);
+      if (!source) return list;
+      const lane = source.layer_id || "";
+      const look = styleFromClip(source);
+      return list.map((c) =>
+        (c.layer_id || "") === lane
+          ? { ...c, ...look, font: bestFontForText(String(c.text || ""), look.font) }
+          : c
+      );
+    });
+  }
 
   function deleteText(id) {
     setTexts((list) => list.filter((c) => c.id !== id));
@@ -9062,6 +9183,7 @@ export default function AnimaticEditor({
               uploadId: speechTrack,
               language: speechLanguage,
               replace: speechReplace,
+              style: speechStyleFields(),
             })
           : await api.estimateVoiceover(animaticId, {
               voice: speechVoice,
@@ -9071,6 +9193,7 @@ export default function AnimaticEditor({
               fitShots: speechFit,
               addCaptions: speechCaptions,
               replace: speechReplace,
+              style: speechStyleFields(),
             });
       if (speechFor === "voiceover" && !estimate.lines) {
         // By far the likeliest reason this button appears to do nothing, so it
@@ -9088,6 +9211,25 @@ export default function AnimaticEditor({
     } finally {
       setSpeechBusy(false);
     }
+  }
+
+  /**
+   * The chosen look as PLAIN CAPTION FIELDS, which is what the server takes.
+   *
+   * ⚠ THE BROWSER RESOLVES THE STYLE; THE SERVER HAS NO VOCABULARY OF STYLES AND
+   * NEEDS NONE. `caption_clips` stamps whatever fields arrive onto every line it
+   * writes (through a whitelist — see `captions.clean_style`), so the shelf can
+   * grow to a hundred looks, or somebody can save one of their own, without a
+   * line changing on the server.
+   *
+   * ⚠ THE FONT IS LEFT FOR THE SERVER TO RESOLVE, per line. A transcript is in
+   * whatever language the film was spoken in and a style naming Anton would be
+   * ▯▯▯ on a Hindi subtitle; `caption_clips` already runs `best_font_for_text`
+   * against each line's own words, keeping the style's face wherever it fits.
+   * Resolving it here — against no text at all — could only get it wrong.
+   */
+  function speechStyleFields() {
+    return resolveTextStyle(speechStyle, listCustomStyles()) || {};
   }
 
   // The only place either pass actually spends. Reached solely from the dialog.
@@ -9110,6 +9252,7 @@ export default function AnimaticEditor({
           uploadId: speechTrack,
           language: speechLanguage,
           replace: speechReplace,
+          style: speechStyleFields(),
         });
       } else {
         await api.voiceAnimatic(animaticId, {
@@ -9118,6 +9261,7 @@ export default function AnimaticEditor({
           fitShots: speechFit,
           addCaptions: speechCaptions,
           replace: speechReplace,
+          style: speechStyleFields(),
         });
       }
       setSpeechFor(null);
@@ -11526,6 +11670,15 @@ export default function AnimaticEditor({
                 onDuplicate={duplicateText}
                 onDelete={deleteText}
                 onClose={() => setSelectedTextId(null)}
+                // ⚠ COUNTED HERE, not in the pane. The pane has never been given
+                // the document and should not start now — it is handed the one
+                // number it needs to decide whether the row is worth offering.
+                laneCount={
+                  texts.filter(
+                    (c) => (c.layer_id || "") === (inspectedShown.layer_id || "")
+                  ).length
+                }
+                onRestyleLane={restyleLane}
               />
             ) : selectedOverlay ? (
               <ShapeProperties
@@ -13913,6 +14066,7 @@ export default function AnimaticEditor({
                     />
                   </label>
                 </div>
+                <CaptionLookRow value={speechStyle} onChange={setSpeechStyle} />
               </>
             ) : (
               <>
@@ -14086,6 +14240,12 @@ export default function AnimaticEditor({
                   Add captions for the spoken lines too (free — the timings come
                   back with the audio)
                 </label>
+                {/* ⚠ ONLY WHEN THERE WILL BE CAPTIONS TO STYLE. A look picker
+                    above an unticked box is a control that does nothing, which
+                    reads as broken rather than as unused. */}
+                {speechCaptions && (
+                  <CaptionLookRow value={speechStyle} onChange={setSpeechStyle} />
+                )}
               </>
             )}
 

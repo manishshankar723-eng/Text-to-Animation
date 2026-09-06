@@ -308,7 +308,11 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-09-06 — **THE CHAT LIST GOT A SEARCH BOX, AND EVERY ROW GOT RENAME AND DELETE.** *"isme search box dalo … aur dekho ref image ko, kaise edit name mtlb rename ka aur delete ka aa raha hai"*, over a screenshot of this app's own session list. The 🕘 popover now opens with a sticky search box and each row carries **✎** and **✕** as hover chrome, with the open chat keeping them on. ⚠ **THE SEARCH MATCHES EVERY WORD IN ANY ORDER, NOT ONE SUBSTRING** — a chat is named from a whole sentence somebody typed, so the two words they later remember it by come from opposite ends of it: *"sound music"* finds nothing as a substring and is exactly what a person types. It is `matchSessions` in `chat_sessions.js`, beside `labelFor`, rather than an `includes` in the panel, and it searches the LABEL so the unnamed rows are findable as "New chat". ⚠ **AND RENAMING HAPPENS IN THE ROW** — the bar renames the chat that is OPEN, so renaming any other one meant opening it first, loading a transcript nobody asked for and losing the place you were in. ⚠ **THE §6d FOCUS TRAP CAME BACK THE MOMENT THERE WERE TWO BOXES ON ONE SCREEN**: that guarded ref callback re-runs on every render, which is harmless for a lone field and, with a search box beside a rename box, yanks the cursor out of whichever one you are typing in — both focus from an effect keyed on what opened them (`[histOpen]`, `[rowRename?.id]`), still selecting the old name exactly once. ⚠ **AND A PRESS OUTSIDE COMMITS A HALF-TYPED NAME** instead of discarding it: closing the popover unmounts the box and an unmounted input never fires the `onBlur` that would have filed it, so the listener reaches the live commit through a ref (a `useCallback([])` would read the state as it was when the list opened). Escape clears the search before it closes the list; the delete still asks in the row, never a `confirm()`. Files: `client/src/animatic/agent/chat_sessions.js`, `client/src/components/EditorChat.jsx`, `client/src/styles/editor-chat.css`. New `tests/chat_store_check.mjs` §1c (12 checks) and `tests/editor_chat_render_check.py` §6f (16 checks), **every one proved red against the previous panel**; `chat_sessions_check`, `editor_chat_check`, `editor_chat_render_check`, `chat_store_check.mjs` and `npm run build` all pass. New **RULEBOOK E161** (PAKKA). ⚠ **NOT CLICKED IN A BROWSER (G2)** — the hover states, the sticky search box and the in-row rename have been built and pinned by source-reading tests, not seen on screen. Top of Next Steps.
+**Last updated:** 2026-09-07 — **THE CAPTION LOOK SHELF (PHASE 2) — TWENTY-TWO READY-MADE STYLES, YOUR OWN SAVED BESIDE THEM, ONE CLICK TO RESTYLE A WHOLE SUBTITLE TRACK, AND THE AUTO-CAPTION RUN NOW WRITES IN THE LOOK YOU PICKED.** Phase 1 gave the editor animation it never had; this is the other half of the same complaint — *"achhe achhe text/caption/subtitle preset chahiye hota hai"* — and it is what a person actually touches forty times a day. New **`client/src/animatic/text_styles.js`**: 22 looks on five shelves (Subtitles, Shorts & reels, Titles, Quiet, and your own), a **Look** group at the top of the caption inspector drawn by the same `PresetPicker` the animation shelves use, a **Save look** box, and a **Match all N** row that gives every caption on one timeline row the look the selected one is wearing. ⚠ **A STYLE IS A BAG OF ORDINARY CAPTION FIELDS AND NOTHING ELSE — WHICH IS WHY THE SERVER NEEDED ONE TUPLE OF CODE FOR ALL TWENTY-TWO.** The browser resolves a style to plain `AnimaticTextClip` fields and hands them over; `caption_clips(style=…)` in `captions.py` — which has taken a `style` dict since the day it was written and had **never once been given one** — stamps them onto every transcribed line. The shelf can grow to a hundred looks, or somebody can save their own, without a line changing on the server. Same bargain the keyframe presets make, one layer up. ⚠ **APPLYING A STYLE WRITES EVERY FIELD IN THE LIST, INCLUDING THE DEFAULTS**, or the last style's leftovers show through — switch from a 132px title to a plain subtitle and the subtitle is still 132px. ⚠ **AND A STYLE IS A LOOK: IT NEVER MOVES A CAPTION AND NEVER TOUCHES ITS ANIMATION.** Position, placement, zoom, angle, opacity and every keyframe are outside `STYLE_FIELDS` on purpose, because the thing this exists for is restyling forty subtitles at once and that has to leave every one of them exactly where it is. ⚠ **THE `style` FIELD IS WHITELISTED SERVER-SIDE, AND THAT IS A SECURITY BOUNDARY RATHER THAN TIDINESS**: it is `dict[str, Any]` on a request body for a PAID route, so without `captions.clean_style` it would be a way to write `text`, `start_ms`, `id` or `layer_id` onto **every clip a transcription produced** — a run that silently overwrites what it transcribed and bills for it. The filter lives in `caption_clips`, not at each route, because two doors write captions (the ✎ Captions pass and the voiceover's `add_captions`) and both now carry the field — a look that worked from one button and not the other is RULEBOOK E156's shape of bug. ⚠ **AND NO STYLE CAN BURN ▯▯▯ INTO THE MP4**: Anton has no Devanagari, so a style's font is never copied across — it goes through `bestFontForText` against **that caption's own words**, per clip, on both sides. "Match all" restyles a row one caption at a time for exactly this reason. ⚠ **ONE REAL BUG FOUND BY THE TESTS**: `subtitle` — the look whose whole job is to undo the other twenty-one — inherited `size: "medium"` from the SCHEMA's default while `caption_clips` writes `"small"`, so "put it back" quietly returned captions one size larger than it found them. Caught only by comparing the resolved style against a real `caption_clips` output. Files: **new** `client/src/animatic/text_styles.js`, `tests/caption_style_check.py`; plus `captions.py` (`STYLE_FIELDS`, `clean_style`), `server/schemas.py` (`style` on both speech requests), `server/animatics.py` (both caption-writing paths), `client/src/api.js` (a shared `captionsBody`, so estimate and run cannot drift), `client/src/components/AnimaticEditor.jsx` (`restyleLane`, `CaptionLookRow`, the style on all four call sites), `client/src/components/properties/TextProperties.jsx`, `client/src/components/properties/PresetPicker.jsx` (an optional ✕ on a saved entry), `client/src/styles/animatic-tools.css`. New **`tests/caption_style_check.py` — 30 checks**: every look through the real Pydantic model, the two `STYLE_FIELDS` lists compared element for element under `node`, a hostile style proved unable to reach the words or the timing, every look rendered and measured, and a Hindi fixture proving no style can produce empty boxes. **1479 checks green across 14 suites**, `npm run build` clean. New **RULEBOOK E168, E169, E170**. ⚠ **SAVED LOOKS ARE PER BROWSER (`localStorage`), AND THE SHELF SAYS SO ON SCREEN** — "Saved on this device". A caption look is closer to a brand asset than to a pane layout and really belongs on the account; that is a store, a route and a schema, and was not a change to make in the same visit as the feature. Written down rather than pretended away. ⚠ **NOT OPENED IN A BROWSER (G2)** — the Look shelf, the Save box, Match all and the two dialog dropdowns are pinned by tests that read the source and render real frames; nobody has clicked one. ⚠ **NOTHING IN THIS VISIT SPENDS ANYTHING** — no new dependency, no new asset, no new API, and no change to any model call. Top of Next Steps.
+
+**Previously:** 2026-09-07 — **THE ANIMATION PRESET SHELVES (PHASE 1) — 5 TEXT PRESETS → 46, 0 PICTURE MOVES → 21 — AND THREE BUGS FOUND ON THE WAY THAT WOULD HAVE MADE THE WHOLE SHELF LOOK BROKEN.** *"mere paas bahut kam effects, transition, text caption animation preset … jaisa abhi trend mai text motion preset use karte hai shorts and reel mai … production level jaise karo"*. Researched first, planned in eight phases, then **Phase 0 + Phase 1 built**: `text_presets.js` grows from 5 entries to **46** across seven shelves (Basic, Pop & bounce, Zoom, Slide & travel, Spin & tilt, Impact, Emphasis), a new **`motion_presets.js`** adds **21** camera moves on a picture clip (Push & pull, Pan, Ken Burns, Impact, Alive), and both are drawn by one new `PresetPicker.jsx` that reuses the shape picker's own CSS rules rather than a second look. ⚠ **NEITHER RENDERER LEARNED A SINGLE NEW CONCEPT, AND THAT IS THE ENTIRE DESIGN.** A preset is a KEYFRAME MACRO: it writes keys onto properties the scene model already animates and gets out of the way, so it exports correctly the day it is written, the timeline shows its diamonds, every key can be dragged afterwards, and undo treats applying one as one edit. New **`preset_util.js`** holds the shared maths and the rule. ⚠ **AND NO NEW EASING CURVES — OVERSHOOT IS EXTRA KEYS.** A bounce could have been a sixth entry in `EASINGS`; it is four keys on `ease-out` instead, because a new curve is two languages plus the parity fixture before one preset can ship. ⚠ **PHASE 0 WAS `rotation` ON A CAPTION**, the one thing here that needed real code on both sides: `ANIMATABLE.text`, `TEXT_DEFAULTS` and the signature in both twins, a field on `AnimaticTextClip`, `rotate()` folded into `captionStyle`'s single transform (an element has ONE transform and ONE origin — a second `style.transform` would have deleted the scale and, on a free caption, the centring translate all over again), and `_place_text_block` / `_rotate_about` in `animatic.py`, which draw the measured block onto its own RGBA layer and turn it about the SAME anchor `scale` grows about. ⚠ **THE `rotation == 0` PATH IS THE OLD CODE, UNTOUCHED** — every caption that exists takes it, so nothing that exists can change. Also newly exposed: **Zoom and Angle rows in `TextProperties`**, both keyframable; `scale` had been animatable since Phase 5 with no control anywhere to set it. ⚠ **THREE REAL BUGS, ALL FOUND BY BUILDING THIS AND NONE OF THEM REPORTED, BECAUSE ALL THREE ARE INVISIBLE UNTIL YOU LOOK.** **(1) The server was DELETING a caption's zoom** — `AnimaticTextClip` had no `scale` field, Pydantic ignores an unknown key, so the resting value was dropped on every save while the keys survived: `captionPush`, which the ✨ AI Editor puts on **every caption it writes**, snapped back to 100% the instant its last key passed (**RULEBOOK E164**). **(2) A caption that only zoomed was rendered as ONE STILL** — `scene_signature` is the render cache key and never carried `scale`, so every moment of that caption's life signed identically and `build_animatic` held one frame: the monitor moved, the MP4 did not. `rotation` would have arrived with the same hole and taken every Pop, Zoom, Punch and Spin preset down with it on day one (**E165**). **(3) A zoomed caption was the wrong SIZE at every resolution except 1080p** — `draw_texts` handed `_text_font` a size already in frame pixels and that parameter is quoted at 1080p, so the frame scaling was applied twice: a 120px title at 160% exported at 360p was drawn at **21px instead of 63**, shrinking as it was told to grow, with the monitor right throughout (**E166**). Every one of the three sat directly under the feature being built. Files: **new** `client/src/animatic/preset_util.js`, `client/src/animatic/motion_presets.js`, `client/src/components/properties/PresetPicker.jsx`, `tests/preset_check.py`; rewritten `client/src/animatic/text_presets.js`; plus `client/src/animatic/scene.js`, `animatic_render.py`, `animatic.py`, `server/schemas.py`, `client/src/components/AnimaticEditor.jsx`, `client/src/components/properties/TextProperties.jsx`, `client/src/components/properties/FrameProperties.jsx`, `client/src/styles/animatic-tools.css`. New **`tests/preset_check.py` — 27 checks** that push every preset through the real Pydantic models, the real easing list, the real render cache key and the real drawing code; `render_parity.py` gains a flow caption that pops and turns (`tx6`) and two signature checks; `captions_check.py` gains three zoom checks measured as a FRACTION OF THE FRAME at two frame sizes (a one-resolution test cannot catch a resolution bug); `animatic_motion_check.py` gains a real exported MP4 of a caption that only zooms and turns. **captions_check (199), preset_check (27), render_parity (100), animatic_motion_check (23) — 349 checks, 0 failures** — plus `capability_check`, `chat_layers_check`, `director_actions_check`, `interchange_check`, `keyframe_ops_check`, `shape_points_check`, `timeline_ripple_check`, `frame_save_fields_check`, `animatic_delete_check`, `animatic_images_check`, `audio_save_contract_check`, `deepgram_captions_check`, `editor_chat_render_check` and `npm run build`. New **RULEBOOK E164, E165, E166, E167**. ⚠ **NOT OPENED IN A BROWSER (G2)** — the two pickers, the Speed chips and the Zoom/Angle rows are built and pinned by tests that read the source and render real frames, but nobody has clicked one. ⚠ **AND ONE BEHAVIOUR CHANGED ON PURPOSE**: `scale` and `rotation` joined a text preset's `OWNED` tracks, so applying a preset by hand now REPLACES the AI's house `captionPush` instead of running beside it — one track cannot have two owners, and "Slow push" is in the Zoom shelf for anyone who wants it back. ⚠ **COST: the AI editor's capability payload grows by ~3.9 KB (~980 tokens) per chat call** now that all 46 presets are offered to it. Nothing else in this visit spends anything. Top of Next Steps.
+
+**Previously:** 2026-09-06 — **THE CHAT LIST GOT A SEARCH BOX, AND EVERY ROW GOT RENAME AND DELETE.** *"isme search box dalo … aur dekho ref image ko, kaise edit name mtlb rename ka aur delete ka aa raha hai"*, over a screenshot of this app's own session list. The 🕘 popover now opens with a sticky search box and each row carries **✎** and **✕** as hover chrome, with the open chat keeping them on. ⚠ **THE SEARCH MATCHES EVERY WORD IN ANY ORDER, NOT ONE SUBSTRING** — a chat is named from a whole sentence somebody typed, so the two words they later remember it by come from opposite ends of it: *"sound music"* finds nothing as a substring and is exactly what a person types. It is `matchSessions` in `chat_sessions.js`, beside `labelFor`, rather than an `includes` in the panel, and it searches the LABEL so the unnamed rows are findable as "New chat". ⚠ **AND RENAMING HAPPENS IN THE ROW** — the bar renames the chat that is OPEN, so renaming any other one meant opening it first, loading a transcript nobody asked for and losing the place you were in. ⚠ **THE §6d FOCUS TRAP CAME BACK THE MOMENT THERE WERE TWO BOXES ON ONE SCREEN**: that guarded ref callback re-runs on every render, which is harmless for a lone field and, with a search box beside a rename box, yanks the cursor out of whichever one you are typing in — both focus from an effect keyed on what opened them (`[histOpen]`, `[rowRename?.id]`), still selecting the old name exactly once. ⚠ **AND A PRESS OUTSIDE COMMITS A HALF-TYPED NAME** instead of discarding it: closing the popover unmounts the box and an unmounted input never fires the `onBlur` that would have filed it, so the listener reaches the live commit through a ref (a `useCallback([])` would read the state as it was when the list opened). Escape clears the search before it closes the list; the delete still asks in the row, never a `confirm()`. Files: `client/src/animatic/agent/chat_sessions.js`, `client/src/components/EditorChat.jsx`, `client/src/styles/editor-chat.css`. New `tests/chat_store_check.mjs` §1c (12 checks) and `tests/editor_chat_render_check.py` §6f (16 checks), **every one proved red against the previous panel**; `chat_sessions_check`, `editor_chat_check`, `editor_chat_render_check`, `chat_store_check.mjs` and `npm run build` all pass. New **RULEBOOK E161** (PAKKA). ⚠ **NOT CLICKED IN A BROWSER (G2)** — the hover states, the sticky search box and the in-row rename have been built and pinned by source-reading tests, not seen on screen. Top of Next Steps.
 
 **Previously:** 2026-09-06 — **THE VOICEOVER CAN LEAVE GOOGLE (Phase 3).** `VOICE_PROVIDER=sarvam` reads the dialogue on Sarvam's Bulbul v3 — eleven Indian languages, billed in rupees, and ⚠ **the only backend here that reads HINGLISH** (Hindi in Latin script) as one sentence instead of as bad English. `VOICE_PROVIDER=deepgram` reads it on Aura-2 (English only) against the SAME $200 of free credit the captions already use. Unset, nothing moved and Google still reads it. ⚠ **THE THING THAT WOULD HAVE RUINED A FILM WAS THE STAGE DIRECTION**: `prompt_for` sends Gemini *"Read this line as an elderly man:"* — which is the only way an age reaches that model — and the other two would have READ THAT SENTENCE OUT LOUD, in a paid run. `direction_for`, `prompt_for` and `estimate` are all provider-aware now; off Google the age arrives as CASTING and, on Sarvam, as PACE. ⚠ **SPEECH IS BYTES ON A CLOCK**, so both clients demand 24 kHz/16-bit/mono and REFUSE anything else — there is no resampler on this install, and a 22,050 Hz answer would play 9% slow *and* move every caption built from it; `tts._assert_house_format()` fails at import if the three modules disagree. ⚠ **AND A RUN THAT CANNOT WORK IS REFUSED BEFORE IT SPENDS**: Aura has no Hindi and Bulbul has no Spanish, so the free `tts.preflight()` runs when the 🎙 dialog OPENS (the sentence on screen, **See the price** disabled) and again before the job is queued — a voiceover is one call PER LINE, and finding out on line 1 of 40 is a half-finished paid run. A saved sheet survives the switch: "Kore" is translated through its persona into the new backend's cast, never dropped. Also fixed: the confirm dialog said *"Google bills the actual amount"* for every run, including Deepgram captions — it names the real biller now. Files: new `sarvam.py`, new `tests/tts_providers_check.py`, plus `deepgram.py` (a SPEAK half beside its LISTEN half), `tts.py`, `captions.py`, `server/animatics.py`, `server/schemas.py`, `client/src/components/AnimaticEditor.jsx`, `.env.example`. New **RULEBOOK D8**. ⚠ **AND THE FOUR CAVEATS IT SHIPPED WITH WERE CLOSED THE SAME DAY** (*"sab ko fix karo … production level"*): Sarvam's request shape now comes from the vendor's own **generated SDK** rather than from prose (`sarvamai` 0.1.32 posts `language_code`, and the 44 speaker names and 11 language codes come from the same file — when two docs disagree, read the generated client); the age casting is **`.env`-tunable** (`SARVAM_CAST=grandfather:anand,child:shruti@1.15`, validated against the real roster, a typo logged and ignored rather than fatal); **a promise a backend cannot keep is now PRINTED** — only Google has real child voices, so each persona carries a note and the sheet's own lines fold into one advisory, as a SOFT warning that never reads as an error; and **all seven Aura-2 languages are cast**, not just English, which matters because on that backend the voice NAME *is* the language — `/v1/speak` has no language parameter, so Spanish sent to `aura-2-thalia-en` is read with English phonetics and billed for. `tests/tts_providers_check.py` is now 12 sections / **153 checks**. ⚠ **STILL NOT LIVE-VERIFIED — no real Sarvam or Deepgram TTS call has been made**, and that is the only open item. ⚠ **Edge-TTS deliberately not built** — it is the Edge browser's private endpoint, not a Microsoft API.
 
@@ -3676,6 +3680,292 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 ---
 
 ## ✅ Work Log (newest first)
+
+### 2026-09-07 — THE CAPTION LOOK SHELF (Phase 2)
+
+Phase 1 gave the editor animation it did not have. This is the other half of the
+same complaint — *"achhe achhe text/caption/subtitle preset chahiye hota hai"* —
+and it is the half somebody touches forty times a day: **what the words look
+like**, applied to a whole subtitle track at once, and chosen BEFORE a paid
+transcription rather than fixed forty times afterwards.
+
+**The design, in one sentence: a style is a bag of ordinary caption fields.**
+The browser resolves a style to plain `AnimaticTextClip` fields; the clip wears
+them; the exporter draws them. Nothing is stored saying which style ran, neither
+renderer has heard of any of them, and — the part that matters — **the server has
+no vocabulary of styles at all.** `caption_clips(style=…)` in `captions.py` has
+taken a `style` dict since the day it was written and had **never once been given
+one**; it now is. The shelf can grow to a hundred looks, or somebody can save
+their own, without a line changing on the server.
+
+- **`client/src/animatic/text_styles.js`** (new) — `STYLE_FIELDS` (the twenty
+  fields a look owns, with the schema's own defaults), 22 built-in looks on five
+  shelves, `resolveTextStyle`, `applyTextStyle`, `styleFromClip`, and the
+  localStorage store behind "Saved on this device".
+- **The inspector** gains a **Look** group at the top, drawn by the same
+  `PresetPicker` the animation shelves use (which now takes an optional ✕ for a
+  saved entry), a **Save look** name box, and a **Match all N** row.
+- **Both speech dialogs** gain a `Look` select — the ✎ Captions pass and the
+  voiceover's *"add captions for the spoken lines too"* — so the transcription
+  arrives already styled.
+
+⚠ **APPLYING A STYLE WRITES EVERY FIELD IN THE LIST, INCLUDING THE DEFAULTS.** A
+style that only wrote what it cared about would leave the last one's leftovers
+underneath: switch from a 132px title to a plain subtitle and the subtitle is
+still 132px, because the new style never mentioned `size_px`. Same rule as
+`OWNED` in `text_presets.js`.
+
+⚠ **AND A STYLE IS A LOOK — IT NEVER MOVES A CAPTION AND NEVER TOUCHES ITS
+ANIMATION.** `position`, `place`, `x`, `y`, `scale`, `rotation`, `opacity` and
+`keyframes` are outside `STYLE_FIELDS` on purpose. The thing this exists for is
+restyling forty subtitles at once, and that has to change how they look and leave
+every one of them exactly where it is; a style that also moved things would fight
+the animation presets (which switch a clip to free placement deliberately) and
+would undo a hand-placed title the moment somebody tried a different colour.
+
+**`Match all N` is one `setTexts`, so it is one Ctrl+Z**, and it restyles the
+ROW rather than the project — a film usually has a Captions row and a text row of
+its own, and "every caption" would repaint a hand-set title somebody put on the
+other one an hour ago.
+
+**The two things that had to be got right on the server.**
+
+1. ⚠ **`style` IS A WHITELIST, AND THAT IS A SECURITY BOUNDARY.** It is
+   `dict[str, Any]` on a request body for a PAID route, so without a filter it is
+   a way to put `text`, `start_ms`, `duration_ms`, `id` or `layer_id` onto
+   **every clip a transcription produced** — not a styling bug, a run that
+   silently overwrites what it transcribed and bills for it.
+   `captions.clean_style` keeps the twenty look fields and drops the rest, and it
+   is called **inside `caption_clips`**, not at each route: two doors write
+   captions and a whitelist enforced at each door is one a third caller will
+   eventually be added without. Unknown keys are dropped rather than refused, so
+   a browser one version ahead styles what it can instead of 422-ing halfway
+   through a paid pass.
+2. ⚠ **NO STYLE MAY BURN ▯▯▯ INTO THE MP4.** Anton has no Devanagari, and a
+   shelf of display faces is twenty-two new ways to reach E145/E146's exact
+   failure. A style's font is never copied across — it goes through
+   `bestFontForText` against **that caption's own words**, per clip, on both
+   sides. "Match all" resolves per caption for this reason (a track holding one
+   English line among forty Hindi ones must not get the English line's answer),
+   and the dialog deliberately does NOT resolve a font: the server has the
+   transcript and the editor does not.
+
+**The bug the tests found.** `subtitle` — the look whose entire job is to undo
+the other twenty-one — inherited `size: "medium"` from the SCHEMA's default,
+while `caption_clips` writes `"small"`, because a subtitle under a whole film is
+not the size of a title dropped on one shot. So "put it back" quietly returned
+captions **one size larger than it found them**. Nothing but comparing the
+resolved style against a real `caption_clips` output could have caught it, and
+that comparison is now a check.
+
+**Tests.** New **`tests/caption_style_check.py` — 30 checks**, one section per
+way this design can fail: every look through the real `AnimaticTextClip`; every
+style field proved to be a real caption field and the forbidden ones proved
+absent both in the list and in practice; a loud caption proved undressed by a
+quiet style **and** proved to keep its place, angle, zoom and keyframes; the two
+`STYLE_FIELDS` lists compared element for element under `node`; a hostile style
+proved unable to reach the words, the timing, the id or the lane; a Hindi fixture
+proving no style can produce empty boxes; and every look rendered and measured,
+with the type height taken with the backdrop, outline and case stripped (a
+subtitle's scrim covers more pixels than a title's letters, and capitals have no
+descenders — measuring either naively compares furniture with type).
+
+**1479 checks green across 14 suites** — `caption_style_check`, `preset_check`,
+`captions_check`, `render_parity`, `animatic_motion_check`,
+`deepgram_captions_check`, `capability_check`, `interchange_check`,
+`editor_chat_render_check`, `chat_layers_check`, `director_actions_check`,
+`admin_fields_check`, `asset_fields_check`, `frame_save_fields_check` — and
+`npm run build` clean. New **RULEBOOK E168, E169, E170**.
+
+⚠ **SAVED LOOKS ARE PER BROWSER, AND THE SHELF SAYS SO ON SCREEN.**
+`localStorage`, like `media_view.js` and `workspace.js` — and unlike those two,
+that is a LIMITATION rather than the right answer: a caption look is closer to a
+brand asset than to a pane layout and belongs on the account. Moving it there is
+a store, a route and a schema, which is not a change to make in the same visit as
+the feature. The label reads "Saved on this device" so nobody is surprised by it.
+
+⚠ **NOT OPENED IN A BROWSER (G2).** The Look shelf, the Save box, Match all, the
+✕ on a saved look and the two dialog dropdowns are pinned by tests that read the
+source and render real frames; nobody has clicked one.
+
+⚠ **NOTHING HERE SPENDS ANYTHING** — no new dependency, no new asset, no new API,
+and no change to any model call.
+
+**Still open on this thread:** the overlay asset pack (Phase 3 — light leaks,
+film burn, dust as video clips with blend modes, which this timeline already
+supports and is the cheapest big win left), word-by-word karaoke captions (⚠
+Deepgram already returns per-word timings and `deepgram.py` throws them away at
+`_alternative`), the new point-wise effects, matte transitions, a multi-pass
+blur/glow engine, and full timeline templates.
+
+### 2026-09-07 — THE ANIMATION PRESET SHELVES (Phase 0 + Phase 1), AND THREE BUGS UNDER THEM
+
+Asked for after a research pass: *"mere paas bahut kam effects, transition, text
+caption animation preset, image preset/motion … jaisa abhi trend mai text motion
+preset use karte hai shorts and reel mai … production level jaise karo aur har
+chiz ka dhyan rakhna, kahi pe nuksan nhi hai"*. The audit that opened it found
+**11 effects (all colour), 13 transitions, 5 text presets, 0 picture-motion
+presets and no templates** — a competent colour-correction editor with none of
+the things a reel is actually made of. A written plan split the work into eight
+phases by COST, and this visit built Phase 0 and Phase 1: the two categories that
+need **nothing from either renderer**.
+
+**The design, and why forty-six presets cost what six did.** A preset is a
+KEYFRAME MACRO and nothing else — it writes keys onto properties the scene model
+**already** animates and then gets out of the way. Nothing is stored saying which
+preset ran, neither renderer has heard of any of them, and there is no second
+evaluator that knows what "bounce" means. So a preset exports correctly the day
+it is written, the timeline shows its diamonds, every key it wrote can be moved
+or deleted afterwards, and undo treats applying one as a single document edit.
+The pattern was already here — the original five text presets worked this way —
+and this visit generalised it into `preset_util.js` and built on top of it:
+
+- **`client/src/animatic/preset_util.js`** (new) — the shared maths and the rules:
+  `fadeTrack`, `arriveTrack`, `settleTrack` (overshoot), `wobbleTrack` (shakes,
+  pulses, drift, with decay), `mergeTracks`, and `applyPreset`, which clamps
+  every key against the destination model's real bounds and folds any unknown
+  ease to `linear` so the document never carries one.
+  ⚠ **`TEXT_BOUNDS` and `FRAME_BOUNDS` are two tables**: `AnimaticFrame.scale`
+  stops at 10 where `AnimaticTextClip.scale` goes to 16, and clamping a picture
+  with the caption's table would let a preset applied to an already-huge still
+  reach 12 and **fail the save**.
+- **`text_presets.js`** — 5 → **46**, filed on seven shelves. The five original
+  ids (`none`, `fade`, `rise`, `drop`, `slide`) are unchanged and still first,
+  because the AI editor names a preset **by id** in its plans and a saved plan
+  must still run. New ones are appended.
+  ⚠ **Pop, Zoom, Spin and Emphasis animate only `scale` / `rotation` /
+  `opacity`, which all work in FLOW placement** — so they can be dropped onto a
+  whole run of generated subtitles without moving one of them off its zone. That
+  is the difference between a preset library for TITLES and one that can style a
+  subtitle track, and it is why those shelves are the big ones.
+- **`motion_presets.js`** (new) — **21** camera moves on a picture clip: pushes,
+  four pans, four Ken Burns moves, punch-in/out, two shakes, a flash, and three
+  "alive" moves. ⚠ Every travelling move is **held oversize** and may only travel
+  inside three quarters of the margin that overscan buys — the same three
+  constants `motionKeys` in `agent/actions.js` already uses, so the AI editor and
+  the button in the pane cannot disagree about what "push in" means.
+- **`PresetPicker.jsx`** (new) — a scrolling column of captioned shelves, sharing
+  `.an-shape-picker`'s own CSS declarations rather than a second look. Two
+  pickers of the same shape in one Properties pane that looked different would be
+  two things to learn where there is one.
+- **`TextProperties`** gains the shelf, a **Speed** chip row (Fast / Normal /
+  Slow — pane state, never stored: it is the length of the beats the NEXT preset
+  writes), and **Zoom** and **Angle** rows, both keyframable.
+  **`FrameProperties`** gains a **Camera move** group above its Motion rows.
+
+⚠ **NO NEW EASING CURVES, ON PURPOSE.** A bounce could have been a sixth entry in
+`EASINGS`; it is four keys on `ease-out` instead. A new curve is two languages
+plus the parity fixture before a single preset can ship, and the keys are things
+a person can see on the timeline and drag.
+
+**Phase 0 — `rotation` on a caption.** The one thing in this visit that needed
+real code on both sides. `ANIMATABLE.text` and `TEXT_DEFAULTS` in both twins, a
+field on `AnimaticTextClip`, and two renderers:
+
+- the browser folds `rotate()` into `captionStyle`'s **single** transform.
+  ⚠ An element has ONE `transform` and ONE `transform-origin`: a second
+  `style.transform` for the rotation would have deleted the scale and, on a free
+  caption, the centring translate all over again — the exact bug the ⚠ note above
+  that block was already written about.
+- `animatic.py` gains **`_place_text_block`** and **`_rotate_about`**. Pillow
+  cannot draw rotated text, so the measured block goes onto its own RGBA layer
+  and the layer is turned — the technique `draw_shapes` has always used, applied
+  to a caption. ⚠ It turns about the **same anchor `scale` grows about** (centre
+  for a free caption, the zone's own edge for a stacked one), because the browser
+  has only one origin to give both. ⚠ And `rotate(..., center=)` is not used:
+  Pillow's docs say `expand` "assumes rotation around the center", so the turn is
+  done about the centre and then TRANSLATED by `(I − R)(a − c)`, which is exact.
+  ⚠ The layer's origin is a whole pixel and the **fraction is carried inside it**
+  — drawing at a flat pad and pasting at `round(...)` threw away up to half a
+  pixel, which on the hard edge of a box backdrop is a fully wrong pixel.
+
+⚠ **THE `rotation == 0` PATH IS THE OLD CODE, CALLED WITH THE OLD ARGUMENTS.**
+Every caption in every animatic that exists carries 0, so every one of them still
+goes straight to `_draw_text_block` on the shared canvas draw. Nothing that exists
+today can change because of any of this.
+
+**The three bugs.** None was reported; all three sat directly under the feature
+being built, and all three are invisible until you go looking:
+
+1. **The server was deleting a caption's zoom.** `scale` went into
+   `ANIMATABLE["text"]` in Phase 5 and never into `AnimaticTextClip`. Pydantic
+   ignores an unknown key, so every save dropped the RESTING value while the keys
+   survived — and `scene_at` reads the resting value everywhere the keys do not
+   reach. `captionPush`, which the ✨ AI Editor puts on **every caption it
+   writes**, sets `rest.scale` to 1.04; the save put it back to 1.0 and the
+   caption snapped to its original size the instant the last key passed.
+   **RULEBOOK E164.**
+2. **A caption that only zoomed was rendered as one still.** `scene_signature` is
+   the render cache key — `build_animatic` renders one still per distinct
+   signature — and the caption part of it was `t{id}:{opacity}` plus x/y in free
+   placement. A caption animating only `scale` signed the same string at every
+   moment of its life, so the exporter could not tell two moments apart: the
+   monitor moved, the MP4 held one frame. `rotation` would have arrived with the
+   identical hole and taken every Pop, Zoom, Punch, Spin and Bounce preset down
+   with it on day one. ⚠ The addition is **conditional** — `:s` / `:r` appear
+   only when the value is off its resting one — so a caption that has never been
+   zoomed or turned signs byte-for-byte what it always signed and no existing
+   project re-renders. **RULEBOOK E165.**
+3. **A zoomed caption was the wrong size at every resolution except 1080p.**
+   `_text_font`'s `size_px` is quoted at 1080p and multiplies by `height / 1080`
+   itself; `draw_texts` handed it `_text_px(height, …) * scale`, which is already
+   this frame's pixels. So the frame scaling was applied twice and a 120px title
+   zoomed to 160% exported at 360p was drawn at **21px instead of 63** —
+   shrinking as it was told to grow. At 1080p the second factor is exactly 1,
+   which is the whole reason it survived: every check anyone had written rendered
+   at one resolution. The monitor was right throughout. **RULEBOOK E166.**
+
+**Tests.** New **`tests/preset_check.py` — 27 checks**, built around the one risk
+this design concentrates: *a preset can write keys that are perfectly good
+JavaScript and completely unrenderable.* Every preset, applied to three awkward
+fixtures (a plain caption, one already at 300% and 8°, one 300ms long), is pushed
+through **the real Pydantic models** (resting values AND every key value), the
+real `EASINGS`, the real `ANIMATABLE` lists, the real `scene_signature`, and the
+real drawing code. It also checks that `moves` matches what a preset actually
+writes **in both directions**, that no pan travels further than its overscan
+allows, and that applying a preset to its own result changes nothing (the moves
+that deliberately end elsewhere are named, not excused).
+`render_parity.py` gains `tx6`, a flow caption that pops and turns and does
+nothing else, plus two signature checks. `captions_check.py` gains three zoom
+checks measured **as a fraction of the frame at two frame sizes** — a
+one-resolution test cannot catch a resolution bug. `animatic_motion_check.py`
+gains a real exported MP4 of a caption that only zooms and turns, measured by the
+area of ink it covers.
+
+**captions_check (199) · preset_check (27) · render_parity (100) ·
+animatic_motion_check (23) = 349 checks, 0 failures.** Also green:
+`capability_check`, `chat_layers_check`, `director_actions_check`,
+`interchange_check`, `keyframe_ops_check`, `shape_points_check`,
+`timeline_ripple_check`, `frame_save_fields_check`, `animatic_delete_check`,
+`animatic_images_check`, `audio_save_contract_check`, `deepgram_captions_check`,
+`editor_chat_render_check`, and `npm run build`.
+
+⚠ **ONE BEHAVIOUR CHANGED ON PURPOSE.** `scale` and `rotation` joined a text
+preset's `OWNED` tracks, so applying a preset by hand now REPLACES the AI's house
+`captionPush` rather than running beside it. One track cannot have two owners and
+the preset is the more specific instruction, because somebody asked for it by
+name; **"Slow push"** is in the Zoom shelf for anyone who wants the house move
+back.
+
+⚠ **COST.** The only spend this visit adds is the ✨ AI Editor's capability
+payload, which grows by **~3.9 KB (~980 tokens) per chat call** now that all 46
+presets are offered to the model — the presets themselves are pure client-side
+keyframe maths and cost nothing to use. No new dependency, no new asset, no new
+API.
+
+⚠ **NOT OPENED IN A BROWSER (G2).** The two pickers, the Speed chips and the
+Zoom/Angle rows are built and pinned by tests that read the source and render
+real frames; nobody has clicked one. `tests/e2e_animatic.py` needs a running
+server and was not run.
+
+**Still not built (Phases 2–8 of the plan):** caption style presets and the style
+gallery, the overlay asset pack (light leaks, film burn, dust — video clips with
+blend modes, which this timeline already supports and is the cheapest big win
+left), word-by-word karaoke captions (⚠ Deepgram already returns per-word
+timings and `deepgram.py` **throws them away** at `_alternative`, keeping only
+the sentence — half that feature is a matter of not discarding data), the new
+point-wise effects (vignette, grain, duotone, RGB split, VHS), matte transitions,
+a multi-pass blur/glow engine, and templates.
 
 ### 2026-09-06 — THE VOICEOVER CAN LEAVE GOOGLE (Phase 3: Sarvam Bulbul + Deepgram Aura-2)
 
@@ -29338,6 +29628,130 @@ still occasionally be safety-filtered.
 ---
 
 ## 🎯 Current State / Next Steps
+
+### ✅ A CUT-OFF MODEL ANSWER NO LONGER THROWS AWAY THE WORK THAT ARRIVED (2026-09-06)
+
+Reported from a red banner over an 8-shot promo, asked for text with motion:
+
+    shots 1–8: The model returned unusable JSON for the editor chat batch call
+    — it would not parse: Unterminated string starting at: line 6 column 16
+    (char 87).
+
+**One caption in the middle of the answer never closed its quote.** Every
+COMPLETE step written before it was thrown away with it — then the batch, then
+the whole job — and a Python decoder message landed where the edit belonged.
+`llm_json` already retried three times and already bought one paid repair call;
+neither helps, because **a truncated answer truncates again on the retry**.
+
+**New `llm_json.salvage_json`** — it **cuts, it never mends**. It walks to the
+last point at which the answer was still a complete value, drops everything
+after it, and closes the containers left open. What comes back is a strict
+PREFIX of what the model really wrote: six steps out of eight, never a seventh
+nobody wrote.
+
+Three things that were not obvious:
+
+- **⚠ Only LIST ITEMS are rescued.** A comma — or a string END — inside an
+  OBJECT separates two fields of the same value, so cutting there keeps a
+  half-built one. The live answer would have salvaged
+  `{"verb": "add_text", "args": {"shot": 3}}`: a caption step with no caption,
+  which every validator downstream then reports as a mistake the model never
+  made. Between two list items there is no halfway house.
+- **⚠ An empty salvage has to stay a failure.** `{"steps": []}` or
+  `{"kind": "plan"}` would sail through everything downstream and report "0
+  edits" over a pass that really did break — the same lie the notes-only guard
+  exists to stop. The result must carry at least one value with something in it,
+  so a turn cut inside its own `reply` is left as the failure it is.
+- **⚠ It is the last resort, not the first.** Normal parse, then the model's own
+  single repair call (which can return all eight steps), and only then this
+  (which can only ever return the six that arrived).
+- **⚠ And it tries only the last `SALVAGE_TRIES` (200) cut points.** Each try is
+  a full `json.loads` of the whole prefix, so walking every cut in a 50KB answer
+  is a quadratic amount of parsing on the path that is already the slow, failing
+  one. An answer stops where it stops — the cut that works is within a handful
+  of the end.
+
+Measured: a 60-step answer truncated in its last step now yields **59 steps in
+0.001s**, where it used to yield nothing at all.
+
+**And the unusable answer now goes in the log, clipped** (first 400 / last 200
+chars). "It would not parse" with no sight of what came back cannot tell an
+output cap from a safety trim from a model writing prose, and those have three
+different fixes — so the next occurrence is diagnosable instead of guessed at.
+
+Files: `llm_json.py` (`salvage_json`, `_attempts`).
+`tests/director_contract_check.py` grew 12 checks beside the `extract_json`
+block. Whole Python suite passes.
+
+**New RULEBOOK E163** (PAKKA). ⚠ **Server-side only — restart the server.**
+⚠ **The CAUSE of the truncation is still unknown** and this does not fix it — it
+makes it survivable. The new payload log is what will name it: if the answer hit
+the output cap, `DIRECTOR_MAX_OUTPUT_TOKENS` (12288 by default, unset in `.env`)
+is the dial; if it comes back short with thinking tokens burnt, that is a
+`DIRECTOR_THINKING_TOKENS` question. Re-run the same request and read the log.
+
+
+### ✅ THE CHAT SOLD A VOICEOVER TO SOMEBODY WHO ASKED FOR TEXT (2026-09-06)
+
+Reported with two screenshots. *"add caption in my story and text on screen"* on
+the 14-shot reel came back as *"I'll add beautiful on-screen text titles across
+key moments of your story"* — **and not one step** — with a **Voiceover** button
+under it. Pressing it hit a Vertex `403 PERMISSION_DENIED`, which is a separate
+credentials problem; the bug is that the button was there at all. *"user caption
+manga hai to voiceover kyun karne ke liye bol raha hai … jo user bola hai ohi
+karna hai."*
+
+**Why.** "Captions" is a PRICED DOOR in this app (subtitles read off audio that
+is already on the timeline). To the person typing, "caption" means **words on the
+screen** — which is `add_text`, free, and sitting right there in the vocabulary.
+The model resolved the collision toward the product's meaning, found that the
+captions door needs audio this film does not have, and offered the neighbouring
+paid door instead. Then it wrote a reply promising the text work and shipped none
+of it — the same shape as the 2026-09-05 notes-only turn.
+
+**What changed.**
+
+- **Prompt** (`prompts.yaml`, `editor_chat.system`): *an offer is never instead of
+  the work*; **"caption" is two words and the timeline settles which** — the board
+  already prints "N audio track(s)", so no audio means `add_text`, free, now; and
+  **never offer `voiceover` to somebody who asked for words**, because it adds a
+  VOICE they did not ask for.
+- **`asked_for_it`** — a **required boolean on every `passes` offer**
+  (`reply_schema`). `_pin_kind`'s trick applied to judgement: a model cannot leave
+  it blank. A FALSE door on a turn that proposes nothing is dropped.
+- **⚠ And the model's own answer is not the only test**, because a model that
+  MISREAD the request reports its misreading honestly — this one would have said
+  `true`. So there is a fact under the judgement: an offer-only turn loses the
+  `voiceover` door unless the person asked for a voice **in their own words,
+  anywhere in the conversation** (`VOICE_WORDS`, English and roman Hindi).
+- **`captions` is dropped when the board says zero audio tracks** — that door
+  reads audio that is already there. `-1` means "the browser did not say", and
+  then nothing is enforced.
+- **An offer beside a real plan is untouched**, and every dropped door is **said**
+  in `dropped` rather than swallowed.
+- The wire shape did not move — `asked_for_it` decides on the server and is not
+  passed on, so `normalisePasses` in `chat_turn.js` stays the mirror it was.
+
+Files: `prompts.yaml`, `editor_chat_agent.py` (`reply_schema`, `_coerce_passes`,
+`_read_turn`, `chat`, new `VOICE_WORDS` / `_asked_for_a_voice`).
+`tests/editor_chat_doors_check.py` is 71 checks now; two older assertions that
+encoded the previous behaviour were updated. Whole Python + node chat/director
+suite passes.
+
+**New RULEBOOK E162** (PAKKA). ⚠ **Server-side only — restart the server; no
+client rebuild.** ⚠ **Not re-run live (G2)**: the floors are pinned by tests, but
+whether the model now WRITES the `add_text` steps is a prompt change and has not
+been seen on a real turn.
+
+⚠ **SEPARATE, STILL OPEN — the voiceover 403.** `VOICE_PROVIDER` is not set in
+`.env`, so the voiceover goes to Google, and `GOOGLE_CLOUD_PROJECT` answers
+`403 PERMISSION_DENIED / CONSUMER_INVALID` — that project cannot use the API
+(billing or the API not enabled). `DEEPGRAM_API_KEY` is already set, so
+`VOICE_PROVIDER=deepgram` would work today — but this film's dialogue is
+Hinglish, and per Phase 3 **Sarvam Bulbul is the only provider that reads
+Hinglish properly**. Decision needed: fix the Google project, or add
+`SARVAM_API_KEY` and set `VOICE_PROVIDER=sarvam`.
+
 
 ### ✅ THE EFFECTS THAT VANISHED, A FOURTH TIME — AND THE HOLE WAS IN THEIR OWN FIX (2026-09-06)
 

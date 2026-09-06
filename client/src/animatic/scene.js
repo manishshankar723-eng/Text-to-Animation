@@ -94,7 +94,16 @@ export const ANIMATABLE = {
   // transform, origin pinned to the caption's own anchor) and `draw_texts` in
   // `animatic.py` (a font built at the scaled size, over lines wrapped at the
   // resting one). Same rule as every other number in `captionStyle`'s ⚠ note.
-  text: ["opacity", "x", "y", "scale"],
+  // ⚠ `rotation` IS LAST AND WAS APPENDED IN PHASE 1 OF THE PRESET WORK, for the
+  // same reason `scale` was: a title that swings, tilts or flips into place is
+  // keys on an ordinary property, not a second animation system. It is DEGREES
+  // CLOCKWISE, like a shape's and like CSS `rotate()`, and it turns the caption
+  // about the SAME anchor `scale` grows about — they share one CSS
+  // `transform-origin` and there is only one of those, so they cannot be given
+  // different ones. `captionStyle` and `draw_texts` are the two places that
+  // honour it and they have to agree; `tests/render_parity.py` and
+  // `tests/preset_check.py` are what say whether they do.
+  text: ["opacity", "x", "y", "scale", "rotation"],
 };
 
 // The value a property falls back to when the clip doesn't carry it. A frame's
@@ -126,7 +135,12 @@ export const FRAME_DEFAULTS = { scale: 1, x: 0.5, y: 0.5, opacity: 1 };
 // keys resolve around, and what `sceneAt` falls back to for a caption that has
 // never been zoomed. Mirrors `TEXT_DEFAULTS` in `animatic_render.py`, where
 // leaving it out is a KeyError rather than a quiet 1.
-export const TEXT_DEFAULTS = { x: 0.5, y: 0.85, opacity: 1, scale: 1 };
+// ⚠ AND `rotation` IS 0 FOR EVERY CAPTION EVER WRITTEN, for exactly the same
+// reason: `sceneAt` resolves one value per entry in `ANIMATABLE.text` and reads
+// its resting value out of THIS table by name, so a property added there without
+// a row here resolves to `undefined` in the browser and raises a KeyError in
+// Python — the two halves failing differently, which is the worst of both.
+export const TEXT_DEFAULTS = { x: 0.5, y: 0.85, opacity: 1, scale: 1, rotation: 0 };
 
 /**
  * HOW a caption is positioned — and the reason `x`/`y` could be added without
@@ -2018,8 +2032,26 @@ export function sceneSignature(scene) {
   // Appended only in FREE placement, where x/y are the values actually drawn.
   // In flow placement they are resolved but unused, so a project of ordinary
   // stacked subtitles signs byte-for-byte what it signed before this existed.
+  //
+  // ⚠ AND SO MUST A CAPTION THAT ZOOMS OR TURNS — WHICH IT DID NOT, AND THAT WAS
+  // A BUG WITH NOTHING ON SCREEN TO SHOW FOR IT. `scale` became animatable on a
+  // caption in Phase 5 and was never added here, so a title that only pushes in
+  // (which is precisely what `captionPush` in `agent/actions.js` writes onto
+  // every caption the AI editor lays down) resolved to the same clip at the same
+  // opacity at every moment of its life, signed one key, and `build_animatic`
+  // rendered ONE still and reused it for the whole clip. The monitor pushed in;
+  // the MP4 sat dead still. `rotation` would have arrived with the same hole,
+  // and every zoom, pop, bounce, tilt and swing preset in `text_presets.js`
+  // would have shipped broken in the export on day one.
+  //
+  // ⚠ APPENDED ONLY WHEN THEY ARE OFF THEIR RESTING VALUE, the same trick x/y
+  // use above and for the same reason: a caption that has never been zoomed or
+  // turned — which is every caption in every animatic saved before this — signs
+  // byte-for-byte what it signed before, so no existing project re-renders.
   for (const c of scene.texts) {
-    const extra = c.place === "free" ? `:${n(c.x)}:${n(c.y)}` : "";
+    let extra = c.place === "free" ? `:${n(c.x)}:${n(c.y)}` : "";
+    if (Math.abs((c.scale ?? 1) - 1) > 1e-9) extra += `:s${n(c.scale)}`;
+    if (Math.abs(c.rotation ?? 0) > 1e-9) extra += `:r${n(c.rotation)}`;
     parts.push(`t${c.id}:${n(c.opacity)}${extra}`);
   }
   // ⚠ WHICH ORDER THE ROWS ARE STACKED IN MUST BE IN THE KEY, for the fifth time

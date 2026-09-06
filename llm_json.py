@@ -336,6 +336,9 @@ MAX_REPAIR_CHARS = 8000
 # token before Python does expensive integer conversion.
 MAX_JSON_INTEGER_DIGITS = 1024
 
+# How many cut points `salvage_json` will try before giving up. See there.
+SALVAGE_TRIES = 200
+
 
 # ---------------------------------------------------------------------------
 # THE CLOCK
@@ -846,6 +849,105 @@ def _safe_json_int(raw: str) -> int:
             % (digits, MAX_JSON_INTEGER_DIGITS)
         )
     return int(raw)
+
+
+def salvage_json(text: str) -> dict | None:
+    """The biggest VALID object inside a cut-off answer, or `None`. Pure.
+
+    ⚠ **AN ANSWER THAT STOPPED HALFWAY IS NOT AN ANSWER OF NOTHING, AND THAT IS
+    WHAT IT WAS BEING TREATED AS.** Live on 2026-09-06, in a red banner over an
+    eight-shot promo: *"shots 1–8: The model returned unusable JSON for the editor
+    chat batch call — it would not parse: Unterminated string starting at: line 6
+    column 16 (char 87)."* One string in the middle of the answer never closed,
+    and **every complete step before it was thrown away with it** — then the
+    batch, then the job, and the person got a Python exception where their edit
+    should have been.
+
+    ⚠ **IT CUTS, IT NEVER MENDS.** This does not guess at what the model meant
+    to write: it finds the last point where the answer was still a complete
+    value, throws away everything after it, and closes the containers that were
+    left open. What comes back is a strict PREFIX of what the model really said
+    — six steps out of eight, never a seventh that nobody wrote. Anything that
+    would need inventing (a key with no value, a half-typed caption) is dropped
+    by trying the next cut back.
+
+    ⚠ **AND IT IS THE LAST RESORT, NOT THE FIRST.** `_attempts` still parses
+    normally, still asks the model to mend its own answer once, and only then
+    comes here — a repair call can return all eight steps, and this can only
+    ever return the six that arrived. See `_attempts`.
+
+    ⚠ **AN EMPTY SALVAGE IS A FAILURE, NOT A SUCCESS.** `{"steps": []}` would
+    sail through every check downstream and report "0 edits" over a pass that
+    really did break — which is the lie the notes-only guard in
+    `editor_chat_agent` exists to stop. So the result must carry at least one
+    value with something in it.
+    """
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+    # Every index at which the answer was still, so far, a complete value — with
+    # the containers that were open at that moment, so they can be closed again.
+    cuts: list[tuple[int, tuple[str, ...]]] = []
+    for i, ch in enumerate(text or ""):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+                # ⚠ **A STRING IS A CUT ONLY WHERE IT IS A LIST ITEM.** Inside an
+                # object a string is either a KEY (cutting there leaves a key
+                # with no value — not JSON at all) or ONE FIELD of a value that
+                # is still being written, and keeping that gives back a step the
+                # model never finished: the live answer would have salvaged
+                # `{"verb": "add_text"}` with no shot and no words on it. What is
+                # worth rescuing from a cut-off answer is the LIST ITEMS that
+                # completed — the steps, the cues, the tasks — and for a scalar
+                # field the honest answer is that it did not arrive.
+                if stack and stack[-1] == "]":
+                    cuts.append((i + 1, tuple(stack)))
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch in "{[":
+            stack.append("}" if ch == "{" else "]")
+        elif ch in "}]":
+            if not stack:
+                break
+            stack.pop()
+            cuts.append((i + 1, tuple(stack)))
+        elif ch == "," and stack and stack[-1] == "]":
+            # ⚠ BEFORE the comma, never after: a trailing comma is not JSON, and
+            # what follows it is the element that got cut in half.
+            #
+            # ⚠ **AND ONLY BETWEEN LIST ITEMS — NEVER BETWEEN AN OBJECT'S OWN
+            # FIELDS.** A comma inside an object separates two fields of the SAME
+            # value, so cutting there keeps a HALF-BUILT one: the live answer cut
+            # inside `"text"` would have handed back `{"verb": "add_text", "args":
+            # {"shot": 3}}` — a caption step with no caption in it, which every
+            # validator downstream then reports as a mistake the model did not
+            # actually make. Between two list items there is no such halfway
+            # house: the item before the comma is whole.
+            cuts.append((i, tuple(stack)))
+    # ⚠ **THE LAST FEW CUTS, NOT ALL OF THEM.** Each try is a full `json.loads`
+    # of the whole prefix, so walking every cut in a 50KB answer is a quadratic
+    # amount of parsing on the one path that is already the slow, failing one.
+    # An answer stops where it stops: the cut that works is within a handful of
+    # the end, and a bound here cannot cost anything a real truncation needed.
+    for cut, still_open in reversed(cuts[-SALVAGE_TRIES:]):
+        head = (text[:cut]).rstrip().rstrip(",")
+        try:
+            parsed = json.loads(
+                head + "".join(reversed(still_open)), parse_int=_safe_json_int
+            )
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        if any(value not in (None, "", [], {}) for value in parsed.values()):
+            return parsed
+    return None
 
 
 def _read_json(payload: str) -> tuple[dict | None, str]:
@@ -1363,6 +1465,7 @@ def _attempts(adapter, request, sent, last_reason, repaired, budget, budget_env)
 
             parsed, why = _read_json(payload)
 
+            mended = ""
             if parsed is None and not repaired:
                 repaired = True
                 logger.warning(
@@ -1385,9 +1488,45 @@ def _attempts(adapter, request, sent, last_reason, repaired, budget, budget_env)
                     logger.info("[llm_json] The repair worked; the %s call stands.", request.purpose)
 
             if parsed is None:
+                # ⚠ **THE FLOOR: KEEP WHAT DID ARRIVE.** An answer that stopped
+                # halfway used to be worth exactly nothing — see `salvage_json`
+                # for the live banner that cost eight shots of work. Tried on the
+                # MENDED answer first (it is the model's own second attempt and
+                # usually the longer one) and then on the original.
+                for candidate in (mended, payload):
+                    if not (candidate or "").strip():
+                        continue
+                    rescued = salvage_json(extract_json(candidate))
+                    if rescued is not None:
+                        logger.warning(
+                            "[llm_json] The %s answer was cut off (%s). Kept the "
+                            "part that arrived and dropped the rest — the caller "
+                            "will report what is missing.",
+                            request.purpose, why,
+                        )
+                        parsed = rescued
+                        break
+            if parsed is None:
+                # ⚠ **THE ANSWER ITSELF GOES IN THE LOG, ONCE, CLIPPED.** "It
+                # would not parse" with no sight of what came back is a bug
+                # report nobody can act on — an output cap, a safety trim and a
+                # model writing prose all read identically from the message
+                # alone, and they have three different fixes.
+                logger.warning(
+                    "[llm_json] the unusable %s answer began: %r … and ended: %r",
+                    request.purpose, (payload or "")[:400], (payload or "")[-200:],
+                )
+                # ⚠ **THE PERSON READING THIS IS NOT A PROGRAMMER.** The live
+                # banner said *"it would not parse: Unterminated string starting
+                # at: line 6 column 16 (char 87)"* — a Python decoder message,
+                # in a chat panel, over an eight-shot promo. The decoder's own
+                # words still travel (they are how the next one gets diagnosed,
+                # and `director_timeout_check` reads them), but they go LAST and
+                # in brackets, behind the one sentence they can act on.
                 last_reason = (
                     f"The model returned unusable JSON for the {request.purpose} "
-                    f"call — {why}."
+                    "call, and nothing complete could be kept from it. Ask for one "
+                    f"thing at a time, or name fewer shots. ({why})"
                 )
                 logger.warning("[llm_json] %s Retrying…", last_reason)
                 raise _Retry(last_reason)

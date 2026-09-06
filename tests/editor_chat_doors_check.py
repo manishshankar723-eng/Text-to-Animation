@@ -273,9 +273,12 @@ def main() -> int:
 
     # ------------------------------------------------------------------- 3
     print("\n3 · AN OFFER IS NOT AN EDIT, AND NEVER DRAWS AN APPLY BUTTON\n")
+    # ⚠ `asked_for_it` IS ON THE FIXTURE BECAUSE THE SCHEMA REQUIRES IT (§3b):
+    # this is the case where they DID ask, which is the one that keeps its door.
     only_offer = agent._read_turn(
         {"kind": "plan", "reply": "a voiceover would help",
-         "passes": [{"door": "voiceover", "why": "two silent shots"}]},
+         "passes": [{"door": "voiceover", "why": "two silent shots",
+                     "asked_for_it": True}]},
         {"verbs": [{"id": "note", "args": []}]}, 5)
     # ⚠ THERE IS NOTHING TO APPLY. The spend happens behind a door the chat
     # cannot open, so a turn that only offers is an ANSWER carrying a button.
@@ -293,9 +296,74 @@ def main() -> int:
               and len(data["turnPlanWithOffer"]["passes"]) == 1,
               json.dumps(data["turnPlanWithOffer"]))
     # An empty reply is normally an error; an offer is something to show.
+    NO_VERBS = {"verbs": [{"id": "note", "args": []}]}
     check("an offer with no words is still a turn, not an error",
-          agent._read_turn({"passes": [{"door": "veo"}]},
-                           {"verbs": [{"id": "note", "args": []}]}, 5)["passes"])
+          agent._read_turn({"passes": [{"door": "veo", "asked_for_it": True}]},
+                           NO_VERBS, 5)["passes"])
+
+    # -----------------------------------------------------------------------
+    # ⚠ AN OFFER MAY NOT STAND IN FOR WORK THIS EDITOR COULD HAVE DONE.
+    # -----------------------------------------------------------------------
+    # Live 2026-09-06, with a screenshot: *"add caption in my story and text on
+    # screen"* on a 14-shot reel answered *"I'll add beautiful on-screen text
+    # titles across key moments of your story"* — with NOT ONE STEP and a
+    # Voiceover button under it. `add_text` is free and was in the vocabulary.
+    # *"user caption manga hai to voiceover kyun karne ke liye bol raha hai."*
+    bare = agent._read_turn(
+        {"kind": "answer", "reply": "I'll add beautiful on-screen text titles.",
+         "passes": [{"door": "voiceover", "asked_for_it": False, "why": "it would read it"}]},
+        NO_VERBS, 5, asked_text="add caption in my story and text on screen")
+    check("⚠ AN OFFER-ONLY TURN LOSES A DOOR THEY DID NOT ASK FOR",
+          bare["passes"] == [], str(bare["passes"]))
+    check("…and the drop is SAID, not swallowed",
+          any(d["verb"] == "voiceover" for d in bare["dropped"]), str(bare["dropped"]))
+
+    # ⚠ THE MODEL'S OWN `asked_for_it` IS NOT THE ONLY TEST, because a model
+    # that MISREAD the request reports its misreading honestly — which is exactly
+    # how the live one happened. A voiceover adds a VOICE; nobody gets one unless
+    # they asked for one somewhere in their own words.
+    lied = agent._read_turn(
+        {"kind": "answer", "reply": "Shall I read it aloud?",
+         "passes": [{"door": "voiceover", "asked_for_it": True}]},
+        NO_VERBS, 5, asked_text="add caption in my story and text on screen")
+    check("⚠ …AND `asked_for_it: true` DOES NOT SAVE A VOICE NOBODY ASKED FOR",
+          lied["passes"] == [], str(lied["passes"]))
+    for said in ("voiceover chahiye", "read it out loud please", "isko awaaz do",
+                 "add narration"):
+        got = agent._read_turn(
+            {"kind": "answer", "reply": "Here is what it would do.",
+             "passes": [{"door": "voiceover", "asked_for_it": True}]},
+            NO_VERBS, 5, asked_text=said)
+        check("…but somebody who DID ask keeps their door (%r)" % said,
+              len(got["passes"]) == 1, str(got["passes"]))
+
+    # ⚠ AND AN OFFER BESIDE REAL WORK IS A SUGGESTION, WHICH IS ALLOWED. The
+    # rule is about an offer standing INSTEAD of an edit, never beside one.
+    beside = agent._read_turn(
+        {"kind": "plan", "reply": "Titles on four shots.",
+         "plan": {"summary": "titles", "steps": [
+             {"verb": "add_text", "args": {"shot": 1, "text": "Ganesh Utsav"}}]},
+         "passes": [{"door": "voiceover", "asked_for_it": False}]},
+        {"verbs": [{"id": "add_text", "args": ["shot", "text"]}]}, 5,
+        asked_text="add caption in my story and text on screen")
+    check("⚠ AN OFFER BESIDE A REAL PLAN IS KEPT — that is a suggestion, not a sale",
+          beside["kind"] == "plan" and len(beside["passes"]) == 1, str(beside))
+
+    # ⚠ AND `captions` CANNOT BE OFFERED OVER A SILENT TIMELINE — that door
+    # reads audio ALREADY on the timeline, so the button would price work that
+    # cannot run. This one needs no judgement at all: the board counts the tracks.
+    silent = agent._read_turn(
+        {"kind": "answer", "reply": "I could subtitle it.",
+         "passes": [{"door": "captions", "asked_for_it": True}]},
+        NO_VERBS, 5, audio_tracks=0, asked_text="add captions")
+    check("⚠ NO AUDIO ON THE TIMELINE, NO `captions` DOOR",
+          silent["passes"] == [], str(silent["passes"]))
+    loud = agent._read_turn(
+        {"kind": "answer", "reply": "I could subtitle it.",
+         "passes": [{"door": "captions", "asked_for_it": True}]},
+        NO_VERBS, 5, audio_tracks=1, asked_text="add captions")
+    check("…and with a track to read, it is offered",
+          len(loud["passes"]) == 1, str(loud["passes"]))
 
     # ------------------------------------------------------------------- 4
     print("\n4 · ASKING TO SEE — read, ranged, and refused the second time\n")

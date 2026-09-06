@@ -1968,28 +1968,36 @@ export function animateAnimaticFrames(id, { frameIds, prompts, durations, render
 // a cheap button is the one that gets pressed forty times.
 
 // Free. What transcribing that audio track into captions would cost.
-export function estimateCaptions(id, { uploadId, language, replace } = {}) {
+export function estimateCaptions(id, { uploadId, language, replace, style } = {}) {
   return request(`/animatics/${id}/captions/estimate`, {
     method: "POST",
-    body: {
-      upload_id: uploadId,
-      language: language || "",
-      replace: replace !== false,
-    },
+    body: captionsBody({ uploadId, language, replace, style }),
   });
 }
 
 // SPENDS QUOTA. Writes caption clips from one audio track, async — poll
 // getJob(id), then re-read the project: the captions are written server-side.
-export function captionAnimatic(id, { uploadId, language, replace } = {}) {
+export function captionAnimatic(id, { uploadId, language, replace, style } = {}) {
   return request(`/animatics/${id}/captions`, {
     method: "POST",
-    body: {
-      upload_id: uploadId,
-      language: language || "",
-      replace: replace !== false,
-    },
+    body: captionsBody({ uploadId, language, replace, style }),
   });
+}
+
+// ⚠ ONE BODY BUILDER, LIKE `voiceoverBody` BELOW, and for the same reason the
+// note above this block gives: estimate and run must send the SAME thing, or the
+// number in the confirm dialog is the price of something else. Two hand-written
+// literals were already one edit away from disagreeing before `style` existed.
+//
+// ⚠ `style` IS PLAIN CAPTION FIELDS, ALREADY RESOLVED — never a style NAME. The
+// server has no vocabulary of styles and needs none: see `text_styles.js`.
+function captionsBody({ uploadId, language, replace, style }) {
+  return {
+    upload_id: uploadId,
+    language: language || "",
+    replace: replace !== false,
+    style: style || {},
+  };
 }
 
 // Free, and calls no model. THE DIALOGUE SHEET: every spoken line on this
@@ -2003,7 +2011,7 @@ export function getAnimaticDialogue(id) {
 // The sheet, on its way back up. ⚠ SENT ON BOTH CALLS, so the price quoted is
 // the price of the words on screen: an edited line is cheaper or dearer than the
 // board's, and a quote for something else is a quote that looks made up.
-function voiceoverBody({ voice, frameIds, lines, fitShots, addCaptions, replace }) {
+function voiceoverBody({ voice, frameIds, lines, fitShots, addCaptions, replace, style }) {
   return {
     voice: voice || "Kore",
     frame_ids: frameIds || [],
@@ -2017,6 +2025,10 @@ function voiceoverBody({ voice, frameIds, lines, fitShots, addCaptions, replace 
     fit_shots: fitShots !== false,
     add_captions: addCaptions !== false,
     replace: replace !== false,
+    // The look for the subtitles this run lays down. Same field, same shape and
+    // same whitelist as the captions pass — a style that worked from one button
+    // and not the other is RULEBOOK E156's shape of bug.
+    style: style || {},
   };
 }
 

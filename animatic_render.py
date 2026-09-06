@@ -58,7 +58,13 @@ ANIMATABLE: dict[str, tuple[str, ...]] = {
     # `draw_texts` as a font built at the scaled size over lines wrapped at the
     # resting one, so the wrap cannot shift mid-move. The browser does the same
     # thing with a CSS transform; see `ANIMATABLE.text` in `scene.js`.
-    "text": ("opacity", "x", "y", "scale"),
+    # ⚠ AND `rotation` SINCE PHASE 1 OF THE PRESET WORK — degrees CLOCKWISE, like
+    # a shape's and like CSS `rotate()`, turning the caption about the SAME
+    # anchor `scale` grows about (one CSS `transform-origin` serves both, so they
+    # cannot be given different ones). `draw_texts` honours it by drawing the
+    # measured block onto its own RGBA layer and turning that; see the ⚠ block
+    # above `_rotate_about` in `animatic.py`.
+    "text": ("opacity", "x", "y", "scale", "rotation"),
 }
 
 DEFAULTS = {
@@ -85,7 +91,12 @@ FRAME_DEFAULTS = {"scale": 1.0, "x": 0.5, "y": 0.5, "opacity": 1.0}
 # table BY PROPERTY NAME for each entry in `ANIMATABLE["text"]`, so adding a
 # property to that tuple without adding its resting value here is a KeyError
 # on the first caption in the film, not a quiet fallback.
-TEXT_DEFAULTS = {"x": 0.5, "y": 0.85, "opacity": 1.0, "scale": 1.0}
+# ⚠ AND `rotation` IS 0.0 HERE FOR EVERY CAPTION EVER WRITTEN, for exactly that
+# reason — it was added to ANIMATABLE["text"] above and a row here is not
+# optional. Mirrors TEXT_DEFAULTS in `scene.js`, where the same omission would
+# resolve to `undefined` instead of raising, which is the two halves failing
+# differently and therefore worse than either.
+TEXT_DEFAULTS = {"x": 0.5, "y": 0.85, "opacity": 1.0, "scale": 1.0, "rotation": 0.0}
 
 # Which table a kind's fallbacks come from. A kind that isn't listed uses the
 # shared one, which is every kind that existed before frames and captions needed
@@ -1428,8 +1439,28 @@ def scene_signature(scene: dict) -> str:
     # Appended only in FREE placement, where x/y are the values actually drawn.
     # In flow placement they are resolved but unused, so a project of ordinary
     # stacked subtitles signs byte-for-byte what it signed before this existed.
+    #
+    # ⚠ AND SO MUST A CAPTION THAT ZOOMS OR TURNS — WHICH IT DID NOT, AND THAT
+    # WAS A BUG WITH NOTHING ON SCREEN TO SHOW FOR IT. `scale` became animatable
+    # on a caption in Phase 5 and was never added here, so a title that only
+    # pushes in (which is exactly what `captionPush` in `agent/actions.js` writes
+    # onto every caption the AI editor lays down) resolved to the same clip at
+    # the same opacity at every moment of its life, signed one key, and
+    # `build_animatic` rendered ONE still and reused it for the whole clip. The
+    # monitor pushed in; the MP4 sat dead still. `rotation` would have arrived
+    # with the same hole, and every zoom, pop, bounce, tilt and swing preset in
+    # `text_presets.js` would have shipped broken in the export on day one.
+    #
+    # ⚠ APPENDED ONLY WHEN THEY ARE OFF THEIR RESTING VALUE, the same trick x/y
+    # use above and for the same reason: a caption that has never been zoomed or
+    # turned — which is every caption in every animatic saved before this — signs
+    # byte-for-byte what it signed before, so no existing project re-renders.
     for c in scene["texts"]:
         extra = f":{n(c['x'])}:{n(c['y'])}" if c.get("place") == "free" else ""
+        if abs(float(c.get("scale", 1.0)) - 1.0) > 1e-9:
+            extra += f":s{n(c['scale'])}"
+        if abs(float(c.get("rotation", 0.0))) > 1e-9:
+            extra += f":r{n(c['rotation'])}"
         parts.append(f"t{c.get('id')}:{n(c['opacity'])}{extra}")
     # ⚠ WHICH ORDER THE ROWS ARE STACKED IN MUST BE IN THE KEY, for the fifth time
     # and the same reason as `mix`, `source_ms`, the look and a moving caption —

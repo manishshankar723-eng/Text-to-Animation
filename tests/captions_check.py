@@ -415,6 +415,43 @@ check("the stroke scales with the frame, so it is the same at any resolution",
       abs((tall_box[2] - tall_box[0]) - (stroke_box[2] - stroke_box[0])) <= 6,
       f"(540p {stroke_box[2] - stroke_box[0]}px, 1080p-halved {tall_box[2] - tall_box[0]}px)")
 
+# --- Zoom -------------------------------------------------------------------
+# ⚠ A ZOOMED CAPTION WAS THE WRONG SIZE AT EVERY RESOLUTION EXCEPT 1080p, AND
+# THAT IS WHY THIS IS TWO CHECKS AND NOT ONE. `draw_texts` built the scaled face
+# by handing `_text_font` a size already in THIS frame's pixels, and that
+# parameter is quoted at 1080p — so the frame scaling was applied twice and a
+# title zoomed to 160% at 360p came out a third of the size it should be,
+# SHRINKING as it was told to grow. At 1080p the second factor is exactly 1,
+# which is the whole reason it survived: every check anyone had written was at
+# one resolution, and at one resolution the bug is invisible.
+#
+# The monitor was right throughout — a CSS `transform: scale()` cannot
+# double-count — so this was the export disagreeing with the preview, on the one
+# property every Pop, Zoom, Punch and Spin preset is built out of.
+def zoom_width(scale, size):
+    canvas = Image.new("RGB", size, BG)
+    animatic.draw_texts(canvas, [{
+        "id": "t1", "text": "HAMBURG", "start_ms": 0, "duration_ms": 1000,
+        "position": "middle", "size": "medium", "backdrop": "none",
+        "color": "#ffffff", "opacity": 1.0, "size_px": 60, "scale": scale,
+    }])
+    box, _ = ink(canvas)
+    # As a FRACTION of the frame width, so two resolutions are comparable.
+    return (box[2] - box[0]) / size[0] if box else 0.0
+
+
+small, normal, big = (zoom_width(s, (W, H)) for s in (0.5, 1.0, 1.6))
+check("a zoomed caption is drawn bigger, not smaller",
+      small < normal < big,
+      f"(50% → {small:.3f}, 100% → {normal:.3f}, 160% → {big:.3f} of the frame)")
+check("…and by about the amount it was asked for",
+      abs(big / normal - 1.6) < 0.08 and abs(small / normal - 0.5) < 0.05,
+      f"(160% measured {big / normal:.2f}×, 50% measured {small / normal:.2f}×)")
+# The half that actually failed: the SAME zoom at a different frame size.
+check("a zoom is the same fraction of the frame at any resolution",
+      abs(zoom_width(1.6, (W * 3, H * 3)) - big) < 0.02,
+      f"(540p {big:.3f}, 1620p {zoom_width(1.6, (W * 3, H * 3)):.3f})")
+
 # --- Shadow ---
 shadow_box, _ = ink(render(shadow=0.15))
 check("a shadow extends the ink down and to the right",

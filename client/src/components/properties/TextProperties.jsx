@@ -5,6 +5,8 @@
 // `ANIMATABLE.text` order (opacity, x, y) so the pane and the timeline's diamond
 // rows read as the same list — see that file's header.
 
+import { useState } from "react";
+
 import Icon from "../Icon.jsx";
 import KeyframeControls from "../KeyframeControls.jsx";
 import {
@@ -15,9 +17,59 @@ import {
   missingScripts,
   scriptEntry,
 } from "../../animatic/fonts.js";
-import { TEXT_PRESETS, applyTextPreset } from "../../animatic/text_presets.js";
+import {
+  TEXT_PRESETS,
+  TEXT_PRESET_CATEGORIES,
+  applyTextPreset,
+} from "../../animatic/text_presets.js";
+import {
+  TEXT_STYLES,
+  TEXT_STYLE_CATEGORIES,
+  applyTextStyle,
+  deleteCustomStyle,
+  listCustomStyles,
+  saveCustomStyle,
+  styleFromClip,
+} from "../../animatic/text_styles.js";
 import { backdropHasFill, backdropPatch, textBackdrop } from "../../animatic/scene.js";
 import { PropGroup, PropRow, NumField, PropSlider, PropNote } from "./PropGroup.jsx";
+import PresetPicker from "./PresetPicker.jsx";
+
+/**
+ * How long the beats of the NEXT preset are.
+ *
+ * ⚠ THE MIDDLE ONE IS THE DEFAULT AND IT IS THE NUMBER THE PRESETS ALREADY USE.
+ * `DEFAULT_IN_MS` / `DEFAULT_OUT_MS` in `text_presets.js` are 400 each, so
+ * "Normal" passes nothing at all and every preset behaves exactly as it did
+ * before this control existed. The other two are the same animation, retimed.
+ *
+ * ⚠ AND THEY ARE CLAMPED AGAINST THE CLIP'S OWN LENGTH FURTHER DOWN, in
+ * `beatsFor` — asking for a 900ms beat on a 400ms caption gives a fast animation
+ * rather than keys sitting past the end of the clip.
+ */
+const BEAT_SPEEDS = [
+  { id: "fast", label: "Fast", ms: 200, hint: "Snappy — a reel, a hard cut, a punchline." },
+  { id: "normal", label: "Normal", ms: 0, hint: "The house timing. What every preset is drawn at." },
+  { id: "slow", label: "Slow", ms: 800, hint: "Unhurried — a title card, a mood, a long hold." },
+];
+
+function beatOptions(speedId) {
+  const speed = BEAT_SPEEDS.find((s) => s.id === speedId);
+  // ⚠ NOTHING AT ALL FOR "Normal", rather than the same number spelled out. The
+  // preset's own defaults are then what runs, so there is one place that decides
+  // what a beat is worth and this control cannot drift away from it.
+  return speed && speed.ms ? { inMs: speed.ms, outMs: speed.ms } : {};
+}
+
+/**
+ * The tracks a preset owns, and therefore the ones the "Animation" ↺ clears.
+ *
+ * ⚠ THIS IS `OWNED` IN `text_presets.js`, AND IT HAS TO STAY THAT LIST. A reset
+ * that cleared fewer would leave part of an animation running after you asked
+ * for it to be taken off — a caption still spinning under a "no animation"
+ * readout, which is the reset looking broken rather than the preset.
+ */
+const PRESET_TRACKS = ["opacity", "x", "y", "scale", "rotation"];
 
 const TEXT_PLACES = [
   { id: "flow", label: "In a zone" },
@@ -97,6 +149,12 @@ const CAPTION_DEFAULTS = {
   opacity: 1,
   x: 0.5,
   y: 0.85,
+  // ⚠ THE SAME TWO NUMBERS AS `TEXT_DEFAULTS` IN `scene.js` AND
+  // `animatic_render.py`, AND AS THE FIELD DEFAULTS ON `AnimaticTextClip`. Four
+  // copies now, and the rule is what it has always been for this table: they
+  // have to agree, or ↺ puts a caption somewhere it has never been.
+  scale: 1,
+  rotation: 0,
   letter_spacing: 0,
   stroke_px: 0,
   stroke_color: "#000000",
@@ -135,9 +193,56 @@ export default function TextProperties({
   onDuplicate,
   onDelete,
   onClose,
+  // How many captions share this clip's row, and the one call that restyles
+  // them all. Both come from the editor, which is the only thing that can see
+  // the other clips — this pane has never been given the document and should
+  // not start now.
+  laneCount = 0,
+  onRestyleLane,
 }) {
   const overruns = clip.start_ms + clip.duration_ms > totalMs;
   const free = (clip.place || "flow") === "free";
+  // ⚠ PANE STATE, NOT DOCUMENT STATE, and deliberately not stored on the clip.
+  // It is the length of the beats the NEXT preset writes; once a preset has run,
+  // the keys ARE the timing and they are what you drag. Storing it would be a
+  // second, silent opinion about a clip's animation that nothing renders.
+  const [speed, setSpeed] = useState("normal");
+
+  // --- The Look shelf ------------------------------------------------------
+  // ⚠ READ ONCE, ON MOUNT, AND KEPT IN STATE. `listCustomStyles` parses and
+  // filters a localStorage string; calling it in the render body would re-parse
+  // on every keystroke in every field in this pane, and would hand `PresetPicker`
+  // a brand-new array each time. Every write below returns the new list, so the
+  // state is refreshed from the store rather than guessed at.
+  const [customStyles, setCustomStyles] = useState(() => listCustomStyles());
+  const [styleName, setStyleName] = useState("");
+  const [styleError, setStyleError] = useState("");
+  // ⚠ `removable` IS WHAT PUTS THE ✕ ON A ROW, and only the saved ones carry it:
+  // a built-in look cannot be deleted, so it must not offer to be.
+  const styleShelf = [
+    ...TEXT_STYLES,
+    ...customStyles.map((s) => ({ ...s, removable: true })),
+  ];
+  const applyStyle = (styleId) => {
+    setStyleError("");
+    onChange(clip.id, applyTextStyle(stored || clip, styleId, customStyles));
+  };
+  const keepStyle = () => {
+    const next = saveCustomStyle(styleName, styleFromClip(stored || clip));
+    if (!next) {
+      // Storage refused — private mode, or site data switched off. Said once,
+      // rather than a Save button that silently does nothing for ever.
+      setStyleError("This browser would not keep the style. Private mode?");
+      return;
+    }
+    setCustomStyles(next);
+    setStyleName("");
+    setStyleError("");
+  };
+  const forgetStyle = (styleId) => {
+    const next = deleteCustomStyle(styleId);
+    if (next) setCustomStyles(next);
+  };
   // ⚠ FOLDED THROUGH THE SHARED HELPERS, not read off the clip. This pane
   // decides which rows EXIST from the backdrop kind, so if it folded an unknown
   // value differently from the renderers it would offer you a fill colour for a
@@ -228,6 +333,88 @@ export default function TextProperties({
             This runs past the end of the video, so part of it is never seen.
           </PropNote>
         )}
+      </PropGroup>
+
+      {/* --- The look -------------------------------------------------------
+          ⚠ A STYLE IS A BAG OF ORDINARY CAPTION FIELDS AND NOTHING ELSE — the
+          same bargain the animation shelves make about keyframes. It writes the
+          Type and Readability rows below and gets out of the way, so every one
+          of them stays editable afterwards, undo treats it as one edit, and no
+          renderer had to learn a single new word. See `text_styles.js`.
+          ⚠ AND IT NEVER MOVES THE CAPTION. Position, placement, size on screen
+          and every animation track are outside a style on purpose: restyling a
+          whole run of subtitles has to change how they look and leave every one
+          of them exactly where it is. */}
+      <PropGroup
+        id="text:style"
+        title="Look"
+        hint="Ready-made type. Everything it sets is still editable below."
+      >
+        <PropRow full>
+          <PresetPicker
+            categories={TEXT_STYLE_CATEGORIES}
+            presets={styleShelf}
+            onPick={applyStyle}
+            onRemove={forgetStyle}
+          />
+        </PropRow>
+
+        {/* ⚠ THE ROW THAT MAKES THE SHELF WORTH HAVING. A film has one subtitle
+            track and forty clips on it; restyling them one at a time is forty
+            identical decisions. Offered only when there IS more than one caption
+            on this clip's row, so it never appears as a button that does
+            nothing, and it is ONE document edit so one Ctrl+Z puts it back. */}
+        {onRestyleLane && laneCount > 1 && (
+          <PropRow
+            label="Whole row"
+            title={`Give all ${laneCount} captions on this row the look this one has`}
+            info="Only the look travels — every caption keeps its own words, its timing, its place on screen and any animation on it."
+          >
+            <button
+              type="button"
+              className="btn small ghost"
+              onClick={() => onRestyleLane(clip.id)}
+            >
+              Match all {laneCount}
+            </button>
+          </PropRow>
+        )}
+
+        {/* ⚠ SAVED PER BROWSER, AND THE LABEL SAYS SO. A caption look is closer
+            to a brand asset than to a pane layout and really belongs on the
+            account; that is a store, a route and a schema, and not a change to
+            make in the same visit as the feature. The honest word on screen is
+            worth more than the pretence. */}
+        <PropRow
+          label="Save look"
+          title="Keep this caption's type as a style you can put on another one"
+          info="Kept in this browser only — it will not follow you to another machine, and clearing site data forgets it."
+        >
+          <span className="an-tp-save-style">
+            <input
+              className="an-prop-input"
+              value={styleName}
+              placeholder="Name this look"
+              maxLength={40}
+              onChange={(e) => setStyleName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  keepStyle();
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="btn small ghost"
+              disabled={!styleName.trim()}
+              onClick={keepStyle}
+            >
+              Save
+            </button>
+          </span>
+        </PropRow>
+        {styleError && <PropNote tone="warn">{styleError}</PropNote>}
       </PropGroup>
 
       {/* --- Where it sits, and how visible ---------------------------------
@@ -340,6 +527,49 @@ export default function TextProperties({
             </span>
           </PropRow>
         )}
+
+        {/* --- Zoom and angle ------------------------------------------------
+            ⚠ BOTH OF THESE WERE ANIMATABLE WITH NO CONTROL TO SET THEM. `scale`
+            has been in `ANIMATABLE.text` since Phase 5 and could only be reached
+            through a preset or through the AI editor; `rotation` arrived with
+            the preset shelves. A property the renderers honour and the pane does
+            not offer is one a person can only get at by accident.
+            ⚠ AND THEY SIT OUTSIDE THE `free` BRANCH ON PURPOSE — unlike x/y,
+            both work in a ZONE as well, because the browser applies them about
+            the caption's zone anchor and `draw_texts` turns the measured block
+            about the same point. That is what lets a whole run of stacked
+            subtitles pop or spin without one of them leaving its zone. */}
+        <PropSlider
+          label="Zoom"
+          title="The size of the whole caption — glyphs, backdrop and padding together"
+          min="0.2"
+          max="4"
+          step="0.01"
+          value={clip.scale ?? 1}
+          readout={`${Math.round((clip.scale ?? 1) * 100)}%`}
+          kf={kf && <KeyframeControls {...kf} prop="scale" />}
+          reset={() => resetProp("scale")}
+          changed={off("scale") || keyed("scale")}
+          resetTo="100%"
+          info="This scales the caption as it was laid out, so the line breaks never move while it grows. It is not the same as the font size, which re-wraps the text."
+          {...gesture}
+          onChange={(e) => onChange(clip.id, { scale: parseFloat(e.target.value) })}
+        />
+        <PropSlider
+          label="Angle"
+          title="Degrees clockwise. It turns about wherever the caption is anchored."
+          min="-180"
+          max="180"
+          step="1"
+          value={clip.rotation ?? 0}
+          readout={`${Math.round(clip.rotation ?? 0)}°`}
+          kf={kf && <KeyframeControls {...kf} prop="rotation" />}
+          reset={() => resetProp("rotation")}
+          changed={off("rotation") || keyed("rotation")}
+          resetTo="0°"
+          {...gesture}
+          onChange={(e) => onChange(clip.id, { rotation: parseFloat(e.target.value) })}
+        />
       </PropGroup>
 
       {/* --- The face -------------------------------------------------------
@@ -781,43 +1011,72 @@ export default function TextProperties({
           preset was used, which is why none of these is ever shown as "current":
           once you have moved one of its keys, there is no current preset. */}
       <PropGroup id="text:preset" title="In / out animation">
-        <PropRow full>
-          <span className="an-tp-group an-tp-presets">
-            {TEXT_PRESETS.map((p) => (
+        {/* ⚠ THE SPEED IS PICKED BEFORE THE PRESET, WHICH IS WHY IT IS ABOVE IT.
+            A preset is applied the instant you click it — there is no "apply"
+            button and no dialog — so a speed control underneath would be one you
+            could only reach by choosing the animation twice.
+            ⚠ AND IT IS NOT STORED ANYWHERE. It is the length of the beats this
+            click writes, held for as long as the pane is open; the document
+            keeps the KEYS, which is the honest record of what the animation is
+            and the only one you can drag afterwards. */}
+        <PropRow
+          label="Speed"
+          title="How long the in and out beats are for the preset you pick next"
+          info="This is not saved on the clip — it only sets the length of the keys the next preset writes. Drag the keyframes on the timeline to change one afterwards."
+        >
+          <span className="an-tp-group">
+            {BEAT_SPEEDS.map((s) => (
               <button
-                key={p.id}
+                key={s.id}
                 type="button"
-                className="an-tp-btn"
-                title={p.hint}
-                onClick={() => onChange(clip.id, applyTextPreset(stored || clip, p.id))}
+                className={`an-tp-btn ${speed === s.id ? "on" : ""}`}
+                title={s.hint}
+                onClick={() => setSpeed(s.id)}
               >
-                {p.label}
+                {s.label}
               </button>
             ))}
           </span>
         </PropRow>
-        {/* A preset writes keys on THREE properties at once, so its ↺ has to
-            clear all three — each row's own ↺ would leave a third of the
+        <PropRow full>
+          <PresetPicker
+            categories={TEXT_PRESET_CATEGORIES}
+            presets={TEXT_PRESETS}
+            onPick={(id) =>
+              onChange(
+                clip.id,
+                applyTextPreset(stored || clip, id, beatOptions(speed))
+              )
+            }
+          />
+        </PropRow>
+        {/* A preset writes keys on FIVE properties at once, so its ↺ has to
+            clear all five — each row's own ↺ would leave a fifth of the
             animation behind, which is not "no animation" and does not look
-            like one either. */}
+            like one either.
+            ⚠ FIVE, NOT THREE, SINCE THE PRESET SHELVES LANDED. `scale` and
+            `rotation` joined `OWNED` in `text_presets.js` when Pop, Zoom and
+            Spin arrived, and a ↺ that still cleared three would leave a caption
+            spinning after you had asked for the animation to be taken off. The
+            two lists are the same list and have to stay that way. */}
         <PropRow
           label="Animation"
-          title="Every key a preset wrote, on opacity, x and y"
+          title="Every key a preset wrote — on opacity, position, size and angle"
           reset={() =>
             set({
               keyframes: Object.fromEntries(
                 Object.entries((stored || clip).keyframes || {}).filter(
-                  ([prop]) => !["opacity", "x", "y"].includes(prop)
+                  ([prop]) => !PRESET_TRACKS.includes(prop)
                 )
               ),
             })
           }
-          changed={["opacity", "x", "y"].some(keyed)}
+          changed={PRESET_TRACKS.some(keyed)}
           resetTo="no animation"
           info="These write keyframes you can then drag on the timeline — a preset isn't a mode, it's a starting point."
         >
           <span className="an-row-read">
-            {["opacity", "x", "y"].some(keyed) ? "keyframed" : "none"}
+            {PRESET_TRACKS.some(keyed) ? "keyframed" : "none"}
           </span>
         </PropRow>
       </PropGroup>

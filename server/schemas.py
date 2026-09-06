@@ -8,6 +8,7 @@ shape.
 """
 
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -1842,6 +1843,29 @@ class AnimaticTextClip(BaseModel):
     # Defaults match TEXT_DEFAULTS in `animatic_render.py` and `scene.js`.
     x: float = Field(0.5, ge=-1.0, le=2.0)
     y: float = Field(0.85, ge=-1.0, le=2.0)
+    # ⚠ `scale` HAS BEEN ANIMATABLE SINCE PHASE 5 AND HAD NO FIELD HERE UNTIL
+    # PHASE 1 OF THE PRESET WORK, WHICH MEANT THE SERVER THREW IT AWAY. Pydantic
+    # ignores an unknown key by default, so a caption arriving with `scale: 1.04`
+    # came back out of `AnimaticSaveRequest` without it — the KEYS survived
+    # (`keyframes` is a field) but the RESTING value did not, and `scene_at`
+    # resolves a property to its resting value everywhere the keys do not reach.
+    # The effect: `captionPush` in `agent/actions.js` sets `rest.scale` to 1.04
+    # at the end of its push, the save dropped it back to 1.0, and every caption
+    # the AI editor laid down snapped back to its original size the instant the
+    # last key passed. Every zoom, pop and bounce preset in `text_presets.js`
+    # would have inherited exactly that.
+    #
+    # A ZOOM OF THE WHOLE CAPTION — glyphs, backdrop and padding together, laid
+    # out at the resting size and then scaled, so the line breaks never move
+    # while it animates. Bounds match `AnimaticShape.scale` because it is the
+    # same property doing the same job.
+    scale: float = Field(1.0, gt=0.0, le=16.0)
+    # DEGREES CLOCKWISE, like a shape's and like CSS `rotate()`. 0 is every
+    # caption ever written. ⚠ It turns the caption about the SAME anchor `scale`
+    # grows about — the browser gives both to one CSS `transform-origin`, so
+    # there is only one anchor to be had; `draw_texts` matches it by rotating the
+    # measured block about that same point.
+    rotation: float = Field(0.0, ge=-360.0, le=360.0, description="Degrees, clockwise.")
     # Outline around the glyphs, in pixels AT 1080p — scaled with the frame, so
     # the same project looks the same exported at 720p or 4K. 0 is no outline,
     # which is what every caption written before this has. (The "none" backdrop
@@ -2966,6 +2990,21 @@ class AnimaticCaptionsRequest(BaseModel):
     # running it twice is nearly always a correction, and the alternative is two
     # copies of every subtitle stacked on top of each other.
     replace: bool = True
+    # WHAT THE SUBTITLES SHOULD LOOK LIKE — plain caption fields, already
+    # resolved by the browser from whichever entry in `text_styles.js` was
+    # picked. Empty is the subtitle `caption_clips` has always written.
+    #
+    # ⚠ A BAG OF FIELDS, NOT A STYLE NAME, AND THAT IS THE DESIGN. The server has
+    # no vocabulary of styles and never needs one: the shelf can grow to a
+    # hundred looks, or somebody can save their own, without a line changing
+    # here. Same bargain the animation presets make about keyframes.
+    #
+    # ⚠ AND IT IS WHITELISTED IN `captions.clean_style`, NOT HERE. `dict[str,
+    # Any]` on a request body would otherwise be a way to write `text`,
+    # `start_ms` or `layer_id` onto every clip a PAID run produces. Unknown keys
+    # are dropped rather than refused, so a browser one version ahead styles what
+    # it can instead of 422-ing in the middle of a transcription.
+    style: dict[str, Any] = Field(default_factory=dict)
 
 
 class VoiceoverLine(BaseModel):
@@ -3110,6 +3149,13 @@ class AnimaticVoiceoverRequest(BaseModel):
     # with the audio.
     add_captions: bool = True
     replace: bool = True
+    # ⚠ THE SAME FIELD, ON BOTH DOORS THAT WRITE CAPTIONS, AND THAT IS THE POINT.
+    # This route lays the spoken lines down as subtitles too, so a look that
+    # worked from the ✎ Captions button and not from here would be RULEBOOK
+    # E156's shape of bug — nothing errors, nothing is empty, the styling you
+    # chose simply is not there. Whitelisted by `captions.clean_style` like the
+    # other one; empty is the subtitle this pass has always written.
+    style: dict[str, Any] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------

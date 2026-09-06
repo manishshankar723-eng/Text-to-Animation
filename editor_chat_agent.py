@@ -105,6 +105,31 @@ MAX_SFX_CUES = 32
 # agree — so a door renamed on one side is a test failure, not a silent drift.
 PAID_DOORS = ("voiceover", "captions", "veo", "images")
 
+# ⚠ **THE WORDS THAT ASK FOR A VOICE — THE ONE OBJECTIVE TEST UNDER THE
+# `voiceover` DOOR.** `asked_for_it` (see `reply_schema`) is the model's own
+# account of whether the person asked, and a model that has MISREAD the request
+# will report that misreading honestly: the live failure offered a voiceover to
+# somebody who asked for captions precisely because it believed that was what
+# they wanted. So there is a fact under the judgement. A voiceover adds a VOICE,
+# and nobody gets one unless they said so somewhere in the conversation — in
+# English or in the roman Hindi half this app's users actually type.
+#
+# ⚠ IT IS READ OVER EVERYTHING THEY HAVE TYPED, NOT JUST THE LAST LINE, so
+# "haan kar do" two turns after "voiceover chahiye" still counts. And it only
+# ever fires on a turn that proposes NOTHING ELSE — an offer beside a real plan
+# is a suggestion, which is allowed. See `_coerce_passes`.
+VOICE_WORDS = (
+    "voice", "voiceover", "voice-over", "vo ", "narrat", "aloud", "read it out",
+    "read out", "speak", "spoken", "dub", "awaz", "awaaz", "aawaz", "bol",
+    "bolke", "bolkar", "sunao", "sunana", "padhkar", "padhke",
+)
+
+
+def _asked_for_a_voice(text: str) -> bool:
+    """Did the person anywhere ask to be read aloud? Pure, and deliberately dumb."""
+    low = " " + " ".join(str(text or "").lower().split()) + " "
+    return any(word in low for word in VOICE_WORDS)
+
 # ---------------------------------------------------------------------------
 # LOOKING — the one thing this chat could never do
 # ---------------------------------------------------------------------------
@@ -808,8 +833,26 @@ def reply_schema(vocabulary: dict) -> dict:
                             "description": "Only for `veo`, and only when they named ONE "
                                            "shot. Leave it out for the whole film.",
                         },
+                        # ⚠ **THE FIELD THAT STOPS AN OFFER STANDING IN FOR THE
+                        # WORK.** Required, and a boolean, for the reason
+                        # `_pin_kind` is an enum: a model cannot leave either
+                        # blank, and this is a question it must actually answer
+                        # rather than a sentence in a prompt it may skim past.
+                        # See `_read_turn` for what FALSE costs an offer.
+                        "asked_for_it": {
+                            "type": "boolean",
+                            "description": "TRUE only when THEY named this paid thing "
+                                           "themselves — a voice reading it aloud, "
+                                           "rendered footage, drawn poses. FALSE when you "
+                                           "are suggesting it beside what they asked for. "
+                                           "⚠ A FALSE door is only shown when this same "
+                                           "turn also proposes the free work they really "
+                                           "asked for — otherwise it is dropped, because "
+                                           "words plus a button over a request you could "
+                                           "have filled is selling, not editing.",
+                        },
                     },
-                    "required": ["door"],
+                    "required": ["door", "asked_for_it"],
                 },
             },
             "sound": sound_schema(),
@@ -1025,6 +1068,26 @@ def chat(
         len((board or {}).get("shots") or []),
         # Already looking? Then a second look is refused — see `_read_turn`.
         blind=not pictures,
+        # ⚠ THE SAME NUMBER THE MODEL WAS SHOWN IN THE BOARD DIGEST ("N audio
+        # track(s)"), so what it was told and what is enforced cannot disagree.
+        # A `captions` door over a silent timeline opens a price for work that
+        # cannot run — see `_coerce_passes`.
+        # ⚠ `-1` WHEN THE BROWSER DID NOT SAY, NOT `0`. "No audio" and "nobody
+        # told me" are different facts, and reading the second as the first would
+        # silently withdraw the `captions` door from every caller that predates
+        # `existing` in the board payload.
+        audio_tracks=(
+            int(((board or {}).get("existing") or {}).get("audioTracks") or 0)
+            if isinstance((board or {}).get("existing"), dict)
+            and "audioTracks" in ((board or {}).get("existing") or {})
+            else -1
+        ),
+        # ⚠ EVERYTHING THEY HAVE TYPED, not the last line alone — see
+        # `_asked_for_a_voice`. Only their own words count: a voiceover this chat
+        # SUGGESTED is not a voiceover they asked for, which is the whole point.
+        asked_text=" ".join(
+            str(m.get("text") or "") for m in convo if (m.get("role") or "") == "user"
+        ),
     )
 
 
@@ -1139,7 +1202,8 @@ def _coerce_look(raw: Any, shot_count: int) -> dict | None:
     return {"shots": sorted(seen)[:MAX_LOOK_SHOTS], "why": _clip(row.get("why"), WHY_CHARS)}
 
 
-def _coerce_passes(raw: Any, shot_count: int) -> list[dict]:
+def _coerce_passes(raw: Any, shot_count: int, *, audio_tracks: int = -1,
+                   proposes_work: bool = True, voice_asked: bool = True) -> list[dict]:
     """The paid doors this turn offers, read into `[{door, why, shot}]`.
 
     ⚠ **AN UNKNOWN DOOR IS DROPPED, NOT RENAMED.** A model that invents
@@ -1152,6 +1216,25 @@ def _coerce_passes(raw: Any, shot_count: int) -> list[dict]:
     panel offering to render a shot through a button that never renders one. Out
     of range it is dropped rather than clamped — "shot 61 on a 48-shot film" is a
     misunderstanding, and shot 48 is not what was meant.
+
+    ⚠ **AN OFFER THEY DID NOT ASK FOR IS DROPPED WHEN THE TURN PROPOSES NOTHING
+    ELSE** (`proposes_work=False` and `asked_for_it` not true). Live on
+    2026-09-06: *"add caption in my story and text on screen"* on a 14-shot reel
+    came back as *"I'll add beautiful on-screen text titles…"* with **no steps at
+    all** and a **Voiceover** button — a voice nobody had asked for, standing in
+    for `add_text`, which is free and was right there in the vocabulary. *"user
+    caption manga hai to voiceover kyun karne ke liye bol raha hai."* An offer
+    BESIDE a real plan is still welcome; an offer INSTEAD of one is a sale.
+
+    ⚠ **AND `captions` CANNOT BE OFFERED OVER A SILENT TIMELINE.** That door
+    reads audio *already on the timeline* — with `audio_tracks == 0` there is
+    nothing for it to read, so the button would open a price for work that cannot
+    run. `-1` means "not told", and then nothing is enforced (every existing
+    caller and test keeps working).
+
+    ⚠ **NEITHER RULE TOUCHES THE WIRE SHAPE.** `asked_for_it` decides here and
+    is not passed on: the offer the panel draws is still `{door, why, shot?}`, so
+    `normalisePasses` in `chat_turn.js` stays the mirror it has always been.
     """
     out: list[dict] = []
     seen: set[str] = set()
@@ -1160,6 +1243,12 @@ def _coerce_passes(raw: Any, shot_count: int) -> list[dict]:
             continue
         door = str(row.get("door") or "").strip().lower()
         if door not in PAID_DOORS or door in seen:
+            continue
+        if door == "captions" and audio_tracks == 0:
+            continue
+        if not proposes_work and door == "voiceover" and not voice_asked:
+            continue
+        if not proposes_work and row.get("asked_for_it") is not True:
             continue
         seen.add(door)
         offer = {"door": door, "why": _clip(row.get("why"), WHY_CHARS)}
@@ -1172,7 +1261,8 @@ def _coerce_passes(raw: Any, shot_count: int) -> list[dict]:
     return out
 
 
-def _read_turn(raw: dict, vocabulary: dict, shot_count: int = 0, blind: bool = True) -> dict:
+def _read_turn(raw: dict, vocabulary: dict, shot_count: int = 0, blind: bool = True,
+               audio_tracks: int = -1, asked_text: str = "") -> dict:
     """What came back, read into a turn. Never raises on a shape problem.
 
     ⚠ **THE KIND IS DECIDED BY WHAT IS THERE.** A reply labelled `plan` with no
@@ -1189,7 +1279,10 @@ def _read_turn(raw: dict, vocabulary: dict, shot_count: int = 0, blind: bool = T
     # the only honest source for "how many shots are there" is the board the
     # browser sent. Defaulted so every existing caller (and every test) still
     # works — an offer simply loses its shot number rather than the whole turn.
-    passes = _coerce_passes(row.get("passes"), shot_count)
+    # ⚠ THE PASSES ARE READ AT THE BOTTOM OF THIS FUNCTION, NOT HERE, because
+    # whether an unasked door may be shown depends on whether this turn proposes
+    # any work — which is not known until the steps have been folded and the kind
+    # decided. See `_coerce_passes`.
     # ⚠ ONLY WHEN IT IS NOT ALREADY LOOKING. `blind` is False on the second call
     # of a look — the pictures are attached — and a model that asks to see again
     # from there is a loop that spends money on every lap. It is refused here
@@ -1298,6 +1391,48 @@ def _read_turn(raw: dict, vocabulary: dict, shot_count: int = 0, blind: bool = T
     # happens behind a priced door the chat cannot open. So `passes` deliberately
     # does NOT join the `steps or sound` test above: a turn that only offers a
     # voiceover is an `answer` carrying a button.
+    #
+    # ⚠ **BUT AN OFFER MAY NOT BE THE WHOLE TURN OVER A REQUEST THIS EDITOR
+    # COULD HAVE FILLED.** That is the one thing this turn IS allowed to know
+    # about its own doors, and it can only be known here — after the steps are
+    # folded and the kind is settled. A turn that proposes real work may suggest
+    # whatever it likes beside it; a turn that proposes NOTHING may only offer a
+    # door THEY named. See `_coerce_passes` for the live failure.
+    proposes_work = bool(steps or sound or work or ask or look)
+    # ⚠ DEFAULTS TO TRUE WHEN NOTHING WAS PASSED, so every existing caller and
+    # every test keeps the behaviour it had — the floor is opt-in from `chat()`,
+    # which is the only place that really knows what the person typed.
+    voice_asked = _asked_for_a_voice(asked_text) if asked_text else True
+    passes = _coerce_passes(
+        row.get("passes"), shot_count,
+        audio_tracks=audio_tracks, proposes_work=proposes_work,
+        voice_asked=voice_asked,
+    )
+    # ⚠ **AND WHAT WAS DROPPED IS SAID, NOT SWALLOWED.** Same rule as the
+    # notes-only plan above: what the model offered is the only evidence the
+    # person has that it misread the job, and a button that quietly disappears
+    # leaves them with a reply promising work and no sign of why none came.
+    for row_pass in (row.get("passes") or []) if isinstance(row.get("passes"), list) else []:
+        if not isinstance(row_pass, dict):
+            continue
+        door = str(row_pass.get("door") or "").strip().lower()
+        if door not in PAID_DOORS or any(p["door"] == door for p in passes):
+            continue
+        if door == "captions" and audio_tracks == 0:
+            dropped.append({
+                "index": len(dropped), "verb": door,
+                "why": "there is no audio on this timeline to write captions from",
+            })
+        elif not proposes_work and door == "voiceover" and not voice_asked:
+            dropped.append({
+                "index": len(dropped), "verb": door,
+                "why": "you did not ask for a voice, and no edit was proposed instead",
+            })
+        elif not proposes_work and row_pass.get("asked_for_it") is not True:
+            dropped.append({
+                "index": len(dropped), "verb": door,
+                "why": "you did not ask for this, and nothing was proposed to go with it",
+            })
     if not reply and kind == "answer" and not ask and not passes:
         raise EditorChatError("The model returned an empty reply. Try rephrasing.")
 

@@ -1091,6 +1091,42 @@ def _split_line(line: dict, max_chars: int, max_words: int = MAX_WORDS) -> list[
 # ---------------------------------------------------------------------------
 # Lines → caption clips
 # ---------------------------------------------------------------------------
+# Which caption fields a STYLE may set, and the only ones a caller can reach
+# through `caption_clips(style=…)`.
+#
+# ⚠ THIS IS A TWIN OF `STYLE_FIELDS` IN `client/src/animatic/text_styles.js`, and
+# `tests/caption_style_check.py` compares the two by running that module under
+# node — the same way the font list is twinned. The browser resolves a style to
+# plain caption fields and sends them; **the server needs no vocabulary of styles
+# at all**, which is the whole reason a shelf of twenty-two looks cost no server
+# work beyond this tuple.
+#
+# ⚠ AND IT IS A WHITELIST BECAUSE THIS IS A REQUEST BODY. Without it, `style`
+# would be a way to write `text`, `start_ms`, `id` or `layer_id` onto every clip
+# a paid run produces — a request that quietly corrupts a transcription instead
+# of styling it. A LOOK is all this may carry: nothing about WHEN a caption
+# appears, WHERE it sits, WHAT it says, or which lane it lands on.
+STYLE_FIELDS = (
+    "font", "size", "size_px", "align", "color",
+    "backdrop", "backdrop_color", "backdrop_opacity", "backdrop_radius", "backdrop_pad",
+    "stroke_px", "stroke_color",
+    "shadow", "shadow_color", "shadow_opacity", "shadow_angle",
+    "letter_spacing", "line_height", "text_case", "wrap",
+)
+
+
+def clean_style(style: dict | None) -> dict:
+    """The parts of `style` this app will honour, and nothing else.
+
+    Unknown keys are DROPPED rather than refused: a browser one version ahead
+    sending a field this build has not got should restyle the captions it can
+    and land the run, not 422 in the middle of a paid transcription.
+    """
+    if not isinstance(style, dict):
+        return {}
+    return {k: v for k, v in style.items() if k in STYLE_FIELDS}
+
+
 def caption_clips(lines: list[dict], *, layer_id: str = "", style: dict | None = None) -> list[dict]:
     """Timed lines into `AnimaticTextClip` dicts, ready to save.
 
@@ -1103,6 +1139,11 @@ def caption_clips(lines: list[dict], *, layer_id: str = "", style: dict | None =
     `layer_id` is which LANE they land on, and every generated caption belongs on
     `CAPTION_LAYER_ID` — read that constant's comment for why they get a lane of
     their own rather than being piled onto the text you typed.
+
+    ⚠ `style` IS FILTERED THROUGH `clean_style` HERE, not by the caller. Two
+    routes write captions (the captions pass and the voiceover's `add_captions`),
+    and a whitelist enforced at each door is a whitelist one of them will
+    eventually be added without.
     """
     base = {
         "layer_id": layer_id,
@@ -1113,7 +1154,7 @@ def caption_clips(lines: list[dict], *, layer_id: str = "", style: dict | None =
         "backdrop": "scrim",
         "font": "inter",
         "place": "flow",
-        **(style or {}),
+        **clean_style(style),
     }
     clips = []
     for i, line in enumerate(lines):

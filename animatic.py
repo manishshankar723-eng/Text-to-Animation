@@ -499,11 +499,32 @@ def draw_texts(canvas: Image.Image, clips: list[dict]) -> None:
         if not (0.05 <= scale <= 20.0):
             scale = 1.0
         rest_font = _text_font(height, size_name, clip.get("font"), size_px)
+        # ⚠ `_text_font`'s `size_px` IS QUOTED AT 1080p, AND THIS USED TO HAND IT
+        # A NUMBER IN FRAME PIXELS — so the frame scaling was applied TWICE and a
+        # zoomed caption came out the wrong size at every resolution except
+        # 1080p. It read `_text_px(height, …) * scale`, which is already this
+        # frame's pixels; `_text_font` then multiplied by `height / 1080` again,
+        # so a 120px title zoomed to 160% exported at 360p was drawn at 21px
+        # instead of 63 — a caption a THIRD of the size it should be, shrinking
+        # as it was told to grow. At 1080p the second factor is exactly 1, which
+        # is why every 1080p export looked right and hid it.
+        #
+        # ⚠ AND THE MONITOR WAS RIGHT THE WHOLE TIME — a CSS `transform: scale()`
+        # scales the laid-out block and cannot double-count anything — so this
+        # was the export disagreeing with the preview, on the one property every
+        # Pop, Zoom, Punch and Spin preset in `text_presets.js` is built out of.
+        #
+        # Converted back to the 1080p reference the parameter is measured in, so
+        # `_text_font` re-applies the frame scaling to a number that has not had
+        # it yet. Round-trips exactly: the face comes out at
+        # `_text_px(height, …) * scale` frame pixels, which is what `px` below is.
+        scaled_px_at_1080 = (
+            _text_px(height, size_name, size_px) * scale * _TEXT_REFERENCE_HEIGHT / height
+        )
         font = (
             rest_font
             if abs(scale - 1.0) < 1e-6
-            else _text_font(height, size_name, clip.get("font"),
-                            _text_px(height, size_name, size_px) * scale)
+            else _text_font(height, size_name, clip.get("font"), scaled_px_at_1080)
         )
         # Letter spacing, the shadow offset and the backdrop's corners and
         # padding are fractions of the FONT SIZE, so they scale with the frame
@@ -570,9 +591,14 @@ def draw_texts(canvas: Image.Image, clips: list[dict]) -> None:
                 box_w = min(width - margin, block["text_w"] + block["pad"] * 2)
                 cx = float(clip.get("x", 0.5)) * width
                 cy = float(clip.get("y", 0.85)) * height
-                _draw_text_block(
-                    draw, block, height,
+                _place_text_block(
+                    canvas, draw, block, height,
                     box_x=cx - box_w / 2, box_w=box_w, top=cy - block["height"] / 2,
+                    # ⚠ A FREE CAPTION TURNS ABOUT ITS OWN CENTRE, because that is
+                    # the `transform-origin: center center` `captionStyle` gives
+                    # it — and because x/y ARE its centre, so any other anchor
+                    # would move a caption you had placed by hand.
+                    anchor="center",
                 )
             continue
 
@@ -594,10 +620,159 @@ def draw_texts(canvas: Image.Image, clips: list[dict]) -> None:
                 box_x = width - margin - box_w
             else:
                 box_x = (width - box_w) / 2
-            _draw_text_block(
-                draw, block, height, box_x=box_x, box_w=box_w, top=y,
+            _place_text_block(
+                canvas, draw, block, height, box_x=box_x, box_w=box_w, top=y,
+                # ⚠ THE ZONE'S OWN ANCHOR, the same one `captionStyle` pins its
+                # `transform-origin` to: a bottom caption keeps its bottom
+                # margin, a top one keeps its top margin, a middle one stays
+                # centred. Getting this wrong is not a wrong angle, it is a
+                # caption that slides sideways as it turns — in the MP4 only.
+                anchor={"top": "top", "bottom": "bottom"}.get(zone, "center"),
             )
+            # ⚠ THE STACK ADVANCES BY THE UNROTATED HEIGHT, always. A turned
+            # caption still occupies the slot it was measured into, which is
+            # exactly what CSS does — a `transform` paints somewhere else and
+            # never changes the layout under it. Advancing by the rotated
+            # bounding box would open a gap in the monitor that isn't in the MP4.
             y += block["height"] + margin * 0.25
+
+
+def _place_text_block(
+    canvas: Image.Image,
+    draw,
+    block: dict,
+    height: int,
+    box_x: float,
+    box_w: float,
+    top: float,
+    anchor: str = "center",
+) -> None:
+    """Put one measured caption on the canvas — turned, if the clip says so.
+
+    ⚠ THE ROTATION=0 PATH IS THE OLD CODE, UNTOUCHED, AND THAT IS THE POINT.
+    Every caption in every animatic that exists carries `rotation` 0, so every
+    one of them still goes straight to `_draw_text_block` on the shared canvas
+    draw — the same call, the same arguments, the same pixels. Nothing that
+    exists today can change because of anything below.
+
+    ⚠ WHY A TURNED CAPTION NEEDS A LAYER AT ALL. Pillow cannot draw rotated
+    text: there is no angle on `draw.text`, and a rounded backdrop would have to
+    be a polygon to be turned with it. The only way is the one `draw_shapes`
+    already uses — render the thing square onto its own RGBA layer, turn the
+    layer, composite it once. So this is not a new technique in this file, it is
+    the existing one applied to a caption.
+
+    ⚠ AND IT TURNS ABOUT THE CAPTION'S ANCHOR, NOT ABOUT THE LAYER'S CENTRE.
+    The browser gives the caption ONE `transform-origin` — its zone anchor, or
+    its own centre when it is free — and `scale` already grows about that point.
+    A rotation about anything else would agree with the monitor at 0° and part
+    company at every other angle, which is the preview lying about the export.
+    `_rotate_about` below is that arithmetic.
+    """
+    clip = block["clip"]
+    rotation = float(clip.get("rotation", 0.0) or 0.0) % 360.0
+    if not rotation:
+        _draw_text_block(draw, block, height, box_x=box_x, box_w=box_w, top=top)
+        return
+
+    # The layer has to be roomy enough for everything `_draw_text_block` paints
+    # OUTSIDE the box it is given — the outline grows the glyphs in every
+    # direction and the shadow throws them further still. Measured from the same
+    # numbers that function computes them from, rather than guessed at, so a
+    # 24px stroke on a big title cannot be clipped at the corners.
+    stroke = float(clip.get("stroke_px") or 0.0) * height / _TEXT_REFERENCE_HEIGHT
+    shadow = float(clip.get("shadow") or 0.0) * block["px"] * math.sqrt(2)
+    pad = int(math.ceil(max(stroke, float(block["auto_stroke"])) + shadow)) + 4
+
+    box_w_i = max(1, int(math.ceil(box_w)))
+    box_h_i = max(1, int(math.ceil(block["height"])))
+    # A caption bigger than three frames is nothing anybody can see, and a layer
+    # for one is megabytes of allocation per rendered still — the same ceiling
+    # `draw_shapes` puts on its own layer, for the same reason.
+    if box_w_i > canvas.width * 3 or box_h_i > canvas.height * 3:
+        _draw_text_block(draw, block, height, box_x=box_x, box_w=box_w, top=top)
+        return
+
+    layer_w, layer_h = box_w_i + pad * 2, box_h_i + pad * 2
+    layer = Image.new("RGBA", (layer_w, layer_h), (0, 0, 0, 0))
+    # ⚠ "RGBA" ON THE DRAW, LIKE THE CANVAS ONE. `draw_texts` builds its shared
+    # draw as `ImageDraw.Draw(canvas, "RGBA")`, which is what makes a scrim
+    # translucent and antialiased glyph edges blend into it. A plain `Draw` here
+    # would write ink straight into the buffer and a caption on a layer would
+    # come out with hard edges and an opaque bar — the same caption, drawn two
+    # ways. `tests/preset_check.py` compares the two paths at 0° to prove they
+    # are one picture.
+    pen = ImageDraw.Draw(layer, "RGBA")
+
+    # ⚠ THE LAYER'S ORIGIN IS A WHOLE PIXEL AND THE FRACTION IS KEPT INSIDE IT.
+    # A block lands at a fractional place on the canvas — `box_x` is a centre
+    # minus half a measured width — and the finished layer can only be pasted at
+    # an integer offset. Drawing at a flat `pad` and pasting at `round(...)`
+    # therefore threw away up to half a pixel, which on the hard edge of a box
+    # backdrop is a fully wrong pixel: the same caption drawn a hair to the left
+    # of where the unrotated one draws it. Carrying the fraction INTO the layer
+    # means the ink sits exactly where it always did and only the (integer)
+    # origin is rounded — nothing is.
+    origin_x, origin_y = math.floor(box_x) - pad, math.floor(top) - pad
+    frac_x, frac_y = box_x - math.floor(box_x), top - math.floor(top)
+    _draw_text_block(
+        pen, block, height, box_x=pad + frac_x, box_w=box_w, top=pad + frac_y
+    )
+
+    # Where the caption is anchored, as an offset from the LAYER's centre — not
+    # from the block's, which is half a pixel away from it now and would put the
+    # pivot in the wrong place by exactly that much.
+    anchor_x = pad + frac_x + box_w / 2.0
+    anchor_y = pad + frac_y + {
+        "top": 0.0,
+        "bottom": block["height"],
+    }.get(anchor, block["height"] / 2.0)
+    offset = (anchor_x - layer_w / 2.0, anchor_y - layer_h / 2.0)
+    turned, shift = _rotate_about(layer, rotation, offset)
+    # The layer's centre in canvas coordinates, then where the turn moved it to.
+    centre_x = origin_x + layer_w / 2.0 + shift[0]
+    centre_y = origin_y + layer_h / 2.0 + shift[1]
+    canvas.paste(
+        turned,
+        (
+            int(round(centre_x - turned.width / 2.0)),
+            int(round(centre_y - turned.height / 2.0)),
+        ),
+        turned,
+    )
+
+
+def _rotate_about(
+    layer: Image.Image, degrees: float, anchor: tuple[float, float]
+) -> tuple[Image.Image, tuple[float, float]]:
+    """Turn `layer` about a point given as an offset from its own centre.
+
+    Returns the turned layer and where its CENTRE now belongs, also as an offset
+    from the original centre — so the caller pastes at
+    `original_centre + offset - size/2` and never has to think about the angle.
+
+    ⚠ WHY NOT `Image.rotate(..., center=…)`. Pillow's own documentation says the
+    `expand` flag "assumes rotation around the centre and no translation", so
+    `center` and `expand` together do not mean what they look like they mean —
+    the corners get clipped at some angles and not others. Turning about the
+    centre (which `expand` handles exactly) and then TRANSLATING is the same
+    picture with none of that: rotating a point `p` about `a` is
+    `a + R(p − a)`, and rotating it about the centre `c` is `c + R(p − c)`;
+    subtract the two and the whole difference is the constant `(I − R)(a − c)`,
+    which is a shift of the finished image and nothing else.
+
+    ⚠ NEGATED, because Pillow turns anticlockwise and this editor — like CSS,
+    like `draw_shapes`, like the `rotation` on every other clip — calls a
+    positive angle clockwise.
+    """
+    rad = math.radians(degrees)
+    cos, sin = math.cos(rad), math.sin(rad)
+    ax, ay = anchor
+    # (I − R)·a, with R the CLOCKWISE turn in screen coordinates (y downwards),
+    # which is the ordinary rotation matrix — the same one `_draw_text_block`
+    # throws its shadow with.
+    turned = layer.rotate(-degrees, resample=Image.BICUBIC, expand=True)
+    return turned, (ax - (ax * cos - ay * sin), ay - (ax * sin + ay * cos))
 
 
 def _draw_text_block(

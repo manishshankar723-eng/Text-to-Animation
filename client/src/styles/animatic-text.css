@@ -589,11 +589,12 @@
   transform: translate(-50%, -50%);
   max-width: 86%;
 }
-/* The preset row wraps: five buttons don't fit the inspector's width, and a
-   horizontal scrollbar inside a properties pane is worse than two rows. */
-.an-tp-presets {
-  flex-wrap: wrap;
-}
+/* ⚠ REMOVED WITH ITS ONLY USER. `.an-tp-presets` was the wrapping row of five
+   text preset buttons in `TextProperties`; the shelf that replaced it is
+   `.an-preset-picker` in `animatic-tools.css`, which scrolls and files its
+   entries under captions because forty six of them will not wrap into an
+   inspector column. A rule with nothing selecting it is a rule the next person
+   has to prove is dead before they can move anything near it. */
 /* The language box in the captions panel. Narrower than `.an-name-input`'s
    full width — it is a hint ("Hindi"), not a title. */
 .an-speech-lang {

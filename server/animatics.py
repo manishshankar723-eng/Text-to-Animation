@@ -4562,7 +4562,13 @@ def run_captions(job_id: str, body: dict, progress_cb=None) -> None:
         total_ms=_duration_ms(_frames_of(job)) or None,
     )
     layer_id = _caption_layer_id(job)
-    caption_clips = captions_mod.caption_clips(tidied, layer_id=layer_id)
+    # ⚠ THE LOOK THE BROWSER PICKED, AS PLAIN CAPTION FIELDS. `caption_clips`
+    # whitelists it (`captions.clean_style`), so a request cannot reach `text`,
+    # `start_ms` or `layer_id` through here — see `STYLE_FIELDS` in `captions.py`.
+    # Empty is the subtitle this pass has always written.
+    caption_clips = captions_mod.caption_clips(
+        tidied, layer_id=layer_id, style=request.style
+    )
 
     kept = (
         _keep_typed_captions(job)
@@ -4913,7 +4919,11 @@ def run_voiceover(job_id: str, body: dict, progress_cb=None) -> None:
         # wrote, whichever button asked for it. The timings are already timeline
         # time (they describe audio laid down at 0:00), so there is no shift.
         clips = captions_mod.caption_clips(
-            captions_mod.tidy_lines(timings), layer_id=_caption_layer_id(job)
+            captions_mod.tidy_lines(timings),
+            layer_id=_caption_layer_id(job),
+            # The same look the ✎ Captions button applies — see the field's note
+            # on `AnimaticVoiceoverRequest`. Whitelisted inside `caption_clips`.
+            style=request.style,
         )
         kept = (
             _keep_typed_captions(job)

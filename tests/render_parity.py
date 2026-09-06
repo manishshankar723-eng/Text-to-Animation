@@ -187,6 +187,41 @@ PROJECT = {
         # it down to "flow" — the same forgiveness `ease` and `clip_kind` get.
         {"id": "tx5", "text": "Odd placement", "start_ms": 5000, "duration_ms": 800,
          "place": "orbit", "x": 0.1, "y": 0.1},
+        # --- Text, part two: the two properties the preset shelves animate ----
+        # ⚠ A FLOW CAPTION THAT ZOOMS AND TURNS AND DOES NOTHING ELSE. Both are
+        # animatable on a caption, both are honoured in a ZONE as well as free
+        # (the browser as one CSS transform about the zone anchor, `draw_texts`
+        # by turning the measured block about the same point), and both are what
+        # the Pop, Zoom and Spin shelves in `text_presets.js` write.
+        #
+        # ⚠ IT IS ALSO WHERE THE RENDER-KEY BUG LIVED. `scale` was animatable
+        # from Phase 5 and was never in `scene_signature`, so a caption animating
+        # only that resolved to the same signature at every moment of its life
+        # and the exporter rendered ONE still for the whole clip. Ordinary
+        # per-moment parity would never have seen it — the resolved values were
+        # right, it was the CACHE KEY that could not tell two moments apart —
+        # which is why the signature checks further down name this clip.
+        {
+            "id": "tx6",
+            "text": "Pop and turn",
+            "start_ms": 0,
+            "duration_ms": 2000,
+            "place": "flow",
+            "position": "middle",
+            "scale": 1.0,
+            "rotation": 0.0,
+            "keyframes": {
+                "scale": [
+                    {"t": 0, "v": 0.6, "ease": "ease-out"},
+                    {"t": 240, "v": 1.08, "ease": "ease-in-out"},
+                    {"t": 400, "v": 1.0, "ease": "linear"},
+                ],
+                "rotation": [
+                    {"t": 0, "v": -18.0, "ease": "ease-out"},
+                    {"t": 400, "v": 0.0, "ease": "linear"},
+                ],
+            },
+        },
     ],
     "shapes": [
         # Keys given OUT OF ORDER on purpose, and every easing curve exercised.
@@ -919,6 +954,25 @@ check("a flow caption signs exactly as it did before free placement existed",
       scene_signature(scene_at({"frames": [{"id": "a", "duration_ms": 2000}], "texts": [
           {"id": "c", "text": "hi", "start_ms": 0, "duration_ms": 2000}]}, 500))
       == "f0:1.000000:0.500000:0.500000:1.000000|tc:1.000000")
+
+# ⚠ AND THE FIFTH AND SIXTH THINGS THAT CAN MOVE A PICTURE WITHOUT MOVING A CLIP
+# — a caption that ZOOMS, and one that TURNS. `scale` was animatable on a caption
+# from Phase 5 and was never in this key, so tx6's pop resolved to the same clip
+# in the same zone at the same opacity at every moment and `build_animatic`
+# rendered ONE still for the whole two seconds: the monitor popped, the MP4 sat
+# still. `rotation` arrived with the preset shelves and would have had the same
+# hole. tx6 is a FLOW caption on purpose — free placement already puts x/y in the
+# key, so a free clip would have hidden the fault behind them.
+check("the render key changes as a flow caption pops and turns",
+      len({scene_signature(scene_at(PROJECT, t, END_MS))
+           for t in (0, 100, 200, 300)}) == 4)
+# …and the other half of that: adding them must not change what an UNZOOMED,
+# UNTURNED caption signs, or every project in the database re-renders for free.
+# The assertion above this one is that promise, spelled out byte for byte.
+check("a zoom only shows up in the key while it is off its resting value",
+      ":s" in scene_signature(scene_at(PROJECT, 100, END_MS))
+      and ":s" not in scene_signature(scene_at(PROJECT, 2500, END_MS)),
+      f"(at 100ms: {scene_signature(scene_at(PROJECT, 100, END_MS))[-40:]!r})")
 
 # `is_animated` picks the export planner, so a caption that only moves through
 # x/y has to force it — miss this and the title sits dead still in the MP4 while

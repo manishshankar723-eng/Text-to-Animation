@@ -246,6 +246,87 @@ try:
     check("the strip darkens as the scrim fades up",
           mean(c1) < mean(c0), f"(start {mean(c0):.1f} → end {mean(c1):.1f})")
 
+    # ------------------------------------------ caption zoom and turn (Phase 1)
+    print("\nA caption that only POPS AND TURNS — the preset shelves' whole point")
+    # ⚠ THIS IS THE END-TO-END VERSION OF THE `scene_signature` BUG. `scale` was
+    # animatable on a caption from Phase 5 and was missing from the render cache
+    # key, so a caption animating only its size resolved to one signature for its
+    # whole life and `build_animatic` rendered ONE still and held it: the monitor
+    # popped, the MP4 sat dead still. `tests/preset_check.py` proves the key now
+    # changes; this proves the FILE does. It is deliberately a FLOW caption with
+    # no opacity and no position keys at all — anything else would move the
+    # picture for some other reason and hide the fault all over again.
+    popping = build_animatic(
+        "popping",
+        [{"id": "a", "path": plain, "duration_ms": 1000}],
+        texts=[
+            {
+                "id": "t1", "text": "POP", "start_ms": 0, "duration_ms": 1000,
+                "position": "middle", "align": "center", "size": "large",
+                # ⚠ A BIG CAPTION ON PURPOSE. At the "large" preset a three
+                # letter word on a 360p frame is about 25px tall and covers well
+                # under a percent of the band, so a frame-average would move by a
+                # fraction either way whether the animation ran or not — a test
+                # that passes for the wrong reason as easily as the right one.
+                # 120px at 1080p is a title, and a title growing four times over
+                # is a difference no threshold has to be argued about.
+                "size_px": 120,
+                "color": "#ffffff", "backdrop": "box", "opacity": 1.0,
+                "scale": 1.0, "rotation": 0.0,
+                "keyframes": {
+                    "scale": [
+                        {"t": 0, "v": 0.4, "ease": "ease-out"},
+                        {"t": 1000, "v": 1.6, "ease": "linear"},
+                    ],
+                    "rotation": [
+                        {"t": 0, "v": -25.0, "ease": "ease-out"},
+                        {"t": 1000, "v": 25.0, "ease": "linear"},
+                    ],
+                },
+            }
+        ],
+        output_dir=os.path.join(work, "out"),
+        resolution=360, fps=24, aspect_ratio="16:9",
+    )
+    check("a caption that only zooms and turns makes the export animated",
+          popping["animated"] is True)
+
+    def middle_band(im):
+        w, h = im.size
+        return im.crop((0, int(h * 0.3), w, int(h * 0.7)))
+
+    p0 = middle_band(decode(popping["video"], 0.05, os.path.join(work, "p0.png")))
+    p1 = middle_band(decode(popping["video"], 0.95, os.path.join(work, "p1.png")))
+
+    def ink(im):
+        """How much of the band the caption covers.
+
+        ⚠ COUNTED, NOT AVERAGED. A caption is a small, very dark object on a
+        pale picture: growing it fourfold moves the band's MEAN by well under a
+        point, which is a threshold nobody could defend, while the number of
+        pixels it covers roughly quadruples. The question is "did it get
+        bigger", so the measure is area.
+        """
+        px = im.convert("RGB").load()
+        w, h = im.size
+        return sum(
+            1
+            for x in range(0, w, 2)
+            for y in range(0, h, 2)
+            if sum(px[x, y]) < 240  # the box backdrop is near-black
+        )
+
+    # ⚠ THE NUMBER THAT WOULD HAVE BEEN EQUAL. Before the cache key learned about
+    # `scale`, both of these frames were the SAME rendered still — the exporter
+    # could not tell the two moments apart — so these two counts were identical
+    # and the failure had no other symptom anywhere.
+    check("…and the two ends of it are genuinely different pictures",
+          difference(p0, p1) > 0.15, f"(diff {difference(p0, p1):.2f})")
+    # A caption running 40% → 160% covers roughly sixteen times the area. Asking
+    # for twice is the loosest assertion that still cannot pass on a still frame.
+    check("the caption really is bigger at the end than at the start",
+          ink(p1) > ink(p0) * 2, f"(start {ink(p0)}px → end {ink(p1)}px)")
+
 finally:
     shutil.rmtree(work, ignore_errors=True)
 

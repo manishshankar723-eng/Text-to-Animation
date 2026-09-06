@@ -948,7 +948,12 @@ def server_checks() -> None:
         "plan.steps[].args": [],
         "plan.steps[].args.params[]": ["name", "value"],
         "look": ["shots"],
-        "passes[]": ["door"],
+        # ⭐ `asked_for_it` — REQUIRED, and it is the field that stops a paid
+        # button standing in for free work. Live 2026-09-06: "add caption in my
+        # story and text on screen" came back as a promise, no steps, and a
+        # Voiceover offer. A model that is not ASKED whether the person wanted
+        # the thing never has to decide that it did not.
+        "passes[]": ["door", "asked_for_it"],
         # ⭐ THE ONE THAT WAS THE BUG.
         "sound": ["sfx"],
         "sound.sfx[]": ["shot", "query"],

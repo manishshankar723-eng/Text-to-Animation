@@ -17,6 +17,12 @@ import KeyframeControls from "../KeyframeControls.jsx";
 import useCapability from "../../useCapability.js";
 import VideoClipProperties, { ColorCardProperties } from "./VideoClipProperties.jsx";
 import { PropGroup, PropRow, NumField, PropSlider } from "./PropGroup.jsx";
+import PresetPicker from "./PresetPicker.jsx";
+import {
+  MOTION_PRESETS,
+  MOTION_PRESET_CATEGORIES,
+  applyMotionPreset,
+} from "../../animatic/motion_presets.js";
 import { clamp } from "../../animatic/util.js";
 
 // What this clip is called in its own header. Also the word the rest of the
@@ -161,6 +167,32 @@ export default function FrameProperties({
         <VideoClipProperties clip={frame} sourceMs={sourceMs} onChange={onChange} />
       )}
       {kind === "color" && <ColorCardProperties clip={frame} onChange={onChange} />}
+
+      {/* --- Camera moves ---------------------------------------------------
+          ⚠ ABOVE THE MOTION ROWS, NOT INSIDE THEM. A move is what almost
+          everybody wants from this pane and the four rows below are how you
+          adjust the one you picked — putting the shelf underneath would mean
+          scrolling past the fiddly half to reach the easy half.
+          ⚠ A MOVE IS A KEYFRAME MACRO AND NOTHING ELSE: it writes keys on the
+          same four properties the rows below edit, so the timeline shows its
+          diamonds, every key can be dragged afterwards, undo treats picking one
+          as a single edit, and the exporter needed no changes at all. Nothing
+          records WHICH move was applied, which is why none of these is ever
+          shown as "current" — after you drag one of its keys there isn't one.
+          See the header of `preset_util.js`. */}
+      <PropGroup
+        id="frame:move"
+        title="Camera move"
+        hint="A push, a pan or a shake — written as keyframes you can then edit"
+      >
+        <PropRow full>
+          <PresetPicker
+            categories={MOTION_PRESET_CATEGORIES}
+            presets={MOTION_PRESETS}
+            onPick={(id) => onChange(frame.id, applyMotionPreset(frame, id))}
+          />
+        </PropRow>
+      </PropGroup>
 
       {/* --- Motion. ⚠ ROWS FOLLOW `ANIMATABLE.frame` — scale, x, y, opacity —
               and the timeline's diamond rows follow the same list. Re-order one
