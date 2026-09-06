@@ -89,6 +89,8 @@ import {
   resolveTextStyle,
   styleFromClip,
 } from "../animatic/text_styles.js";
+import { OVERLAYS, overlayEntry } from "../animatic/fx_overlays.js";
+import OverlayGallery from "./OverlayGallery.jsx";
 import {
   disableProp,
   enableProp,
@@ -1020,6 +1022,10 @@ export default function AnimaticEditor({
   const [selectedTransitionId, setSelectedTransitionId] = useState(null);
   // Which half of the Media pane is showing: the footage, or the shape picker.
   const [mediaTab, setMediaTab] = useState("media");
+  // WHICH OVERLAY IS BEING DRAWN, or "". A string rather than a boolean so the
+  // tile you pressed can say so itself — a pane-wide spinner over a shelf of
+  // sixteen tiles does not tell you which one you are waiting for.
+  const [overlayBusy, setOverlayBusy] = useState("");
   // …and how that footage is listed: thumbnails in a grid, or compact rows.
   // Remembered per browser, like the workspace — see animatic/media_view.js.
   const [mediaView, setMediaView] = useState(getMediaView);
@@ -6123,6 +6129,74 @@ export default function AnimaticEditor({
     }
   }
 
+  /**
+   * Draw one FX overlay on the server and drop it on a row of its own, above
+   * everything, at the playhead.
+   *
+   * ⚠ IT IS AN ORDINARY VIDEO CLIP FROM THE MOMENT IT LANDS. No new clip kind,
+   * no new renderer path, nothing special about it at all — the monitor already
+   * plays video clips and already blends them, and the exporter already does the
+   * same arithmetic. Sixteen "wow" effects for zero renderer changes; see the
+   * header of `fx_overlays.py`. What that buys the user is that it trims,
+   * retimes, fades, keyframes and deletes exactly like the footage does.
+   *
+   * ⚠ ON THE ROW ABOVE, BECAUSE A BLEND MODE READS WHAT IS UNDER IT. A leak on
+   * the base track has nothing beneath it to screen against, so it composites
+   * over the background and looks like a wash of orange — which is the single
+   * likeliest way for somebody to conclude the effect is broken. A row is
+   * CLAIMED as a record too, not just occupied by the clip, or emptying it later
+   * would make the row vanish (see `videoTracks`).
+   *
+   * ⚠ AND THE BLEND MODE COMES BACK FROM THE SERVER WITH THE FILE. It is part of
+   * the effect rather than a setting to go and find: the same MP4 on "normal" is
+   * an opaque rectangle.
+   *
+   * ⚠ NO JOB, NO POLLING. Generation is 1–6 seconds at 1080p, so this shows a
+   * busy state and waits — the same shape as the video upload beside it.
+   */
+  async function addOverlay(kind) {
+    const entry = overlayEntry(kind);
+    if (!entry || overlayBusy) return;
+    setOverlayBusy(kind);
+    setError("");
+    try {
+      const id = await ensureProject();
+      const res = await api.makeOverlay(id, { kind });
+      const item = res.item || {};
+      const clip = {
+        ...newVideoClip(item.upload_id, item.duration_ms, res.label || entry.label, id),
+        blend: res.blend || entry.blend,
+      };
+      // The first free row above the highest one in use — or the top one, if the
+      // stack is already as tall as it is allowed to get. `videoTracks` is
+      // highest-first, and always has at least the base row in it.
+      const highest = videoTracks[0]?.track ?? 0;
+      const track = Math.min(highest + 1, MAX_PICTURE_TRACK);
+      setFrames((list) => insertPictures(list, [clip], null, track, timeRef.current));
+      if (track > highest) {
+        setLayers((list) => [
+          ...list,
+          {
+            id: newId(),
+            kind: "video",
+            name: rowKindName("video", videoTracks.filter((r) => r.rowKind === "video").length),
+            track,
+          },
+        ]);
+      }
+      addToLibrary([assetFromFrame(clip, newId())]);
+      selectOnly({ frame: clip.id });
+      setNotice(
+        `${entry.label} added on its own row, blending on “${clip.blend}”. ` +
+          "Trim it, fade it or move it like any other clip."
+      );
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setOverlayBusy("");
+    }
+  }
+
   // A colour card: a clip with no file at all. Dropped in at the playhead's
   // clip, or at the end, like every other insert here.
   function addColorCard() {
@@ -11003,6 +11077,20 @@ export default function AnimaticEditor({
               >
                 Effects
               </button>
+              {/* ⚠ "OVERLAYS", NOT "FX", AND NOT PART OF "EFFECTS". The tab
+                  beside it holds colour grades and transitions — things applied
+                  TO a clip. These are things that become a CLIP: a light leak is
+                  a video file on a row above the shot, blending down onto it.
+                  Two different nouns, so two different tabs; calling both of
+                  them effects is how somebody looks for a vignette under a
+                  grade chain and concludes it is missing. */}
+              <button
+                type="button"
+                className={`an-tab ${mediaTab === "overlays" ? "on" : ""}`}
+                onClick={() => setMediaTab("overlays")}
+              >
+                Overlays
+              </button>
               {/* ⚠ SOMEBODY ELSE'S CATALOGUE, not this project's audio — which
                   is why it is a tab beside Shapes and Effects rather than a
                   section inside Media. A sound only appears in Media once it
@@ -11043,7 +11131,9 @@ export default function AnimaticEditor({
             <span className="tiny muted">
               {mediaTab === "media"
                 ? `${assets.length} in Media`
-                : mediaTab === "effects"
+                : mediaTab === "overlays"
+                  ? `${OVERLAYS.length} to add`
+                  : mediaTab === "effects"
                   ? `${FX_ITEM_COUNT} to drag`
                   : mediaTab === "sounds"
                     // ⚠ THE CAP, NOT A RESULT COUNT. How many sounds a search
@@ -11067,6 +11157,23 @@ export default function AnimaticEditor({
                 onAdd={addSoundFromLibrary}
                 full={audioFileCount() >= MAX_AUDIO_TRACKS}
               />
+            </div>
+          ) : mediaTab === "overlays" ? (
+            <div className="an-pane-body an-media-body">
+              {/* The hint is behind the section's ⓘ, like Shapes and Effects:
+                  true forever, read once, and three lines of a narrow pane on
+                  every visit if it stands as prose. */}
+              <PropGroup
+                id="media:overlay-library"
+                title="Add an overlay"
+                count={OVERLAYS.length}
+                info="Each one is DRAWN for this project — at its aspect ratio, from nothing — and lands as an ordinary video clip on a new row above your shots, already set to the blend mode the effect needs. It takes a few seconds. Afterwards it trims, fades and moves like any other clip; delete the row to remove it."
+              >
+                <OverlayGallery
+                  busy={overlayBusy}
+                  onAdd={addOverlay}
+                />
+              </PropGroup>
             </div>
           ) : mediaTab === "effects" ? (
             <div className="an-pane-body an-media-body">

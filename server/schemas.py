@@ -2329,6 +2329,40 @@ class AnimaticVideoItem(BaseModel):
     url: str
 
 
+class AnimaticOverlayRequest(BaseModel):
+    """Body for `POST /animatics/{id}/overlays` — make one FX overlay.
+
+    ⚠ FREE, AND IT CALLS NO MODEL. The overlay is drawn from nothing by numpy in
+    `fx_overlays.py`; there is no asset to license, no download and no quota.
+    What it costs is a few seconds of CPU, which is why the route is one clip at
+    a time rather than a batch.
+    """
+
+    kind: str = Field(..., description="An id from `fx_overlays.OVERLAYS`.")
+    # How long, in seconds. 0 (the default) means "whatever the catalogue says
+    # this one should be" — the shelf sends nothing and gets the house length.
+    # Clamped server-side against `fx_overlays.MIN_SECONDS`/`MAX_SECONDS`: a
+    # minute of 4K noise is a 300MB file nobody asked for.
+    seconds: float = Field(0.0, ge=0.0, le=60.0)
+
+
+class AnimaticOverlayResponse(BaseModel):
+    """The generated overlay, ready to be dropped onto the timeline.
+
+    ⚠ IT IS AN ORDINARY VIDEO UPLOAD. `item` is exactly the shape the video
+    upload route returns, because from here on there is nothing special about
+    this clip at all — it trims, retimes, fades and deletes like any other.
+    """
+
+    item: AnimaticVideoItem
+    # ⚠ THE BLEND MODE TRAVELS WITH IT. A light leak on "normal" is an opaque
+    # orange rectangle over the shot; the same file on "screen" is a light leak.
+    # Sending it back with the clip is what makes dropping one a single gesture
+    # instead of a gesture plus a lookup nobody should have to know.
+    blend: str = "screen"
+    label: str = ""
+
+
 class AnimaticVideoUploadResponse(BaseModel):
     """Returned from POST /animatics/{id}/videos — uploads in the order sent."""
 

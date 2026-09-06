@@ -102,6 +102,8 @@ from .schemas import (
     AnimaticUploadResponse,
     AnimaticVeoClip,
     AnimaticVideoGenerateRequest,
+    AnimaticOverlayRequest,
+    AnimaticOverlayResponse,
     AnimaticVideoItem,
     AnimaticVideoUploadResponse,
     AnimaticVoiceoverRequest,
@@ -1801,6 +1803,111 @@ async def upload_videos(
         "[animatic %s] %d video(s) uploaded, %d rejected", job_id, len(items), len(rejected)
     )
     return AnimaticVideoUploadResponse(items=items, rejected=rejected)
+
+
+@router.post("/{job_id}/overlays", response_model=AnimaticOverlayResponse)
+def make_overlay(
+    job_id: str,
+    body: AnimaticOverlayRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """DRAW one FX overlay — a light leak, film grain, a glitch — into this project.
+
+    ⚠ FREE, AND IT CALLS NO MODEL. `fx_overlays.py` generates the picture from
+    nothing with numpy: no stock pack, no licence, no download, no quota. What it
+    spends is a few seconds of CPU.
+
+    ⚠ AND WHAT COMES BACK IS AN ORDINARY VIDEO UPLOAD. The file lands in the same
+    media folder under the same `vid_<id>` naming the upload route uses, so from
+    the moment it exists there is nothing special about it: the monitor plays it,
+    ffmpeg reads it at export, `DELETE`/cleanup finds it, and the clip trims,
+    fades and trashes like any other. The only thing this route knows that the
+    client does not is which BLEND mode the effect needs, and that rides back
+    with it.
+
+    ⚠ SYNCHRONOUS ON PURPOSE. Generation is 1–6 seconds at 1080p (measured; the
+    slowest is `snow`), which is the same order as the video upload route beside
+    it and well inside an ordinary request. Making it a job would buy polling,
+    a progress bar and a resume path for something that finishes before a
+    spinner is interesting.
+    """
+    # Imported locally, like every other use of `animatic` in this module: it
+    # pulls in Pillow, numpy and the ffmpeg discovery, and the router is loaded
+    # on every boot including ones that never render anything.
+    import animatic
+    import fx_overlays
+
+    job = _get_owned_animatic(job_id, current)
+    if job.status == JobStatus.RUNNING:
+        raise HTTPException(status_code=409, detail="This project is exporting.")
+
+    kind = (body.kind or "").strip()
+    if kind not in fx_overlays.BY_ID:
+        # Named rather than a bare 422: the shelf and the generator are twins and
+        # a mismatch means one of them has moved.
+        raise HTTPException(
+            status_code=400, detail=f"There is no “{kind}” overlay in this build."
+        )
+    entry = fx_overlays.BY_ID[kind]
+
+    # ⚠ AT THE PROJECT'S OWN ASPECT, WHICH IS THE POINT OF GENERATING RATHER THAN
+    # SHIPPING FILES. A bought 16:9 leak on a 9:16 reel is either stretched or
+    # cropped; this one is drawn for the frame it is going into. The SIZE is
+    # capped at the export resolution because an overlay is composited over the
+    # picture and has nothing to gain from being sharper than the film.
+    settings = _settings_of(job)
+    width, height = animatic.resolve_size(settings.aspect_ratio, settings.resolution)
+
+    media = _media_dir(job_id)
+    os.makedirs(media, exist_ok=True)
+    upload_id = uuid.uuid4().hex[:12]
+    path = os.path.join(media, f"vid_{upload_id}.mp4")
+
+    try:
+        info = fx_overlays.render(
+            kind, path,
+            width=width, height=height,
+            seconds=(body.seconds or None),
+        )
+    except animatic.AnimaticError as exc:
+        # A half-written file is worse than none: the media folder is listed by
+        # the cleanup sweep and by the exporter.
+        _quietly_remove(path)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 — an unexpected generator fault
+        _quietly_remove(path)
+        logger.exception("[animatic %s] overlay %s could not be generated", job_id, kind)
+        raise HTTPException(
+            status_code=500, detail="That overlay could not be generated."
+        ) from exc
+
+    logger.info(
+        "[animatic %s] overlay %s generated (%dx%d, %dms, %.1f MB).",
+        job_id, kind, info["width"], info["height"], info["duration_ms"],
+        os.path.getsize(path) / 1_048_576,
+    )
+    return AnimaticOverlayResponse(
+        item=AnimaticVideoItem(
+            upload_id=upload_id,
+            filename=f"{entry['label']}.mp4",
+            duration_ms=info["duration_ms"],
+            # By upload id, playable immediately, before the project is saved —
+            # the same rule the video and audio uploads follow and for the same
+            # reason: the editor's save is debounced.
+            url=f"/animatics/{job_id}/media/{upload_id}",
+        ),
+        blend=info["blend"],
+        label=entry["label"],
+    )
+
+
+def _quietly_remove(path: str) -> None:
+    """Delete a file if it is there. Used on the failure path of a generator —
+    the reason the caller is failing is more interesting than any error here."""
+    try:
+        os.remove(path)
+    except OSError:
+        pass
 
 
 @router.post("/{job_id}/audio", response_model=AnimaticAudioResponse)

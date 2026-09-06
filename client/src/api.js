@@ -1960,6 +1960,25 @@ export function animateAnimaticFrames(id, { frameIds, prompts, durations, render
   });
 }
 
+/**
+ * FREE, AND IT CALLS NO MODEL. Draws one FX overlay — a light leak, film grain,
+ * a glitch — and stores it as an ordinary video upload in this project.
+ *
+ * ⚠ IT TAKES A FEW SECONDS (1–6 at 1080p, `snow` being the slowest), because the
+ * server is generating every frame with numpy rather than fetching a file. The
+ * caller must show that it is working; there is no job to poll, deliberately.
+ *
+ * Returns `{ item, blend, label }` — `item` is the same shape `uploadVideos`
+ * returns, and `blend` is the mode the clip has to be created with for the
+ * effect to BE the effect.
+ */
+export function makeOverlay(id, { kind, seconds } = {}) {
+  return request(`/animatics/${id}/overlays`, {
+    method: "POST",
+    body: { kind, seconds: seconds || 0 },
+  });
+}
+
 // --- Captions and voiceover -------------------------------------------------
 // ⚠ The other two paths in this editor that SPEND QUOTA. Same shape as the pair
 // above and for the same reason: estimate and run take the SAME body, so the

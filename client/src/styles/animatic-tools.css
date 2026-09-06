@@ -547,6 +547,72 @@
   flex: 1 1 auto;
   min-width: 0;
 }
+/* --- The Overlays shelf ---------------------------------------------------
+   ⚠ TILES, NOT THE CHIP ROW THE PRESET PICKERS USE. Each of these carries two
+   lines — what it is, and which blend mode it lands on — because the mode is the
+   one thing about an overlay that is not obvious from its name and the one thing
+   that ruins it if it ends up wrong. A chip cannot hold two lines legibly at this
+   width, and dropping the mode would be dropping the half that matters. */
+.an-overlay-gallery {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.an-overlay-shelf {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.an-overlay-tiles {
+  display: grid;
+  /* Two across at the pane's usual width and one when it is dragged narrow,
+     rather than a fixed count that overflows sideways — the Properties pane is
+     resizable and a horizontal scrollbar inside it is worse than a taller list. */
+  grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
+  gap: 0.3rem;
+}
+.an-overlay-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  padding: 0.35rem 0.45rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.an-overlay-tile:hover:not(:disabled) {
+  border-color: var(--primary);
+}
+.an-overlay-tile:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+/* ⚠ THE ONE BEING DRAWN KEEPS FULL OPACITY while its neighbours dim. Everything
+   is disabled during a generation (one multi-second CPU job at a time), so
+   without this the tile you actually pressed is indistinguishable from the
+   fifteen you did not. */
+.an-overlay-tile.working {
+  opacity: 1;
+  border-color: var(--primary);
+}
+.an-overlay-name {
+  font-size: 0.78rem;
+  line-height: 1.15;
+}
+.an-overlay-blend {
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.an-overlay-tile.working .an-overlay-blend {
+  color: var(--primary);
+}
+
 .an-shape-pick {
   display: inline-flex;
   align-items: center;
