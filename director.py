@@ -653,7 +653,8 @@ _ARG_TYPES = {
 # overwrites something the model already said properly.
 _ARG_ALIASES = {
     "kind": ("effect", "fx", "transition", "motion", "style", "type",
-             "preset", "effect_id", "effect_name", "kind_id", "id"),
+             "preset", "effect_id", "effect_name", "effect_type", "effectType",
+             "kind_id", "id", "name"),
     "shot": ("clip", "frame", "shot_index", "shot_number", "shot_no",
              "at_shot", "on_shot"),
     "cut": ("after_shot", "after_frame", "cut_index", "after", "between"),
@@ -677,6 +678,15 @@ def _canonical_args(raw: dict, allowed: set) -> dict:
     alias never overwrites a value the model wrote under the right name.
     """
     out = dict(raw)
+    if "kind" in allowed and isinstance(out.get("kind"), dict):
+        wrapped = out["kind"]
+        for key in ("kind", "effect", "name", "id", "type"):
+            candidate = wrapped.get(key)
+            if candidate is not None and not isinstance(candidate, (dict, list)):
+                out["kind"] = candidate
+                if "params" in allowed and "params" not in out and isinstance(wrapped.get("params"), (dict, list)):
+                    out["params"] = wrapped["params"]
+                break
     for canon, spellings in _ARG_ALIASES.items():
         if canon not in allowed or out.get(canon) not in (None, ""):
             continue
@@ -686,6 +696,20 @@ def _canonical_args(raw: dict, allowed: set) -> dict:
             value = out.pop(wrong)
             if value is None or (isinstance(value, str) and not value.strip()):
                 continue
+            # Some providers wrap the chosen effect/transition as an object,
+            # e.g. `effect: {"id": "vignette", "params": {...}}`. The
+            # manifest's `kind` is still unambiguous in that shape. Extract the
+            # name, but leave the rest of the object available as `params` when
+            # the caller supplied it separately.
+            if canon == "kind" and isinstance(value, dict):
+                wrapped = value
+                for key in ("kind", "effect", "name", "id", "type"):
+                    candidate = wrapped.get(key)
+                    if candidate is not None and not isinstance(candidate, (dict, list)):
+                        value = candidate
+                        if "params" in allowed and "params" not in out and isinstance(wrapped.get("params"), (dict, list)):
+                            out["params"] = wrapped["params"]
+                        break
             out[canon] = value
             break
     return out
@@ -805,7 +829,15 @@ def fold_steps(raw: Any, vocabulary: dict) -> tuple[list[dict], list[dict]]:
             dropped.append({"index": index, "verb": verb or "(none)", "why": f"there is no “{verb}” verb"})
             continue
         allowed = known[verb]
-        raw_args = step.get("args") if isinstance(step.get("args"), dict) else {}
+        raw_args = dict(step.get("args")) if isinstance(step.get("args"), dict) else {}
+        # Be liberal when reading a provider response. A few OpenAI-shaped
+        # endpoints flatten the step (`{"verb":"add_effect","shot":3,
+        # "effect":"vignette"}`) even though the schema asks for `args`.
+        # Preserve an explicitly nested value if both forms are present; the
+        # nested object is the provider's canonical answer.
+        for name, value in step.items():
+            if name not in ("verb", "note", "args") and name not in raw_args:
+                raw_args[name] = value
         # ⚠ SYNONYM FIRST, FILTER SECOND. See `_ARG_ALIASES`: the filter below is
         # what keeps another verb's argument out, and on its own it also threw
         # away the right argument under the wrong name.

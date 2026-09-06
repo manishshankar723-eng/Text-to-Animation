@@ -84,6 +84,11 @@ const base = {
   config: { dock: "right", transcript_keep: 20 },
   quota: { used: 3, limit: 500 },
   scoring: "",
+  // ⚠ WHOSE run and WHOSE sound search. Bare `running`/`scoring` had no owner,
+  // so every applied card in the scrollback drew the SAME status line — see
+  // section 5's "one apply, ONE card says so" check.
+  runningTurn: "",
+  scoringTurn: "",
   send() {}, choose() {}, apply() {}, revert() {}, clear() {}, setError() {},
 };
 
@@ -201,9 +206,21 @@ out.scored = draw({ ...base, revertable: "a1", turns: [{
   ...soundTurn, applied: true, steps: 1,
   soundReport: { added: ["1 sound effect", "a music bed"], missed: ["church bell — no usable sound was found for it"] },
 }] });
-out.scoring = draw({ ...base, scoring: "Finding 2 sounds…", running: true, turns: [{
-  ...soundTurn, applied: true, steps: 1,
-}] });
+out.scoring = draw({ ...base, scoring: "Finding 2 sounds…", scoringTurn: "a1",
+  running: true, runningTurn: "a1", turns: [{
+    ...soundTurn, applied: true, steps: 1,
+  }] });
+
+// ⭐ TWO APPLIED PLANS, ONE APPLY IN FLIGHT. The live fault of 2026-09-06:
+// `scoring` was a bare string with no owner, so BOTH cards drew "Finding 2
+// sounds…" and the person read it as two edits running at once — *"abhi dono
+// applied ka v aa raha hai... ek ki ho ye nhi ki dono"*. Only `scoringTurn`'s
+// own card may say it, and only that card may hide its Undo for the wait.
+out.twoApplied = draw({ ...base, scoring: "Finding 2 sounds…", scoringTurn: "a2",
+  revertable: "a2", turns: [
+    { ...soundTurn, id: "a1", applied: true, steps: 1 },
+    { ...soundTurn, id: "a2", applied: true, steps: 1 },
+  ] });
 
 // ------------------------------------------- one project, many conversations
 out.chatNamed = draw(base);
@@ -409,6 +426,11 @@ def main() -> int:
     check("…and what the library could not find is ON SCREEN",
           "no usable sound was found" in out["scored"])
     check("while it searches, it says so", "Finding 2 sounds" in out["scoring"])
+    # ⭐ THE 2026-09-06 FAULT, IN ONE LINE: the status line has an OWNER.
+    check("⭐ one apply in flight, ONE card says so",
+          out["twoApplied"].count("Finding 2 sounds") == 1, out["twoApplied"][-400:])
+    check("…and the card that is NOT scoring keeps its own report",
+          out["twoApplied"].count("Applied") == 2)
     check("…and Undo is withheld until it has finished",
           "Undo this edit" not in out["scoring"] and "Undo this edit" in out["scored"])
 

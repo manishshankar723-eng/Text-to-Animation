@@ -145,13 +145,13 @@ export function agoLabel(iso, now = Date.now()) {
 // What survives a refresh
 // ===========================================================================
 /**
- * ⚠ WHAT IS MIRRORED IS NOT WHAT IS DRAWN, and this is the SAME rule the old
- * single-transcript store had — kept, because it was right for a reason that has
- * not changed. A turn in memory carries its plan, and a plan carries every
- * step's arguments: tens of kilobytes on a long one. What survives is the
- * CONVERSATION. A plan that was never applied is gone and the bubble says so,
- * rather than offering an Apply button that would run against a timeline the
- * user has since edited — a stale plan is not a saving, it is a trap.
+ * ⚠ THE CHAT IS ALSO THE AI WORK JOURNAL. A transcript without its plan is not
+ * a saved edit: after a refresh the person would have to pay for the same model
+ * call again. Keep the complete proposal and its apply checkpoint alongside
+ * the words. `plan_signature` is the document signature the proposal was read
+ * from; `useChatSessions` uses it to decide whether an unapplied plan is still
+ * safe to run. A changed film keeps the plan visible but correctly withholds
+ * Apply, rather than silently applying old shot numbers.
  */
 export function toStore(turns) {
   return (turns || []).slice(-MAX_KEPT).map((t) => ({
@@ -162,18 +162,59 @@ export function toStore(turns) {
     // Kept because it reads as part of the conversation — "I asked, you chose".
     ask: t.kind === "ask" ? t.ask : undefined,
     chosen: t.chosen,
-    // A plan that WAS applied is remembered as a fact, not as a button.
+    plan: t.plan,
+    plan_signature: t.plan_signature,
+    sound: t.sound,
+    passes: t.passes,
+    drops: t.drops,
+    log: t.log,
+    apply_refs: t.apply_refs,
+    // Applied state is remembered as a fact; unapplied state remains a reusable
+    // proposal until `restoreTurns` proves the document changed.
     applied: t.applied,
     steps: t.applied ? t.steps : undefined,
+    apply_state: t.apply_state,
+    reverted: t.reverted,
     // What the sound pass actually managed — a fact about the film, not a button.
     soundReport: t.soundReport,
-    // ⚠ AN OFFER SURVIVES AND A PLAN DOES NOT. The difference is what the button
-    // does: an Apply would run stale steps against a timeline the person has
-    // since edited, while a door button only opens ✨ Animate / 🎙 Voiceover,
-    // which reads the film as it is NOW and prices it there.
-    passes: t.passes,
-    stale: t.kind === "plan" ? true : undefined,
+    // Offers remain part of the same saved AI work record, so the person can
+    // inspect exactly what the model proposed without paying for it again.
+    work_id: t.work_id,
+    work: t.work,
+    work_state: t.work_state,
+    work_progress: t.work_progress,
+    work_error: t.work_error,
+    stale: t.stale,
   }));
+}
+
+/** Compact, deterministic key for a project document signature. */
+export function signatureKey(value) {
+  const text = String(value || "");
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${text.length}:${(hash >>> 0).toString(36)}`;
+}
+
+/**
+ * Rehydrate saved AI work against the document currently open in the editor.
+ * An unapplied plan is reusable only when it was produced from this exact
+ * document. Applied plans remain historical facts and never become stale just
+ * because the document moved on afterwards.
+ */
+export function restoreTurns(turns, projectSignature) {
+  return (turns || []).map((t) => {
+    if (t?.kind !== "plan" || t.applied) return t;
+    const safe = Boolean(
+      t.plan && projectSignature && t.plan_signature &&
+      (t.plan_signature === projectSignature ||
+        t.plan_signature === signatureKey(projectSignature))
+    );
+    return { ...t, stale: !safe };
+  });
 }
 
 const safeParse = (raw) => {

@@ -201,6 +201,31 @@ def main():
           "unusable JSON" in reason and "ran out of time" not in reason, reason)
 
     print()
+    print("⚠ A GIANT JSON INTEGER IS A REPAIRABLE MODEL FAULT, NOT A LOST BATCH")
+    print()
+
+    numeric_calls = {"n": 0}
+
+    def giant_number_then_valid(request):
+        numeric_calls["n"] += 1
+        if numeric_calls["n"] == 1:
+            return '{"ok":' + ("9" * 11074) + "}"
+        return '{"ok":true}'
+
+    llm_json.use_adapter(giant_number_then_valid)
+    try:
+        try:
+            repaired = llm_json.complete_json(REQUEST)
+        except LLMJsonError as e:
+            repaired = {"error": str(e)}
+    finally:
+        llm_json.use_adapter(None)
+    check("the oversized integer is rejected before Python's global digit guard",
+          repaired.get("ok") is True, str(repaired)[:180])
+    check("…and the normal one-time JSON repair is used",
+          numeric_calls["n"] == 2, str(numeric_calls))
+
+    print()
     print("⚠ THE SERVER'S BUDGET AND THE BROWSER'S PATIENCE STILL AGREE")
     print()
     api = io.open(ROOT / "client/src/api.js", encoding="utf-8").read()
@@ -497,6 +522,10 @@ def main():
     check("the chat's clock is an admin-panel field", bool(spec), str(spec))
     check("...and it is editable, or the panel would show a box that saves nothing",
           "turn_seconds" in chat_settings.EDITABLE, str(sorted(chat_settings.EDITABLE)))
+    from server.admin import ChatSettingsBody
+    accepted = ChatSettingsBody(turn_seconds=180).model_dump(exclude_unset=True)
+    check("...and the admin PATCH schema keeps the field instead of dropping it",
+          accepted.get("turn_seconds") == 180, str(accepted))
     check("...whose default is exactly the constant it replaced",
           spec.get("default") == llm_json.CAPABILITY_BUDGET_SECONDS["chat"],
           f"{spec.get('default')} vs {llm_json.CAPABILITY_BUDGET_SECONDS['chat']}")

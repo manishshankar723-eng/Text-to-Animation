@@ -13,9 +13,9 @@
 //      look, to the person who typed it, exactly like the new feature deleted
 //      their chat history — and `forgetLegacy` must be a SEPARATE call, so a
 //      failed upload cannot lose it.
-//   2. A PLAN IS NEVER MIRRORED. `toStore` drops unapplied steps and marks the
-//      turn `stale`, because a stale plan is not a saving, it is an Apply button
-//      that would run against a timeline the user has since edited.
+//   2. A PLAN IS MIRRORED WITH ITS SAFETY KEY. `restoreTurns` keeps it reusable
+//      when the same document returns, and marks it stale only when the film
+//      changed underneath it.
 //   3. THE MIRROR SWEEP ACTUALLY SWEEPS. Deleting a chat must not leave its copy
 //      in the browser for ever — and the walk is BACKWARDS, because removing a
 //      key shifts every index after it.
@@ -78,6 +78,8 @@ const {
   readLegacy,
   readMirror,
   readOpen,
+  restoreTurns,
+  signatureKey,
   sweepMirrors,
   titleFor,
   toStore,
@@ -189,7 +191,7 @@ check("older than a week becomes a date", !/^\d+d$/.test(ago(30 * 86400e3)), ago
 check("no timestamp is no label", agoLabel("") === "" && agoLabel("nonsense") === "");
 
 // ===========================================================================
-console.log("\n[3] ⚠ WHAT IS MIRRORED IS NOT WHAT IS DRAWN\n");
+console.log("\n[3] ⚠ THE AI WORK JOURNAL SURVIVES A REFRESH\n");
 // ===========================================================================
 {
   const planTurn = {
@@ -197,16 +199,27 @@ console.log("\n[3] ⚠ WHAT IS MIRRORED IS NOT WHAT IS DRAWN\n");
     role: "agent",
     kind: "plan",
     text: "13 transitions",
-    steps: [{ verb: "add_transition", args: { after: 1 } }],
+    plan: { version: 1, steps: [{ id: "step-1", verb: "add_transition", args: { after: 1 } }] },
+    plan_signature: "1:abc",
     passes: [{ door: "animate", why: "shot 3 is a still" }],
   };
   const [kept] = toStore([planTurn]);
   check("an unapplied plan keeps its words", kept.text === "13 transitions");
-  check("⚠ …but NOT its steps — a stale plan is a trap", kept.steps === undefined);
-  check("…and it is marked stale so the bubble can say so", kept.stale === true);
+  check("an unapplied plan keeps its reusable steps", kept.plan?.steps?.length === 1);
+  check("a plan keeps its document safety key", kept.plan_signature === "1:abc");
+  check("saved plan data is not stripped", kept.plan?.steps?.length === 1);
+  check("saved plan is not marked stale automatically", kept.stale === undefined);
 
   const [applied] = toStore([{ ...planTurn, applied: true, steps: 4 }]);
   check("a plan that WAS applied is remembered as a fact", applied.steps === 4);
+  check("an applied plan remains inspectable", applied.plan?.steps?.length === 1);
+  check(
+    "an unknown document does not unlock a saved plan",
+    restoreTurns([kept], "matching-doc")[0].stale === true
+  );
+  const safe = { ...kept, plan_signature: signatureKey("matching-doc") };
+  check("the matching document clears the legacy stale marker", restoreTurns([safe], "matching-doc")[0].stale === false);
+  check("a changed document keeps the saved plan but blocks Apply", restoreTurns([safe], "other-doc")[0].stale === true && Boolean(restoreTurns([safe], "other-doc")[0].plan));
 
   // ⚠ AN OFFER SURVIVES AND A PLAN DOES NOT, and the difference is what the
   // button does: a door button re-reads the film NOW and prices it there.

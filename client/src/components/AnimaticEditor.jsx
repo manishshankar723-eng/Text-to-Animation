@@ -7405,11 +7405,13 @@ export default function AnimaticEditor({
   const chatStore = useChatSessions({
     animaticId,
     enabled: chatOpen || chatEverOpen.current,
+    projectSignature: signature,
   });
 
   const chat = useEditorChat({
     animaticId,
     store: chatStore,
+    projectSignature: signature,
     // Asking the chat to do something IS doing something: on a blank project
     // this is what creates it. See `ensureProject` at the top of this file.
     ensureId: ensureProject,

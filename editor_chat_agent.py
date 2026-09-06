@@ -1441,6 +1441,82 @@ def work_batches(work: dict, shot_count: int) -> list[dict]:
     return out
 
 
+def _pin_kind(args: dict, rows: list[dict], vocabulary: dict) -> None:
+    """Turn the batch's `kind` from a bare string into the real list of ids.
+
+    ⚠ **THIS IS THE THIRD ATTEMPT AT ONE BUG, AND THE FIRST THAT CANNOT LOSE.**
+    The two before it were a prompt sentence and an argument filter, and both
+    failed for the same structural reason: `args` is a FLAT union of every verb's
+    argument names (there are no unions in this schema — see `director.plan_schema`),
+    and `add_effect` and `add_transition` BOTH call theirs `kind`. So narrowing
+    the arguments to the batch's own verbs removes nothing for exactly the pair it
+    needed to separate, and the model — asked for transitions AND effects in one
+    pass — filled `kind` on the transitions and left it off every effect.
+    Fourteen effects on a live Ganesh Chaturthi reel came back as fourteen rows of
+    *"add_effect: the step named no effect to add"* on 2026-09-06, after the same
+    thing had already been reported and "fixed" twice (see `director._ARG_ALIASES`).
+
+    An **enum** is what a sentence could not be: a model cannot leave an enumerated
+    field blank and cannot invent a value for it. And it is `required` too,
+    whenever every verb in the batch takes one — a property a model is not asked
+    for is a property it may simply not write, which is the same lesson
+    `plan_schema` records about `args` itself.
+
+    ⚠ **THE IDS COME OFF THE MANIFEST THE CLIENT SENT, NEVER OFF A TABLE HERE.**
+    Each verb names its own family (`verbVocab()` in `actions.js` — "effects",
+    "transitions", "shapes", "motions") and the family is a key on the same
+    manifest. A list typed here would go stale the first time an effect is added,
+    and it would go stale in the direction that hurts: the model would stop being
+    allowed to name the new one. Nothing happens at all if the manifest is older
+    than this code and carries no `family` — the schema is simply left as it was.
+
+    ⚠ **A MIXED BATCH GETS THE UNION, AND THAT IS DELIBERATE.** Transitions and
+    effects in one pass share the field, so the enum has to hold both; what stops
+    a transition id landing on an `add_effect` is the client's own validator,
+    which has always been the right place for "that value is wrong for that verb".
+    What the enum removes is the failure that had no owner — an EMPTY field.
+    """
+    props = args.get("properties")
+    if not isinstance(props, dict) or "kind" not in props:
+        return
+    families: list[str] = []
+    for row in rows:
+        family = str(row.get("family") or "").strip()
+        if family and family not in families:
+            families.append(family)
+    if not families:
+        return
+    ids: list[str] = []
+    per_verb: list[str] = []
+    for family in families:
+        found = [
+            str(item.get("id")).strip()
+            for item in (vocabulary.get(family) or [])
+            if isinstance(item, dict) and str(item.get("id") or "").strip()
+        ]
+        if not found:
+            continue
+        for one_id in found:
+            if one_id not in ids:
+                ids.append(one_id)
+        verbs = sorted(r["id"] for r in rows if r.get("family") == family and r.get("id"))
+        per_verb.append(f"{'/'.join(verbs)} takes one of: {', '.join(found)}")
+    if not ids:
+        return
+    props["kind"] = {
+        "type": "string",
+        "enum": ids,
+        "description": "Which one, exactly. " + ". ".join(per_verb) + ".",
+    }
+    # ⚠ REQUIRED ONLY WHEN EVERY VERB IN THIS BATCH TAKES ONE. A batch that may
+    # also write a `note` — which has no `kind` at all — would be unable to
+    # answer a schema that demanded it, and an unanswerable schema is a batch
+    # that fails outright rather than one step that gets dropped.
+    if all(row.get("family") for row in rows):
+        required = [name for name in (args.get("required") or []) if name != "kind"]
+        args["required"] = [*required, "kind"]
+
+
 def batch_schema(vocabulary: dict, task: dict) -> dict:
     """What ONE batch may return: steps, or sound cues. Never a conversation.
 
@@ -1485,16 +1561,16 @@ def batch_schema(vocabulary: dict, task: dict) -> dict:
         # the only place it is real. `director._ARG_ALIASES` is the floor under
         # all of it: a synonym is now renamed rather than dropped.
         args = item_props.get("args")
-        wanted = {
-            name
-            for v in (vocabulary.get("verbs") or [])
+        rows = [
+            v for v in (vocabulary.get("verbs") or [])
             if isinstance(v, dict) and v.get("id") in set(keep)
-            for name in (v.get("args") or [])
-        }
+        ]
+        wanted = {name for v in rows for name in (v.get("args") or [])}
         if wanted and isinstance(args, dict) and isinstance(args.get("properties"), dict):
             args["properties"] = {
                 name: spec for name, spec in args["properties"].items() if name in wanted
             }
+            _pin_kind(args, rows, vocabulary)
     return {
         "type": "object",
         "properties": {
@@ -1511,7 +1587,7 @@ def batch_schema(vocabulary: dict, task: dict) -> dict:
     }
 
 
-def _verb_card(vocabulary: dict, task: dict) -> str:
+def _verb_card(vocabulary: dict, task: dict, shot_count: int = 0) -> str:
     """The batch's OWN verbs, with their exact argument names, on their own line.
 
     ⚠ **THE MANIFEST ALREADY CARRIES THIS AND THAT WAS NOT ENOUGH.** `<<VOCABULARY>>`
@@ -1543,7 +1619,35 @@ def _verb_card(vocabulary: dict, task: dict) -> str:
     for v in rows[:12]:
         args = ", ".join(v.get("args") or []) or "no arguments"
         label = _clip(v.get("label"), 90)
-        lines.append(f"· {v['id']}({args})" + (f" — {label}" if label else ""))
+        line = f"· {v['id']}({args})" + (f" — {label}" if label else "")
+        # ⚠ **THE LEGAL VALUES FOR `kind`, ON THE VERB'S OWN LINE.** The manifest
+        # above carries them, and a batch told to do one job still has to find
+        # its family in a document describing the whole editor — which is how
+        # fourteen effects were written with no `kind` at all while the
+        # transitions in the same pass were perfect (2026-09-06). `_pin_kind`
+        # makes that impossible in the SCHEMA; this makes it obvious in the
+        # PROSE. Both, and both GENERATED — never type an id or an argument name
+        # into this file. See `verbVocab()` in `actions.js`.
+        family = str(v.get("family") or "").strip()
+        if family:
+            ids = [
+                str(item.get("id")).strip()
+                for item in (vocabulary.get(family) or [])
+                if isinstance(item, dict) and str(item.get("id") or "").strip()
+            ]
+            if ids:
+                line += "\n    kind must be exactly one of: " + ", ".join(ids)
+        # ⚠ A CUT IS NOT A SHOT, AND THE LAST SHOT HAS NO CUT AFTER IT. Live on
+        # 2026-09-06: a 14-shot reel asked for a transition on "cut 14", which is
+        # past the end of the film, and it was dropped. The batch is told its
+        # range in SHOTS, so counting the cuts the same way is the obvious
+        # mistake — and here is the only place the real number is known.
+        if "cut" in (v.get("args") or []) and shot_count > 1:
+            line += (
+                f"\n    cut is the JOIN between two shots, so on this {shot_count}-shot "
+                f"film it runs 1 to {shot_count - 1} — there is no cut after the last shot"
+            )
+        lines.append(line)
     return "\n".join(lines)
 
 
@@ -1575,7 +1679,7 @@ def _batch_call(*, unit: dict, board: dict, vocabulary: dict, settings: dict,
                 sort_keys=True, indent=1,
             ),
             "GOAL": task.get("goal") or "",
-            "VERBS": _verb_card(vocabulary or {}, task),
+            "VERBS": _verb_card(vocabulary or {}, task, total),
             "RANGE": (
                 "every shot in this film" if task.get("sound")
                 else f"shots {first} to {last}"

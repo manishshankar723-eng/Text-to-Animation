@@ -3671,6 +3671,67 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
+### 2026-09-06 — THE BATCH'S THREE “COULDN'T USE” ITEMS HAVE TWO REAL FIXES
+
+The AI Editor's batch response exposed two separate production faults. A model
+returned an 11,074-digit JSON integer; CPython rejected it before the existing
+one-time repair call could run, so shots 1–12 were reported as a lost part.
+`llm_json._read_json()` now uses a bounded `parse_int` converter and catches the
+parse fault as repairable input. The global `sys.set_int_max_str_digits()` guard
+is never weakened.
+
+The two `add_effect` rows were shape failures. `director.fold_steps()` now also
+reads clear effect intent when a provider flattens fields onto the step or wraps
+the selected effect as `{id, params}`; aliases still only map names the target
+verb does not own, and the final filter remains the client manifest. Added
+regressions to `tests/director_timeout_check.py` and
+`tests/editor_chat_work_check.py`. `director_timeout_check`,
+`editor_chat_work_check`, `director_plan_check`, `editor_chat_check`,
+`director_actions_check`, `chat_store_check.mjs`, `py_compile` and
+`git diff --check` pass. No live model or browser run was made.
+
+New **RULEBOOK E150** (PAKKA).
+
+### 2026-09-06 — AI EDITOR WORK JOURNAL SURVIVES REFRESH AND RESUMES
+
+The existing project-scoped chat store was saving the transcript projection but
+discarding the AI plan, sound payload, drops and apply checkpoint. That made a
+paid answer reappear as “Old plan — ask again” after a refresh. The browser now
+persists those fields through `toStore()`, plus a compact project signature.
+`restoreTurns()` clears the legacy stale marker only when the same document is
+open; changed timelines keep the saved plan visible and block Apply. Apply
+checkpoints now save the completed step log and created-item refs, so a reload
+can resume unfinished steps without duplicating earlier created items.
+
+Long editor-chat jobs also persist their server `work_id` on the user turn and
+resume polling automatically when the saved chat is reopened. The server
+already stores arbitrary turn JSON, so this remains owner/project scoped with
+the existing Mongo/local fallback and no new dependency or paid endpoint.
+
+Files: `client/src/animatic/agent/chat_sessions.js`,
+`useChatSessions.js`, `useEditorChat.js`, `EditorChat.jsx`,
+`AnimaticEditor.jsx`, `tests/chat_store_check.mjs`,
+`tests/chat_sessions_check.py`. Verified with both chat persistence checks and
+`npm run build` (the latter required elevated execution because the sandbox
+blocked the OneDrive workspace); no Playwright suite or live model call.
+
+New **RULEBOOK E149** (PAKKA).
+
+### 2026-09-06 — ADMIN CHAT CLOCK 180 WAS DROPPED BY THE REQUEST MODEL
+
+The admin Chat tab's **Seconds one message may take** input accepted a value but
+returned to 120 after blur. `AdminChat.jsx` sends `{turn_seconds: 180}`, while
+`server/admin.py`'s `ChatSettingsBody` had no `turn_seconds` field. Pydantic's
+default handling ignored the unknown key, so the route raised “Nothing to
+change” and the component's failure recovery reloaded the previous value.
+
+Added `turn_seconds: int | None` to `ChatSettingsBody`. Added a regression check
+to `tests/director_timeout_check.py` that instantiates the actual request model
+and verifies 180 survives `model_dump()`. The timeout check passes; no live
+browser edit or model call was run.
+
+New **RULEBOOK E148** (PAKKA).
+
 ### 2026-09-06 (latest) — THE SAME SIXTEEN EFFECTS, THROWN AWAY BY THEIR OWN FIX
 
     "please fix karo isko jab mai ye promat daal raha hun to effects kyun nhi aa
@@ -29003,6 +29064,97 @@ still occasionally be safety-filtered.
 ---
 
 ## 🎯 Current State / Next Steps
+
+### ✅ TWO APPLIES AT ONCE, AND 14 LOST EFFECTS — BOTH FIXED (2026-09-06)
+
+One screenshot, three separate faults, all now closed.
+
+**1. Two plans could be applied at the same time.** The guard on Apply tested
+`running` — the step loop — which goes false the moment the last verb commits,
+while the sound half of the same apply is still at Freesound for up to the whole
+request clock. A second plan could therefore be applied onto a film the first
+apply had not finished, both cards said "✓ Applied", and the single-valued
+`snapshotRef`/`revertable` meant the second apply silently destroyed the first
+one's Undo. `apply()` now takes a synchronous `applyBusyRef`, released only in
+`finish` (on the success **and** failure paths). Typing is deliberately still
+allowed — the composer's `busy` is unchanged; `applyBusy` is a second, stricter
+flag used only by the Apply buttons.
+
+**2. One apply's spinner appeared under every applied card.** `scoring` and
+`running` were global with no owner, so "⏳ Finding 15 sounds…" was drawn under
+every applied plan in the scrollback and a sound-only card claimed somebody
+else's run. The hook now returns `scoringTurn` / `runningTurn` and every status
+line is keyed off `=== turn.id`.
+
+**3. An old job restarted itself.** `send`'s catch left the user row stamped
+`work_state: "running"`, so the resume effect — written for a page *reload* —
+re-polled a job the person had abandoned. The catch now marks the row
+`failed`/`stopped`, and the resume takes the **newest** pending job, skips one an
+agent reply already answered, and never runs while another request owns
+`abortRef`.
+
+**4. Fourteen effects were thrown away by the batch pass.** `args` on the wire is
+a flat union and `add_effect`/`add_transition` both call theirs `kind`, so E147's
+argument narrowing could not separate them and the model wrote `kind` only on the
+transitions. `_pin_kind()` in `editor_chat_agent.py` now turns that field into an
+`enum` of the family's real ids (and `required` when every verb in the batch takes
+one) — a model cannot leave an enumerated field blank. The family is declared on
+the verb in `actions.js` and emitted by `verbVocab()`, so the ids are read off the
+client manifest, never off a server table. The verb card also states the cut range
+("1 to 13" on a 14-shot film), which is the other drop in that screenshot.
+
+**5. The drops list folds repeats** — fifteen copies of one message is one fact;
+the header count stays honest.
+
+`tests/editor_chat_work_check.py` and `tests/editor_chat_render_check.py` cover
+all of it and pass, as do the director/chat suites and the client build. **No live
+model call was made — item 4 is machinery, and only a real board proves the model
+now fills `kind`.**
+
+New **RULEBOOK E151–E155** (all PAKKA).
+
+### 🟢 CHAT BATCH JSON/EFFECT RECOVERY FIXED (2026-09-06)
+
+The screenshot's **three things I couldn't use** had two separate causes. A
+model batch returned a JSON integer with 11,074 digits; Python rejected it before
+the existing repair retry could run, so the whole shots 1–12 batch was reported
+as failed. `llm_json.py` now parses integers through a bounded converter and
+turns oversized values into a normal repair reason rather than changing the
+process-wide Python limit. A malformed effect step could also be flattened at
+the top level or wrap its effect in an object; `director.fold_steps()` now
+recovers those unambiguous shapes, including the effect's params, and still
+filters by the real client manifest. `tests/director_timeout_check.py` and
+`tests/editor_chat_work_check.py` cover both regressions. The focused tests pass;
+no live model call was made.
+
+New **RULEBOOK E150** (PAKKA).
+
+### 🟢 ADMIN CHAT CLOCK SAVE FIXED (2026-09-06)
+
+The AI Editor setting **Seconds one message may take** now saves correctly. The
+browser was already sending `turn_seconds`, but `server/admin.py`'s
+`ChatSettingsBody` did not declare that field. Pydantic discarded it, the PATCH
+returned “Nothing to change”, and the panel reloaded the old 120. The request
+model now includes the field; the server still clamps it to the configured
+90–180 range. `tests/director_timeout_check.py` now pins that the admin request
+schema preserves 180, and the full timeout check passes. A live browser edit
+has not been repeated yet.
+
+### 🟢 AI WORK JOURNAL SAVES AND RESUMES AFTER RELOAD (2026-09-06)
+
+The AI Editor no longer saves only the visible transcript. `chat_sessions.js`
+now persists the complete validated plan, sound instructions/report, drops,
+apply log, created-item references and long-job receipt inside the existing
+owner/project chat record. An unapplied plan is reusable after a refresh when
+the project document signature still matches; if the timeline changed, the
+saved plan remains visible but Apply is disabled for safety. Apply writes a
+checkpoint as each step lands and Resume skips completed steps, preventing
+duplicate AI-created clips. A running batch job stores its `work_id` and the
+hook resumes polling it when the chat is opened again. `chat_store_check.mjs`
+and `chat_sessions_check.py` cover browser/server persistence; `npm run build`
+passes. No browser suite or live model call was run.
+
+New **RULEBOOK E149** (PAKKA).
 
 ### 🟠 NEWEST: EFFECTS DOBARA GAYAB — AUR GALTI PICHHLE FIX MEIN HI THI (2026-09-06)
 

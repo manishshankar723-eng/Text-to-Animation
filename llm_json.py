@@ -319,6 +319,15 @@ _ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
 # truncated object, not so much that the repair costs more than the original.
 MAX_REPAIR_CHARS = 8000
 
+# A model response is untrusted input. Python 3.11+ refuses to turn a JSON
+# integer with more than 4300 digits into an int, but that exception used to
+# escape `_read_json` as a generic failure. The editor then reported the whole
+# batch as lost instead of using its normal one-time JSON repair. Keep the
+# limit deliberately well above every value this editor needs (shot numbers,
+# milliseconds and small parameter values), while refusing a giant numeric
+# token before Python does expensive integer conversion.
+MAX_JSON_INTEGER_DIGITS = 1024
+
 
 # ---------------------------------------------------------------------------
 # THE CLOCK
@@ -820,14 +829,28 @@ def extract_json(payload: str) -> str:
     return text[start:]
 
 
+def _safe_json_int(raw: str) -> int:
+    """Parse a JSON integer without allowing an unbounded numeric token."""
+    digits = len(raw.lstrip("-"))
+    if digits > MAX_JSON_INTEGER_DIGITS:
+        raise ValueError(
+            "an integer had %d digits; the maximum supported is %d"
+            % (digits, MAX_JSON_INTEGER_DIGITS)
+        )
+    return int(raw)
+
+
 def _read_json(payload: str) -> tuple[dict | None, str]:
     """`(object, "")` or `(None, why)`. ⚠ The `why` is written for a MODEL to read."""
     text = extract_json(payload)
     if not text.strip():
         return None, "there was no JSON object in it at all"
     try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError as e:
+        # `parse_int` is intentional. Without it, CPython raises its own
+        # `sys.set_int_max_str_digits` ValueError before this function can turn
+        # the malformed answer into the normal repair prompt.
+        parsed = json.loads(text, parse_int=_safe_json_int)
+    except (json.JSONDecodeError, ValueError) as e:
         return None, "it would not parse: %s" % e
     if not isinstance(parsed, dict):
         # A bare list where an object was asked for is a shape error, not a parse

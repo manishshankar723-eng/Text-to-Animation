@@ -65,6 +65,7 @@ import { ACTIONS, describeStep } from "./actions.js";
 import { capabilities } from "./capabilities.js";
 import { MAX_LOOK_SHOTS, answerText, normaliseTurn, wireMessages } from "./chat_turn.js";
 import { boardFrom } from "./useDirectorRun.js";
+import { signatureKey } from "./chat_sessions.js";
 // ⚠ THE DIRECTOR'S OWN SOUND PASS, USED AS IT IS. Cueing, budgeting,
 // placement and the ducking under speech are all decided in there; this hook
 // only supplies the cues in the shape `sfxCues` already reads. A second
@@ -193,6 +194,7 @@ const newId = () =>
  */
 export default function useEditorChat({
   animaticId,
+  projectSignature = "",
   store,
   ensureId,
   readCtx,
@@ -231,6 +233,7 @@ export default function useEditorChat({
   const runTurnRef = useRef("");
   // The sound this apply owes, held until the last step has committed.
   const soundToScoreRef = useRef(null);
+  const runTotalRef = useRef(0);
   const [runIndex, setRunIndex] = useState(-1);
   const [running, setRunning] = useState(false);
   // Which turn's plan can currently be put back. Only ever the newest applied
@@ -240,6 +243,20 @@ export default function useEditorChat({
   // What the sound half of the current apply is doing, for the one line the
   // bubble shows while it happens. `""` is "not scoring".
   const [scoring, setScoring] = useState("");
+  // ⚠ **WHOSE** APPLY IS RUNNING, AND WHOSE SOUND IS BEING SEARCHED. Both used
+  // to be bare booleans/strings, and a bare flag has no owner — so the panel
+  // drew the SAME "⏳ Finding 15 sounds…" line under EVERY applied plan in the
+  // scrollback, and a second plan's card said "Making the edit…" while a
+  // different turn was mid-run. Reported live on 2026-09-06 as *"dono applied ka
+  // aa raha hai... upar wala kyun chal raha tha"*: one apply was in flight, two
+  // cards claimed it. A status line has to name the turn it belongs to.
+  const [runningTurn, setRunningTurn] = useState("");
+  const [scoringTurn, setScoringTurn] = useState("");
+  // ⚠ THE SYNCHRONOUS HALF OF THE SAME GUARD. `running` and `scoring` are state,
+  // so two clicks in one React batch would both read the OLD value and both
+  // start. This ref flips inside `apply` itself and is cleared only when the
+  // whole apply — steps AND sound — is finally over.
+  const applyBusyRef = useRef("");
   // ⚠ DECLARED ABOVE `send`, WHICH SETS IT (RULEBOOK G6). What the panel says
   // while the model is looking at the pictures — the model's own line about why
   // it needed to see, so a wait nobody asked for at least explains itself.
@@ -298,11 +315,9 @@ export default function useEditorChat({
   soundRef.current = { buildSoundtrack, placeSoundtrack };
 
   // ------------------------------------------------------------- persistence
-  // ⚠ THERE IS NONE HERE ANY MORE, ON PURPOSE. Loading a chat, writing it back
-  // and surviving the null → real project switch all moved to `useChatSessions`,
-  // which is the only place that knows WHICH chat is on screen. What is left
-  // behind is this hook's own per-conversation state, reset below: a chat
-  // swapped underneath it must not keep the last one's error line or its Undo.
+  // Transcript and AI work are written by `useChatSessions`. This hook keeps
+  // only ephemeral controls (spinner, scoring and in-memory Undo) here; a
+  // switched chat must not inherit those controls from the previous one.
   useEffect(() => {
     // The chat on screen changed — a different one was opened, ＋ was pressed,
     // or the project itself changed. Nothing this hook was holding still applies.
@@ -497,6 +512,110 @@ export default function useEditorChat({
     [config]
   );
 
+  // A PAGE RELOAD MUST NOT TURN A RUNNING, ALREADY-PAID JOB INTO A SECOND
+  // MODEL CALL. The user turn is the durable job receipt; on the next visit we
+  // continue polling it and append the same ordinary answer when it lands.
+  const resumedWorkRef = useRef("");
+  const watchWorkRef = useRef(watchWork);
+  watchWorkRef.current = watchWork;
+  useEffect(() => {
+    if (!animaticId || sending || workRef.current) return undefined;
+    // ⚠ NEVER WHILE SOMETHING ELSE OWNS THE ABORT HANDLE. This effect assigns
+    // `abortRef.current`, so resuming on top of a live turn would hand Stop the
+    // wrong request and leave the real one unstoppable.
+    if (abortRef.current) return undefined;
+    // ⚠ **THE NEWEST ONE, AND ONLY IF NOTHING HAS ANSWERED IT.** `find` took the
+    // FIRST pending row, which on a conversation that had already moved on is an
+    // OLD question — so the panel would go back and re-run a job the person had
+    // given up on, while their current one was still being written. And a row
+    // that already has its agent reply is not pending at all; it is a stamp that
+    // was never cleared. Both were live on 2026-09-06.
+    const answered = new Set(
+      turns.filter((t) => t?.role === "agent" && t.work_id).map((t) => t.work_id)
+    );
+    let pending = null;
+    for (let i = turns.length - 1; i >= 0; i -= 1) {
+      const t = turns[i];
+      if (t?.role === "user" && t.work_id && t.work_state === "running" && !answered.has(t.work_id)) {
+        pending = t;
+        break;
+      }
+    }
+    if (!pending) return undefined;
+    const key = `${store.activeId}:${pending.work_id}`;
+    if (resumedWorkRef.current === key) return undefined;
+    resumedWorkRef.current = key;
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setSending(true);
+    watchWorkRef.current(pending.work_id, pending.work, controller.signal)
+      .then((finished) => {
+        const ctx = readCtxRef.current();
+        const caps = capabilities();
+        const normalised = normaliseTurn(finished, caps, ctx);
+        const turn = normalised.turn;
+        const agentId = newId();
+        setTurns((rows) => {
+          const already = rows.some(
+            (t) => t?.role === "agent" && t.work_id === pending.work_id
+          );
+          const updated = rows.map((t) =>
+            t.id === pending.id
+              ? {
+                  ...t,
+                  work_state: "done",
+                  work_progress: { done: finished.done, total: finished.total },
+                }
+              : t
+          );
+          if (already) return updated;
+          return [
+            ...updated,
+            {
+              id: agentId,
+              role: "agent",
+              kind: turn.kind,
+              text: turn.reply,
+              ask: turn.ask,
+              plan: turn.plan,
+              plan_signature: turn.plan ? signatureKey(projectSignature) : undefined,
+              sound: turn.sound,
+              passes: turn.passes,
+              work_id: pending.work_id,
+              work: pending.work,
+              work_state: "done",
+              drops: [
+                ...(finished.dropped || []).map((d) => ({
+                  what: "step",
+                  why: typeof d === "string" ? d : d?.why || "dropped",
+                })),
+                ...normalised.drops,
+              ],
+              steps: turn.plan ? turn.plan.steps.length : 0,
+            },
+          ];
+        });
+      })
+      .catch((e) => {
+        if (e?.name === "AbortError") return;
+        setTurns((rows) =>
+          rows.map((t) =>
+            t.id === pending.id
+              ? { ...t, work_state: "failed", work_error: e?.message || "That job did not finish." }
+              : t
+          )
+        );
+        setError(e?.message || "That saved AI job did not finish.");
+      })
+      .finally(() => {
+        abortRef.current = null;
+        setSending(false);
+      });
+
+    return () => controller.abort();
+  }, [animaticId, store.activeId, turns]);
+
   const send = useCallback(
     async (text) => {
       const message = String(text || "").trim();
@@ -561,11 +680,34 @@ export default function useEditorChat({
         // `normaliseTurn` as everything else: a big job is not a second kind of
         // edit with a second set of rules. See `server/editor_chat_work.py`.
         if (answer.work_id) {
+          setTurns((rows) =>
+            rows.map((t) =>
+              t.id === mine.id
+                ? {
+                    ...t,
+                    work_id: answer.work_id,
+                    work: answer.work || null,
+                    work_state: "running",
+                  }
+                : t
+            )
+          );
           const finished = await watchWork(answer.work_id, answer.work, controller.signal);
           const ctx = readCtxRef.current();
           ({ turn, drops } = normaliseTurn(finished, capabilities(), ctx));
           // The server counts the batches' drops too; keep both.
           answer = { ...answer, dropped: finished.dropped || [] };
+          setTurns((rows) =>
+            rows.map((t) =>
+              t.id === mine.id
+                ? {
+                    ...t,
+                    work_state: "done",
+                    work_progress: { done: finished.done, total: finished.total },
+                  }
+                : t
+            )
+          );
         }
 
         setQuota({ used: answer.turns_used || 0, limit: answer.turns_limit ?? null });
@@ -578,6 +720,7 @@ export default function useEditorChat({
             text: turn.reply,
             ask: turn.ask,
             plan: turn.plan,
+            plan_signature: turn.plan ? signatureKey(projectSignature) : undefined,
             // ⚠ `sound` AND `passes` ARE PAYLOADS, NOT DECORATION, AND BOTH WERE
             // BEING LEFT BEHIND HERE. `normaliseTurn` returns five things a turn
             // can carry — `plan`, `sound`, `ask`, `passes`, `look` — and this
@@ -603,6 +746,9 @@ export default function useEditorChat({
             // the two halves disagreed and neither one failed out loud.
             sound: turn.sound,
             passes: turn.passes,
+            work_id: answer.work_id,
+            work: answer.work,
+            work_state: answer.work_id ? "done" : undefined,
             // ⚠ THE SERVER'S DROPS AND THE CLIENT'S, TOGETHER. The server drops a
             // step whose verb it cannot read; the client drops one that will not
             // land on THIS film. Two different failures, and the user is owed
@@ -619,6 +765,25 @@ export default function useEditorChat({
           },
         ]);
       } catch (e) {
+        // ⚠ **A TURN THAT ENDED BADLY MUST NOT STAY MARKED "running".** The user
+        // row is stamped `work_state: "running"` the moment a big job starts, and
+        // this catch used to leave it that way — so the resume effect above,
+        // which exists for a page RELOAD, found a "running" job on the very next
+        // render and started polling it again behind the person's back. They had
+        // already given up and typed a new message, and the old one came back to
+        // life beside it. Reported live on 2026-09-06 as *"upar wala v kyun chal
+        // raha tha"*. A job the user stopped, or one whose wait blew up, is over.
+        setTurns((rows) =>
+          rows.map((t) =>
+            t.id === mine.id && t.work_state === "running"
+              ? {
+                  ...t,
+                  work_state: e?.stopped ? "stopped" : "failed",
+                  work_error: e?.stopped ? "" : e?.message || "That job did not finish.",
+                }
+              : t
+          )
+        );
         // ⚠ A STOP IS NOT AN ERROR. They pressed the button; telling them in red
         // that something went wrong would be the panel arguing with them. What
         // they are owed instead is the one fact they cannot see: the server was
@@ -641,7 +806,7 @@ export default function useEditorChat({
         setLooking("");
       }
     },
-    [grabPictures, post, sending, turns]
+    [grabPictures, post, projectSignature, sending, turns]
   );
 
   /**
@@ -707,20 +872,49 @@ export default function useEditorChat({
       // ⚠ SOUND ALONE IS A REAL APPLY. "Put some music under it" produces no
       // steps at all, and refusing it here would draw an Apply button that did
       // nothing — the state this whole panel is written to avoid.
-      if ((!steps.length && !turn?.sound) || running) return;
+      if ((!steps.length && !turn?.sound) || turn?.applied || turn?.stale) return;
+
+      // ⚠ **ONE APPLY AT A TIME, AND "AN APPLY" INCLUDES ITS SOUND.** This used
+      // to test `running` alone — the STEP loop — which goes false the instant
+      // the last verb commits, while the sound half is still off at the library
+      // for up to the whole request clock. So the composer came back to life,
+      // a second plan was asked for and applied ON TOP of a film the first apply
+      // had not finished editing, and both cards ended up saying "✓ Applied".
+      // Worse than the label: `snapshotRef` and `revertable` are single-valued,
+      // so the second apply silently took the first one's Undo away and pointed
+      // the snapshot at a half-edited document. Seen live on 2026-09-06.
+      //
+      // ⚠ THE REF, NOT THE STATE, IS WHAT MAKES THIS SAFE — see `applyBusyRef`.
+      if (applyBusyRef.current) return;
+      applyBusyRef.current = turnId;
 
       // ⚠ TAKEN HERE, NOT WHEN THE PLAN ARRIVED. Between reading a plan and
       // pressing Apply the user can still edit, and reverting to a document from
       // before their edits would throw away work this feature never touched.
       snapshotRef.current = docRef?.current || null;
-      stepsRef.current = steps;
-      refsRef.current = {};
+      const completed = new Set(
+        (turn.log || [])
+          .filter((line) => line.state === "done" || line.state === "note")
+          .map((line) => line.id)
+      );
+      // RESUME ONLY THE UNCOMMITTED STEPS. Created elements keep their ids in
+      // `apply_refs`, so a dependent set_text/set_effect_param can continue
+      // after a reload without creating a second copy of the earlier element.
+      stepsRef.current = steps.filter((step) => !completed.has(step.id));
+      runTotalRef.current = steps.filter((step) => step.verb !== "note").length;
+      refsRef.current = { ...(turn.apply_refs || {}) };
       runTurnRef.current = turnId;
       soundToScoreRef.current = turn?.sound || null;
+      setTurns((rows) =>
+        rows.map((t) =>
+          t.id === turnId ? { ...t, apply_state: "running", reverted: false } : t
+        )
+      );
+      setRunningTurn(turnId);
       setRunning(true);
       setRunIndex(0);
     },
-    [docRef, running, turns]
+    [docRef, turns]
   );
 
   /** ONE STEP. ⚠ A STEP THAT THROWS IS LOGGED AND THE RUN CARRIES ON. */
@@ -747,13 +941,18 @@ export default function useEditorChat({
     const turnId = runTurnRef.current;
 
     if (runIndex >= stepsRef.current.length) {
-      const total = stepsRef.current.filter((s) => s.verb !== "note").length;
+      const total = runTotalRef.current;
       const sound = soundToScoreRef.current;
       soundToScoreRef.current = null;
       setRunning(false);
+      setRunningTurn("");
       setRunIndex(-1);
       setTurns((rows) =>
-        rows.map((t) => (t.id === turnId ? { ...t, applied: true, steps: total } : t))
+        rows.map((t) =>
+          t.id === turnId
+            ? { ...t, applied: true, apply_state: "done", steps: total }
+            : t
+        )
       );
       // ⚠ ONLY THE NEWEST APPLIED PLAN KEEPS ITS UNDO. See the header.
       setRevertable(turnId);
@@ -761,7 +960,12 @@ export default function useEditorChat({
       // ⚠ THE SOUND IS PART OF THE SAME UNDO. `snapshotRef` was taken before the
       // first step, and `placeSoundtrack` writes into the same document — so one
       // Revert takes the whole thing back, lanes and all.
+      // ⚠ THE APPLY IS NOT OVER UNTIL THIS RUNS. `applyBusyRef` is released HERE
+      // and nowhere else, because the sound half is part of the same apply and
+      // part of the same Undo — letting a second one start before this point is
+      // exactly the bug the ref exists to stop. See `apply`.
       const finish = (soundFailed) => {
+        applyBusyRef.current = "";
         if (!onNotice) return;
         const made = `${total} edit${total === 1 ? "" : "s"}`;
         onNotice(
@@ -774,7 +978,14 @@ export default function useEditorChat({
         // ⚠ NOT AWAITED INSIDE THE EFFECT. An effect cannot be async, and the
         // run is already over — what is left is a network call whose result lands
         // on a turn that is already on screen.
-        scoreTurn(turnId, sound).then(finish);
+        // ⚠ AND IT MUST RUN ON THE BAD PATH TOO. A rejection here with no
+        // handler would leave `applyBusyRef` set for ever and the Apply button
+        // dead for the rest of the session — a guard that jams shut is worse
+        // than the race it was added to stop.
+        scoreTurn(turnId, sound).then(
+          finish,
+          (err) => finish(err?.message || "the sound could not be added")
+        );
       } else {
         finish("");
       }
@@ -785,7 +996,13 @@ export default function useEditorChat({
     if (line) {
       setTurns((rows) =>
         rows.map((t) =>
-          t.id === turnId ? { ...t, log: [...(t.log || []), line] } : t
+            t.id === turnId
+              ? {
+                  ...t,
+                  log: [...(t.log || []), line],
+                  apply_refs: { ...refsRef.current },
+                }
+              : t
         )
       );
     }
@@ -837,6 +1054,9 @@ export default function useEditorChat({
     if (!payload) return "";
 
     const asked = (cued.sounds || []).length + (bed ? 1 : 0);
+    // ⚠ THE LINE AND THE TURN IT BELONGS TO ARE SET TOGETHER, ALWAYS. The panel
+    // draws the spinner only under `scoringTurn`'s own card — see `EditorChat`.
+    setScoringTurn(turnId);
     setScoring(`Finding ${asked} sound${asked === 1 ? "" : "s"}…`);
     try {
       const answer = await build(payload);
@@ -885,6 +1105,7 @@ export default function useEditorChat({
       return why;
     } finally {
       setScoring("");
+      setScoringTurn("");
     }
   }, []);
 
@@ -940,6 +1161,10 @@ export default function useEditorChat({
     clear,
     running,
     scoring,
+    // ⚠ WHOSE run and WHOSE sound search — the panel keys every status line off
+    // these, so a line can only ever appear under the card that earned it.
+    runningTurn,
+    scoringTurn,
     // The model's own "why" while a look is in flight, or "".
     looking,
     revertable,

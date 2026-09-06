@@ -42,6 +42,7 @@ import {
   readLegacy,
   readMirror,
   readOpen,
+  restoreTurns,
   sweepMirrors,
   titleFor,
   toStore,
@@ -73,7 +74,7 @@ function rowFor(sessionId, turns, title) {
  *                              caller, so shutting the panel does not throw the
  *                              list away and re-fetch it on the next open.
  */
-export default function useChatSessions({ animaticId, enabled = true }) {
+export default function useChatSessions({ animaticId, enabled = true, projectSignature = "" }) {
   const [sessions, setSessions] = useState([]);
   const [limit, setLimit] = useState(0);
   const [activeId, setActiveId] = useState("");
@@ -97,6 +98,8 @@ export default function useChatSessions({ animaticId, enabled = true }) {
   const limitRef = useRef(limit);
   limitRef.current = limit;
   const jobRef = useRef(animaticId);
+  const projectSignatureRef = useRef(projectSignature);
+  projectSignatureRef.current = projectSignature;
   // What has actually been written up, so the autosave can tell a real change
   // from a re-render. Compared as JSON because a turn is replaced, not mutated.
   const savedRef = useRef("");
@@ -159,7 +162,10 @@ export default function useChatSessions({ animaticId, enabled = true }) {
   const loadTurns = useCallback(async (jobId, sessionId) => {
     loadTokenRef.current += 1;
     const token = loadTokenRef.current;
-    const mirrored = readMirror(jobId, sessionId);
+    const mirrored = restoreTurns(
+      readMirror(jobId, sessionId),
+      projectSignatureRef.current
+    );
     if (mirrored) {
       setTurns(mirrored);
       savedRef.current = JSON.stringify(toStore(mirrored));
@@ -174,7 +180,10 @@ export default function useChatSessions({ animaticId, enabled = true }) {
       // the user has clicked another row would paste the wrong conversation into
       // an open panel, which is the worst possible way to lose someone's place.
       if (jobRef.current !== jobId || activeRef.current !== sessionId) return;
-      const rows = Array.isArray(row?.turns) ? row.turns : [];
+      const rows = restoreTurns(
+        Array.isArray(row?.turns) ? row.turns : [],
+        projectSignatureRef.current
+      );
       setTurns(rows);
       savedRef.current = JSON.stringify(toStore(rows));
       writeMirror(jobId, sessionId, rows);

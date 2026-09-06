@@ -258,6 +258,88 @@ check("⚠ AND THE PROMPT NAMES ITS VERBS WITH THEIR EXACT ARGUMENTS, on their o
       FX_SIGNATURE in card and "add_transition" not in card, card)
 check("…which the batch prompt really has a slot for", "<<VERBS>>" in batch_prompt)
 
+# ---------------------------------------------------------------------------
+# ⚠ THE SAME BUG, A THIRD TIME — AND THE FIRST FIX THAT CANNOT LOSE.
+# ---------------------------------------------------------------------------
+# Live on 2026-09-06, AFTER the argument narrowing above and AFTER the prompt
+# was corrected: *"transition and effects ke saath"* on a 14-shot Ganesh
+# Chaturthi reel came back with fourteen rows of "add_effect: the step named no
+# effect to add". Narrowing cannot separate `add_effect` from `add_transition`
+# because BOTH of their arguments are spelt `kind` — so the batch wrote it on
+# the transitions and left it off every effect. A prompt sentence had already
+# failed twice. An ENUM is the one thing a model cannot leave blank.
+def manifest_family(verb: str) -> str:
+    """`verb`'s manifest family, read out of `actions.js` — never typed here."""
+    at = ACTIONS_JS.find('verb: "%s",' % verb)
+    assert at > 0, "no %s in actions.js" % verb
+    found = re.search(r'family:\s*"([a-zA-Z]+)"', ACTIONS_JS[at:at + 2400])
+    return found.group(1) if found else ""
+
+
+FX_FAMILY = manifest_family("add_effect")
+check("⚠ THE VERB ITSELF SAYS WHICH LIST ITS `kind` COMES OUT OF",
+      FX_FAMILY == "effects" and manifest_family("add_transition") == "transitions",
+      "%r / %r" % (FX_FAMILY, manifest_family("add_transition")))
+
+KIND_VOCAB = {
+    "verbs": [
+        {"id": "add_transition", "label": "a transition",
+         "args": manifest_args("add_transition"), "family": "transitions"},
+        {"id": "add_effect", "label": "an effect", "args": REAL_FX_ARGS, "family": "effects"},
+        {"id": "note", "label": "a note", "args": ["text"]},
+    ],
+    "effects": [{"id": "vignette"}, {"id": "grain"}],
+    "transitions": [{"id": "dissolve"}, {"id": "wipe"}],
+}
+
+
+def kind_of(task):
+    schema = agent.batch_schema(KIND_VOCAB, task)
+    return schema["properties"]["steps"]["items"]["properties"]["args"]
+
+
+one = kind_of({"verbs": ["add_effect"]})
+check("⚠ `kind` IS AN ENUM OF THE REAL IDS, so it cannot come back empty",
+      one["properties"]["kind"].get("enum") == ["vignette", "grain"],
+      str(one["properties"].get("kind")))
+check("⚠ …AND REQUIRED, because a field a model is not asked for is one it may not write",
+      "kind" in (one.get("required") or []), str(one.get("required")))
+
+both = kind_of({"verbs": ["add_transition", "add_effect"]})
+check("⚠ A MIXED BATCH GETS THE UNION — this is the pass that lost 14 effects",
+      set(both["properties"]["kind"].get("enum") or [])
+      == {"vignette", "grain", "dissolve", "wipe"},
+      str(both["properties"].get("kind")))
+check("…and the description says which verb takes which, so the union is not a guess",
+      "add_effect takes one of: vignette, grain"
+      in both["properties"]["kind"].get("description", ""),
+      both["properties"]["kind"].get("description", ""))
+
+# ⚠ NOT REQUIRED WHEN A VERB IN THE BATCH HAS NO `kind` AT ALL. A schema that
+# demands one from a `note` is a schema the batch cannot answer — which fails
+# the whole pass instead of dropping one step.
+withnote = kind_of({"verbs": ["add_effect", "note"]})
+check("⚠ …BUT NEVER REQUIRED OF A VERB THAT TAKES NO `kind`",
+      "kind" not in (withnote.get("required") or []), str(withnote.get("required")))
+
+# ⚠ AND AN OLDER CLIENT — a manifest with no `family` — CHANGES NOTHING.
+old_vocab = {"verbs": [{"id": "add_effect", "args": REAL_FX_ARGS}], "effects": [{"id": "grain"}]}
+old_args = agent.batch_schema(old_vocab, {"verbs": ["add_effect"]})[
+    "properties"]["steps"]["items"]["properties"]["args"]
+check("⚠ …AND A MANIFEST WITHOUT `family` IS LEFT EXACTLY AS IT WAS",
+      "enum" not in old_args["properties"]["kind"] and "kind" not in (old_args.get("required") or []),
+      str(old_args))
+
+# ⚠ A CUT IS NOT A SHOT. Same run: "add_transition: cut 14 is not between two
+# shots" on a 14-shot film. The batch is told its range in SHOTS, so counting
+# the cuts the same way is the obvious mistake, and the card is where the real
+# number is known.
+cut_card = agent._verb_card(KIND_VOCAB, {"verbs": ["add_transition"]}, 14)
+check("⚠ THE VERB CARD SPELLS OUT THE CUT RANGE, so cut 14 of 14 is not written",
+      "1 to 13" in cut_card, cut_card)
+check("…and it lists the legal kinds beside the verb, generated from the manifest",
+      "dissolve, wipe" in cut_card, cut_card)
+
 # ⚠ AND THE FLOOR UNDER ALL OF IT: A SYNONYM IS RENAMED, NOT DROPPED. Neither
 # the schema nor the prompt can be the last line of defence — both were, twice,
 # and both failed. `effect` is the word English uses; the step keeps its meaning.
@@ -277,6 +359,23 @@ check("…and a step that said it properly is untouched",
 check("⚠ …AND A REAL ARGUMENT IS NEVER REWRITTEN — `preset` IS `apply_text_preset`'s own",
       len(salvaged) > 2 and salvaged[2]["args"].get("preset") == "pop", str(salvaged[2:3]))
 check("…and not one of the three was dropped", not thrown, str(thrown))
+# ⚠ Some OpenAI-compatible endpoints flatten a step even when the schema says
+# `args`; others wrap the chosen effect in an object. Both forms carry a clear
+# intent and must not become another "no effect to add" row.
+flattened, wrapped_dropped = director.fold_steps(
+    [{"verb": "add_effect", "shot": 5, "effect": "vignette"},
+     {"verb": "add_effect", "args": {
+         "shot": 6, "effect": {"id": "grain", "params": {"amount": "0.4"}}
+     }}],
+    {"verbs": [{"id": "add_effect", "args": REAL_FX_ARGS}]},
+)
+check("⚠ A FLATTENED EFFECT STEP IS RECOVERED, not reported as missing args",
+      flattened and flattened[0]["args"].get("kind") == "vignette", str(flattened))
+check("⚠ A WRAPPED EFFECT KEEPS ITS KIND AND PARAMS",
+      len(flattened) > 1
+      and flattened[1]["args"].get("kind") == "grain"
+      and flattened[1]["args"].get("params") == {"amount": "0.4"}
+      and not wrapped_dropped, str((flattened, wrapped_dropped)))
 # ⚠ `params` AS A PLAIN OBJECT IS ALSO ACCEPTED — refusing it kept the effect
 # at its default, which reads as the AI ignoring the instruction.
 dialled, _ = director.fold_steps(
@@ -683,6 +782,46 @@ check("⚠ …AND KEEPS WATCHING AFTERWARDS, so the partial plan is not thrown a
       "return;" in client.split("editorChatWorkStop")[1][:400])
 check("⚠ THE FINISHED JOB GOES THROUGH THE SAME normaliseTurn AS EVERY TURN",
       "normaliseTurn(finished" in client)
+
+# ---------------------------------------------------------------------------
+# ⚠ A TURN THAT ENDED BADLY IS OVER — IT DOES NOT COME BACK TO LIFE.
+# ---------------------------------------------------------------------------
+# The user row is stamped `work_state: "running"` when a big job starts. The
+# catch in `send` used to leave it that way, so the RESUME effect — which exists
+# for a page reload — found a "running" job on the very next render and started
+# polling it again while the person was already asking something else. Live on
+# 2026-09-06: *"mai abhi wala generate karwa raha tha ... magar upar wala v kyun
+# chal raha tha"*.
+catch = client.split("} catch (e) {")[1][:1400]
+check("⚠ A FAILED OR STOPPED TURN CLEARS ITS OWN `work_state`",
+      'work_state: e?.stopped ? "stopped" : "failed"' in catch, catch[:300])
+resume = client.split("const resumedWorkRef")[1][:2200]
+check("⚠ …AND THE RESUME PICKS THE NEWEST PENDING JOB, not the first one it sees",
+      "for (let i = turns.length - 1; i >= 0; i -= 1)" in resume, resume[:300])
+check("⚠ …AND NEVER ONE AN AGENT REPLY HAS ALREADY ANSWERED",
+      "answered.has(t.work_id)" in resume, resume[:300])
+check("⚠ …AND NEVER WHILE ANOTHER REQUEST OWNS THE ABORT HANDLE",
+      "if (abortRef.current) return undefined;" in resume, resume[:300])
+
+# ---------------------------------------------------------------------------
+# ⚠ ONE APPLY AT A TIME, AND AN APPLY INCLUDES ITS SOUND.
+# ---------------------------------------------------------------------------
+# `running` covers the STEP loop only, and it goes false the instant the last
+# verb commits — while the sound half is still at the library, for up to the
+# whole request clock. So a second plan could be applied on top of a film the
+# first apply had not finished, and both cards said "✓ Applied". Worse: the
+# snapshot behind Undo is single-valued, so the second apply silently took the
+# first one's Undo and pointed the snapshot at a half-edited document.
+check("⚠ THE APPLY GUARD IS A REF, so two clicks in one React batch cannot both start",
+      "applyBusyRef" in client and "if (applyBusyRef.current) return;" in client)
+check("⚠ …AND IT IS RELEASED ONLY WHEN THE SOUND IS DONE TOO",
+      'applyBusyRef.current = "";' in client.split("const finish = (soundFailed)")[1][:400])
+check("⚠ …AND ON THE BAD PATH AS WELL, or the button jams shut for the session",
+      "scoreTurn(turnId, sound).then(" in client
+      and "finish(err?.message" in client.split("scoreTurn(turnId, sound).then(")[1][:400])
+check("⚠ EVERY STATUS LINE NAMES THE TURN IT BELONGS TO",
+      "setScoringTurn(turnId)" in client and "setRunningTurn(turnId)" in client
+      and "runningTurn," in client and "scoringTurn," in client)
 
 print()
 if failures:

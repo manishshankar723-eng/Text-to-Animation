@@ -475,6 +475,16 @@ export default function EditorChat({
 
   const busy = chat.sending || chat.running;
 
+  // ⚠ **TALKING IS FREE, APPLYING IS NOT — TWO DIFFERENT BUSYS, ON PURPOSE.**
+  // `busy` gates the composer and stays exactly as it was: a person is allowed
+  // to type the next thing while the last edit finishes, and taking the keyboard
+  // away for the two minutes a sound search can take would be a worse panel.
+  // What may NOT overlap is one apply with another — the snapshot behind Undo is
+  // single-valued, so a second apply starting while the first is still placing
+  // sound quietly destroys the first one's Undo and writes onto a half-edited
+  // film. `chat.scoring` is the half `chat.running` misses. See `apply()`.
+  const applyBusy = busy || Boolean(chat.scoring);
+
   function submit() {
     const text = draft.trim();
     if (!text || busy || chat.blocked) return;
@@ -849,6 +859,7 @@ export default function EditorChat({
               chat={chat}
               readCtx={readCtx}
               busy={busy}
+              applyBusy={applyBusy}
             />
           ))
         )}
@@ -1076,7 +1087,7 @@ export default function EditorChat({
 }
 
 /** One turn in the log. A person's line, or one of the assistant's three kinds. */
-function Turn({ turn, chat, readCtx, busy }) {
+function Turn({ turn, chat, readCtx, busy, applyBusy }) {
   if (turn.role === "user") {
     return (
       <div className="sc-msg is-user">
@@ -1092,7 +1103,7 @@ function Turn({ turn, chat, readCtx, busy }) {
         <Ask turn={turn} chat={chat} busy={busy} />
       )}
       {turn.kind === "plan" && (
-        <Plan turn={turn} chat={chat} readCtx={readCtx} busy={busy} />
+        <Plan turn={turn} chat={chat} readCtx={readCtx} applyBusy={applyBusy} />
       )}
       {(turn.passes || []).length > 0 && <Offers turn={turn} chat={chat} />}
       {(turn.drops || []).length > 0 && <Drops drops={turn.drops} />}
@@ -1204,12 +1215,11 @@ function Ask({ turn, chat, busy }) {
  * film is this going to touch", and that question is answered by four lines.
  * The individual steps are there underneath for anyone who wants them.
  *
- * ⚠ AND A PLAN RESTORED FROM STORAGE IS NOT APPLIABLE. `stale` is set on
- * anything that came back from localStorage: the timeline has been through a
- * refresh since, so its shot numbers may mean something else now. Saying so is
- * better than an Apply button that lands a dissolve on the wrong cut.
+ * ⚠ A PLAN RESTORED FROM STORAGE IS SAFE WHEN ITS DOCUMENT KEY MATCHES. A
+ * changed timeline keeps the saved plan visible but disables Apply; a refresh
+ * by itself must never make the person pay for the same plan again.
  */
-function Plan({ turn, chat, readCtx, busy }) {
+function Plan({ turn, chat, readCtx, applyBusy }) {
   const steps = turn.plan?.steps || [];
 
   // ⚠ DESCRIBED AGAINST THE LIVE FILM, not against the film when the plan
@@ -1273,12 +1283,17 @@ function Plan({ turn, chat, readCtx, busy }) {
             ))}
           </ul>
         )}
-        {chat.scoring && (
+        {/* ⚠ **THIS TURN'S SOUND SEARCH, NOT ANYBODY'S.** It read the bare
+            `chat.scoring` string, which has no owner — so one apply looking for
+            fifteen sounds drew "⏳ Finding 15 sounds…" under EVERY applied plan
+            in the scrollback, and the person quite reasonably read that as two
+            edits running at once. Reported live on 2026-09-06. */}
+        {chat.scoringTurn === turn.id && chat.scoring && (
           <p className="tiny muted">
             <span className="spinner-inline" /> {chat.scoring}
           </p>
         )}
-        {chat.revertable === turn.id && !chat.scoring && (
+        {chat.revertable === turn.id && chat.scoringTurn !== turn.id && (
           <button type="button" className="btn ghost small" onClick={chat.revert}>
             Undo this edit
           </button>
@@ -1291,7 +1306,10 @@ function Plan({ turn, chat, readCtx, busy }) {
     return <p className="ec-plan-done muted">↩ Put back — the film is as it was.</p>;
   }
 
-  if (turn.stale) {
+  // A saved plan whose document changed stays visible as work history. Legacy
+  // rows without a plan keep the old compact message; new rows never disappear
+  // merely because the editor was refreshed.
+  if (turn.stale && !turn.plan) {
     return (
       // ⚠ FOUR WORDS ON SCREEN, THE REASON ON HOVER. It said the whole thing
       //   inline — three lines of explanation under a plan the person had already
@@ -1311,8 +1329,16 @@ function Plan({ turn, chat, readCtx, busy }) {
   // ⚠ A SOUND-ONLY APPLY LOGS NOTHING, because it has no steps to log. Keyed
   // off the run itself as well, or the Apply button would sit there enabled
   // while the library was being searched.
+  //
+  // ⚠ AND KEYED OFF **WHOSE** RUN IT IS. `chat.running` alone is true while ANY
+  // plan is being applied, so a sound-only card (`!lines.length`) sitting in the
+  // scrollback said "⏳ Making the edit…" about somebody else's apply, and hid
+  // its own Apply button for the duration. Same fault as the scoring line above.
   const runningThis =
-    !turn.applied && chat.running && ((turn.log || []).length > 0 || !lines.length);
+    !turn.applied &&
+    chat.running &&
+    chat.runningTurn === turn.id &&
+    ((turn.log || []).length > 0 || !lines.length);
 
   return (
     <div className="ec-plan">
@@ -1375,11 +1401,22 @@ function Plan({ turn, chat, readCtx, busy }) {
             type="button"
             className="btn primary small"
             onClick={() => chat.apply(turn.id)}
-            disabled={busy || !total}
+            disabled={applyBusy || !total || turn.stale}
           >
-            Apply {total} edit{total === 1 ? "" : "s"}
+            {turn.stale
+              ? "Timeline changed"
+              : turn.apply_state === "running"
+                ? "Resume"
+                : "Apply"}{" "}
+            {turn.stale ? "" : `${total} edit${total === 1 ? "" : "s"}`}
           </button>
-          <span className="tiny muted">Nothing has changed yet</span>
+          <span className="tiny muted">
+            {turn.stale
+              ? "Saved AI work kept safely — ask again only for the changed timeline."
+              : turn.apply_state === "running"
+                ? "Continue from the last saved step"
+                : "Nothing has changed yet"}
+          </span>
         </div>
       )}
       {runningThis && (
@@ -1400,6 +1437,23 @@ function Plan({ turn, chat, readCtx, busy }) {
  */
 function Drops({ drops }) {
   const [open, setOpen] = useState(false);
+
+  // ⚠ **THE SAME REASON FOURTEEN TIMES IS ONE FACT, NOT FOURTEEN.** A live run on
+  // 2026-09-06 opened this list onto fifteen consecutive copies of "add_effect:
+  // the step named no effect to add" — which reads as fifteen unrelated
+  // breakages and buries the two lines under them that were genuinely different
+  // (a rate-limited pass, and a transition asked for past the end of the film).
+  // The COUNT above stays honest: fifteen steps really were lost. What is folded
+  // is the repetition, not the number.
+  const rolled = useMemo(() => {
+    const counts = new Map();
+    for (const d of drops) {
+      const why = d?.why || "dropped";
+      counts.set(why, (counts.get(why) || 0) + 1);
+    }
+    return [...counts.entries()].map(([why, n]) => ({ why, n }));
+  }, [drops]);
+
   return (
     <div className="ec-drops">
       <button type="button" className="ec-drops-toggle" onClick={() => setOpen((v) => !v)}>
@@ -1408,8 +1462,11 @@ function Drops({ drops }) {
       </button>
       {open && (
         <ul className="ec-drops-list">
-          {drops.map((d, i) => (
-            <li key={i}>{d.why}</li>
+          {rolled.map((row) => (
+            <li key={row.why}>
+              {row.why}
+              {row.n > 1 && <span className="tiny muted"> ×{row.n}</span>}
+            </li>
           ))}
         </ul>
       )}

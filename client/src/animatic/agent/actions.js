@@ -744,6 +744,7 @@ export const ACTIONS = {
     label: "Move on a still",
     needs: ["patchFrame"],
     args: ["shot", "kind", "amount", "ease"],
+    family: "motions",
     validate: (args, caps, ctx) => {
       const i = shotIndex(args.shot, ctx);
       if (i < 0) return fail(noShot(args.shot, ctx));
@@ -798,6 +799,7 @@ export const ACTIONS = {
     label: "Transition",
     needs: ["addTransitionAfterFrame", "patchTransition"],
     args: ["cut", "kind", "ms", "params"],
+    family: "transitions",
     validate: (args, caps, ctx) => {
       const cut = int(args.cut);
       if (cut === undefined || cut <= 0 || cut >= (ctx.frames || []).length) {
@@ -912,6 +914,7 @@ export const ACTIONS = {
     label: "Effect",
     needs: ["addEffectToClip"],
     args: ["shot", "kind", "params"],
+    family: "effects",
     validate: (args, caps, ctx) => {
       const i = shotIndex(args.shot, ctx);
       if (i < 0) return fail(noShot(args.shot, ctx));
@@ -1183,6 +1186,7 @@ export const ACTIONS = {
       "shot", "kind", "ref", "x", "y", "w", "h", "color", "opacity", "rotation", "startMs",
       "durationMs"
     ],
+    family: "shapes",
     creates: true,
     validate: (args, caps, ctx) => {
       const i = shotIndex(args.shot, ctx);
@@ -1399,6 +1403,22 @@ export function verbVocab() {
     // knows which those are stops writing forward references — the single
     // commonest fault in a generated plan (see `validatePlan`).
     creates: Boolean(action.creates),
+    // ⚠ **WHICH LIST THIS VERB'S `kind` HAS TO COME OUT OF**, named with the
+    // manifest's OWN key ("effects", "transitions", "shapes", "motions") so the
+    // server can look it up without a second table to keep in step. Absent on
+    // every verb that does not take a `kind`.
+    //
+    // ⚠ IT EXISTS BECAUSE OF ONE FAILURE, TWICE PAID FOR. `args` on the wire is a
+    // FLAT union of every verb's argument names, and `add_effect` and
+    // `add_transition` BOTH call theirs `kind` — so narrowing the arguments to a
+    // batch's own verbs (the fix that shipped before this one) removes nothing
+    // for exactly these two, and a batch writing both wrote `kind` on the
+    // transitions and left it off the effects. Fourteen effects on a live Ganesh
+    // Chaturthi reel came back as fourteen rows of "add_effect: the step named no
+    // effect to add" on 2026-09-06. With this, `batch_schema` can put a real
+    // ENUM on that field, and an enum is the one thing a model cannot leave
+    // blank. Read from here, never typed out on the server — see `_verb_card`.
+    ...(action.family ? { family: action.family } : {}),
   }));
 }
 

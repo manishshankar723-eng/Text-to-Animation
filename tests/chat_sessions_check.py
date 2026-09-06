@@ -155,6 +155,29 @@ r = client.get(f"/editor-chat/{film}/sessions/{sid}", headers=mine)
 check("reading it back answers 200", r.status_code, 200)
 check("…with the same transcript", r.json()["turns"], made["turns"])
 
+work_turns = [
+    {"id": "u-work", "role": "user", "kind": "text", "text": "add a dissolve"},
+    {
+        "id": "a-work",
+        "role": "agent",
+        "kind": "plan",
+        "text": "Saved plan",
+        "plan": {"version": 1, "steps": [{"id": "s1", "verb": "note", "args": {}}]},
+        "plan_signature": "12:abc",
+        "apply_state": "running",
+        "log": [{"id": "s1", "state": "done"}],
+        "apply_refs": {"title": "txt-1"},
+    },
+]
+r = client.put(
+    f"/editor-chat/{film}/sessions/{sid}",
+    headers=mine,
+    json={"turns": work_turns},
+)
+check("the saved AI work answers 200", r.status_code, 200)
+check("the plan survives the write", r.json()["turns"], work_turns)
+check("the apply checkpoint survives too", r.json()["turns"][1]["apply_refs"], {"title": "txt-1"})
+
 r = client.put(
     f"/editor-chat/{film}/sessions/{sid}",
     headers=mine,

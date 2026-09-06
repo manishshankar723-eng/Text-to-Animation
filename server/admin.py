@@ -2110,6 +2110,10 @@ class ChatSettingsBody(BaseModel):
     transcript_keep: int | None = None
     max_turns_per_session: int | None = None
     shot_detail_limit: int | None = None
+    # The model-call clock is owned by the Chat tab. Keep it in the request
+    # model as well as in `chat_settings.EDITABLE`; otherwise Pydantic silently
+    # drops the field and the panel reloads the old value after every save.
+    turn_seconds: int | None = None
     # How solid the panel is drawn, as a percentage. Clamped by the store.
     opacity: int | None = None
     # How far the film underneath it is blurred, in px. Clamped by the store.
