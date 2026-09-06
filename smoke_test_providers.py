@@ -67,7 +67,11 @@ def _hint_for_error(err: str) -> str | None:
             "VERTEX_IMAGE_MODEL / GEMINI_IMAGE_MODEL in .env."
         )
     if "api key" in e or "api_key" in e or "gemini_api_key" in e or "permission" in e:
-        return "Check GEMINI_API_KEY (for gemini) or your GCP auth (for vertex)."
+        return (
+            "Check GEMINI_KEY_IMAGE or GEMINI_API_KEY (for gemini), or your GCP "
+            "auth (for vertex). Since the keys were split per capability, the "
+            "drawings read their own key first — see ai_keys.py."
+        )
     if "default credentials" in e or "adc" in e or "could not automatically determine" in e:
         return "Run: gcloud auth application-default login  (Vertex AI uses ADC)."
     if "429" in e or "resource_exhausted" in e or "quota" in e:

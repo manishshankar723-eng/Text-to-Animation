@@ -34,6 +34,7 @@ from google import genai
 from google.genai import types
 from PIL import Image
 
+import ai_keys
 import retry_policy
 
 load_dotenv()
@@ -43,6 +44,11 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+# ⚠ WHOSE BILL THE DRAWINGS LAND ON. Every call in this file is one capability —
+# pictures — so the name is a module constant rather than an argument threaded
+# through nine functions. It buys `IMAGE_PROVIDER` and `GEMINI_KEY_IMAGE`; see
+# `ai_keys` for why the key is also a switch.
+CAPABILITY = "image"
 DEFAULT_MODEL_ID = "gemini-3.1-flash-image"
 DEFAULT_PROJECT = "project-cf56be07-4f9e-45d4-9f4"
 SUPPORTED_PROVIDERS = ("vertex", "gemini")
@@ -273,8 +279,13 @@ def _image_config(seed: int | None, **extra) -> types.GenerateContentConfig:
 
 
 def _resolve_provider(provider: str | None = None) -> str:
-    """Resolve the effective provider: explicit arg > IMAGE_PROVIDER env > 'vertex'."""
-    p = (provider or os.environ.get("IMAGE_PROVIDER", "vertex")).strip().lower()
+    """Resolve the effective provider: explicit arg > IMAGE_PROVIDER > its key > 'vertex'.
+
+    ⚠ `GEMINI_KEY_IMAGE` IS A SWITCH AS WELL AS A KEY — see `ai_keys`. Pasting one
+    moves the drawings to the Developer API on their own, and `IMAGE_PROVIDER`
+    still wins over it.
+    """
+    p = ai_keys.resolve_provider(CAPABILITY, provider)
     if p not in SUPPORTED_PROVIDERS:
         raise ValueError(
             f"Unknown IMAGE_PROVIDER '{p}'. Use one of {SUPPORTED_PROVIDERS}."
@@ -292,14 +303,16 @@ def _model_id(provider: str) -> str:
 def _create_client(provider: str):
     """Create a genai Client for the given provider."""
     if provider == "gemini":
-        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        api_key, source = ai_keys.gemini_key(CAPABILITY)
         if not api_key:
             raise RuntimeError(
-                "IMAGE_PROVIDER=gemini requires GEMINI_API_KEY (or GOOGLE_API_KEY) "
-                "to be set in your .env."
+                "IMAGE_PROVIDER=gemini needs a key. "
+                + ai_keys.missing_key_hint(CAPABILITY)
             )
         client = genai.Client(api_key=api_key)
-        logger.info("genai client created (provider=gemini Developer API)")
+        logger.info(
+            "genai client created (provider=gemini Developer API, key=%s)", source
+        )
         return client
 
     # provider == "vertex"

@@ -55,10 +55,49 @@ import sys
 
 from google.genai import types
 
+import ai_keys
 import animatic_fonts
+import deepgram
 import script_breakdown
 
 logger = logging.getLogger(__name__)
+
+# --- Whose bill this lands on -----------------------------------------------
+# ⚠ CAPTIONS ARE THEIR OWN CAPABILITY, AND THE REASON IS THE PRICE SHAPE. This is
+# billed per SECOND OF AUDIO while the breakdown beside it is billed per RENDER,
+# and on one key the two cannot be told apart. It is also the capability most
+# worth pointing somewhere else: a dedicated transcription backend is an order of
+# magnitude cheaper per audio-second than a general text model, and swapping it
+# has to be a line in `.env` rather than an edit here.
+#
+# `CAPTION_PROVIDER` and `GEMINI_KEY_CAPTION`, falling back to `TEXT_PROVIDER`
+# so a deployment that has never heard of either keeps working. See `ai_keys`.
+CAPABILITY = "caption"
+
+# ⚠ `deepgram` IS HERE AND NOT IN THE TEXT LIST, and that asymmetry is the point.
+# Every other capability in this app is "which Google backend"; this one can leave
+# Google entirely, because transcription is a solved commodity with real
+# competition and because a speech engine MEASURES word timings where a language
+# model INFERS them. `vertex`/`gemini` still resolve through `script_breakdown`;
+# `deepgram` goes to `deepgram.py` and never touches a genai client.
+SUPPORTED_PROVIDERS = ("vertex", "gemini", "deepgram")
+
+
+def resolve_provider(provider: str | None = None) -> str:
+    """The backend that will transcribe: explicit > CAPTION_* > TEXT_PROVIDER > vertex.
+
+    ⚠ `DEEPGRAM_API_KEY` IS NOT A SWITCH — say `CAPTION_PROVIDER=deepgram`. A
+    vendor-named key says who is paid but not what for, and Deepgram sells TTS
+    as well, so a key that moved a capability on its own would move the voiceover
+    too the day an Aura adapter lands. See `deepgram.API_KEY_ENV`.
+    """
+    p = ai_keys.resolve_provider(CAPABILITY, provider, fallback=("TEXT_PROVIDER",))
+    if p not in SUPPORTED_PROVIDERS:
+        raise CaptionError(
+            f"Unknown CAPTION_PROVIDER '{p}'. Use one of {SUPPORTED_PROVIDERS}."
+        )
+    return p
+
 
 # --- Spend guards -----------------------------------------------------------
 # One run's ceiling, in seconds of audio. Generous for a scene (20 minutes) and
@@ -224,7 +263,7 @@ class CaptionError(Exception):
 # ---------------------------------------------------------------------------
 # The estimate — FREE, and shown before anything is spent
 # ---------------------------------------------------------------------------
-def estimate(duration_ms: int) -> dict:
+def estimate(duration_ms: int, *, language: str = "") -> dict:
     """What captioning this much audio should cost. Advisory; spends nothing.
 
     `duration_ms` comes from the audio TRACK, which the browser measured with
@@ -232,12 +271,30 @@ def estimate(duration_ms: int) -> dict:
     imageio-ffmpeg install, so the caller is the only thing that knows how long
     a sound file is — see `video_assemble.py`. Do not "improve" this by
     measuring the file here.
+
+    ⚠ IT PRICES THE BACKEND THAT WILL ACTUALLY RUN, and the two are not close:
+    Deepgram Nova-3 is ~$0.0043/minute where we quote Gemini audio at
+    ~$0.0007/minute. A dialog that quoted one and spent the other would be worse
+    than no dialog, because the number would look checked.
+
+    ⚠ AND `language` IS TAKEN, NOT ASSUMED, because Deepgram charges more for
+    `multi` than for a single named language — and the default when nobody says
+    is `multi`, which is the DEARER of the two. Quoting the cheaper one and
+    spending the dearer is the single direction an advisory price must never be
+    wrong in; `tts.estimate` states the same rule for the same reason.
     """
     seconds = max(0.0, float(duration_ms or 0) / 1000.0)
+    provider = resolve_provider()
+    if provider == "deepgram":
+        usd = seconds / 60.0 * deepgram.usd_per_minute(language)
+        model = f"{deepgram.model_id()} ({deepgram.language_code(language)})"
+    else:
+        usd = seconds * USD_PER_AUDIO_SECOND
+        model = script_breakdown.text_model_id(provider)
     return {
         "seconds": round(seconds, 1),
-        "usd": round(seconds * USD_PER_AUDIO_SECOND, 4),
-        "model": script_breakdown.text_model_id(),
+        "usd": round(usd, 4),
+        "model": model,
         "over_limit": seconds > MAX_AUDIO_SECONDS,
         "limit_seconds": MAX_AUDIO_SECONDS,
     }
@@ -321,7 +378,21 @@ def transcribe(path: str, *, language: str = "", provider: str | None = None) ->
     if not data:
         raise CaptionError("That audio track is empty.")
 
-    client = script_breakdown.get_client(provider)
+    provider = resolve_provider(provider)
+
+    # ⚠ THE DISPATCH IS HERE AND THE SHAPE IS THE SAME ON BOTH SIDES. Whichever
+    # backend answers, what comes back is `[{start_ms, end_ms, text}, …]`
+    # untidied, so `tidy_lines` and everything after it stays provider-blind.
+    # A second tidying path per backend is how the two would drift apart.
+    if provider == "deepgram":
+        try:
+            return deepgram.transcribe(data, mime_type=mime, language=language)
+        except deepgram.DeepgramError as exc:
+            # Re-raised as the error the route already knows how to show. The
+            # message is Deepgram's own and already names the line to change.
+            raise CaptionError(str(exc)) from exc
+
+    client = script_breakdown.get_client(provider, key_env=ai_keys.key_env(CAPABILITY))
     model_id = script_breakdown.text_model_id(provider)
     prompt = "Write the subtitles for this audio."
     if language.strip():

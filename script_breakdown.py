@@ -39,6 +39,8 @@ from google.genai import types
 # drift, and the two ends would disagree about what is allowed.
 from gemini_client import strip_lettering
 
+import ai_keys
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -100,8 +102,15 @@ class _Retry(Exception):
 # Provider resolution (independent from the image backend, same shape)
 # ---------------------------------------------------------------------------
 def _resolve_provider(provider: str | None = None) -> str:
-    """Resolve the effective provider: explicit arg > TEXT_PROVIDER env > 'vertex'."""
-    p = (provider or os.environ.get("TEXT_PROVIDER", "vertex")).strip().lower()
+    """Effective provider: explicit arg > TEXT_PROVIDER > GEMINI_KEY_TEXT > 'vertex'.
+
+    ⚠ `GEMINI_KEY_TEXT` IS A SWITCH AS WELL AS A KEY — see `ai_keys`. Everything
+    in the TEXT family resolves through here: the breakdown, the planner, the
+    board audit, the reframe pass and the channel research. The voiceover and the
+    captions do NOT — they resolve their own capability first and hand the answer
+    in as `provider`, which is why this function never needs to know about them.
+    """
+    p = ai_keys.resolve_provider("text", provider)
     if p not in SUPPORTED_PROVIDERS:
         raise ValueError(
             f"Unknown TEXT_PROVIDER '{p}'. Use one of {SUPPORTED_PROVIDERS}."
@@ -173,9 +182,15 @@ def _sampling_kwargs() -> dict:
 
 
 def _key_names(key_env: str = "") -> list[str]:
-    """The env vars a Developer API key is looked for in, best first."""
+    """The env vars a Developer API key is looked for in, best first.
+
+    ⚠ THE SHARED NAMES COME FROM `ai_keys`, not a second copy of the list. Both
+    ends of this app resolve keys — the image and video clients do it there, this
+    does it here — and two lists that disagreed about the fallback would be an
+    app where the picture calls found a key the text calls did not.
+    """
     names = [key_env] if key_env else []
-    return names + ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+    return names + list(ai_keys.SHARED_KEY_ENVS)
 
 
 def _gemini_key(key_env: str = "") -> tuple[str, str]:
@@ -237,12 +252,23 @@ def get_client(provider: str | None = None, *, key_env: str = ""):
     `key_env` names a capability's own Gemini key to prefer (`GEMINI_KEY_CHAT`),
     falling back to the shared key — see `_gemini_key`.
 
+    ⚠ NO `key_env` MEANS THE TEXT CAPABILITY, NOT "THE SHARED KEY". This is the
+    text client factory, and everything that reaches it without naming a
+    capability IS text work — the breakdown, the planner, the board audit, the
+    reframe pass, the channel research, and the Director (which has its own
+    PROVIDER switch but no key of its own). Defaulting to the shared key instead
+    would mean `GEMINI_KEY_TEXT` was a variable you could set and watch do
+    nothing, which is the exact bug `ai_keys` exists to prevent. `GEMINI_KEY_TEXT`
+    itself falls back to `GEMINI_API_KEY`, so a deployment that sets only the
+    shared key is unaffected.
+
     ⚠ `key_env` IS PART OF THE CACHE KEY. Two capabilities on the same provider
     holding two different keys are two different clients, and caching by provider
     alone would hand whichever asked second the FIRST one's key — a billing bug
     that looks like nothing at all, because both keys work.
     """
     provider = _resolve_provider(provider)
+    key_env = key_env or ai_keys.key_env("text")
     cache_key = "%s|%s" % (provider, key_env) if provider == "gemini" else provider
     if cache_key not in _clients:
         _clients[cache_key] = _create_client(provider, key_env)

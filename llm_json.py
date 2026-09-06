@@ -150,6 +150,8 @@ from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
 
+import ai_keys
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -218,12 +220,18 @@ PROVIDER_ALIASES = {
 }
 
 # ⚠ ONE CAPABILITY, ONE ENV PREFIX, AND THE PREFIX IS THE WHOLE MAPPING. A name
-# in here buys `<PREFIX>_PROVIDER`, `<PREFIX>_MODEL` and `GEMINI_KEY_<PREFIX>`
-# with no further code; a name NOT in here resolves exactly as it did before any
+# in the table buys `<PREFIX>_PROVIDER`, `<PREFIX>_MODEL` and `GEMINI_KEY_<PREFIX>`
+# with no further code; a name NOT in it resolves exactly as it did before any
 # of this existed, which is what keeps the Director and the breakdown untouched.
-CAPABILITIES = {
-    "chat": "CHAT",
-}
+#
+# ⚠ AND THE TABLE LIVES IN `ai_keys`, NOT HERE, because the picture and video
+# clients need the same answers and cannot import this module — `script_breakdown`
+# imports `gemini_client`, so a table here would be one those two could only copy.
+# Two copies of "which env var pays for what" is the drift that ends with the
+# image calls finding a key the text calls do not. This module still owns the
+# ORDER text falls back in (Director, then TEXT_PROVIDER); it just no longer owns
+# the names.
+CAPABILITIES = ai_keys.CAPABILITIES
 
 # ⚠ WHO ENFORCES A JSON SCHEMA SERVER-SIDE. Everything not on this list is given
 # the schema in words instead — see the header. `stub` is here because it answers

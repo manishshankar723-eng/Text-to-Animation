@@ -40,6 +40,7 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
+import ai_keys
 import retry_policy
 
 load_dotenv()
@@ -49,6 +50,11 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+# ⚠ WHOSE BILL VEO LANDS ON, AND THE ONE WORTH SPLITTING FIRST. This is the only
+# per-SECOND meter in the app: one careless "render all" is dollars, not cents,
+# so it gets its own key (`GEMINI_KEY_VIDEO`) and its own switch
+# (`VIDEO_PROVIDER`) ahead of anything else. See `ai_keys`.
+CAPABILITY = "video"
 DEFAULT_PROJECT = "project-cf56be07-4f9e-45d4-9f4"
 SUPPORTED_PROVIDERS = ("vertex", "gemini")
 
@@ -154,8 +160,14 @@ def estimate_cost_usd(
 # Provider resolution — same shape as gemini_client._resolve_provider
 # ---------------------------------------------------------------------------
 def _resolve_provider(provider: str | None = None) -> str:
-    """Effective provider: explicit arg > VIDEO_PROVIDER env > 'vertex'."""
-    p = (provider or os.environ.get("VIDEO_PROVIDER", "vertex")).strip().lower()
+    """Effective provider: explicit arg > VIDEO_PROVIDER > its key > 'vertex'.
+
+    ⚠ `GEMINI_KEY_VIDEO` IS A SWITCH AS WELL AS A KEY — see `ai_keys`, and note
+    that on this capability that cuts both ways: a key pasted here starts
+    spending on the Developer API, so `VIDEO_PROVIDER` is the line to set when
+    you mean to keep Veo on Vertex.
+    """
+    p = ai_keys.resolve_provider(CAPABILITY, provider)
     if p not in SUPPORTED_PROVIDERS:
         raise ValueError(
             f"Unknown VIDEO_PROVIDER '{p}'. Use one of {SUPPORTED_PROVIDERS}."
@@ -205,15 +217,18 @@ def available_models(provider: str | None = None) -> list[str]:
 def _create_client(provider: str):
     """Create a genai Client for the given provider."""
     if provider == "gemini":
-        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        api_key, source = ai_keys.gemini_key(CAPABILITY)
         if not api_key:
             raise VideoGenerationError(
-                "VIDEO_PROVIDER=gemini requires GEMINI_API_KEY (or GOOGLE_API_KEY) "
-                "in your .env. Note that a Google AI Pro subscription does NOT "
-                "include API access — the key is billed separately."
+                "VIDEO_PROVIDER=gemini needs a key. "
+                + ai_keys.missing_key_hint(CAPABILITY)
+                + " Note that a Google AI Pro subscription does NOT include API "
+                "access — the key is billed separately."
             )
         client = genai.Client(api_key=api_key)
-        logger.info("video client created (provider=gemini Developer API)")
+        logger.info(
+            "video client created (provider=gemini Developer API, key=%s)", source
+        )
         return client
 
     # provider == "vertex"

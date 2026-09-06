@@ -3673,6 +3673,126 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
+### 2026-09-06 — CAPTIONS CAN LEAVE GOOGLE (Phase 2: Deepgram Nova-3)
+
+Phase 1 gave the captions their own switch. This gives them somewhere to go.
+`CAPTION_PROVIDER=deepgram` + `DEEPGRAM_API_KEY` sends the audio to Nova-3
+instead of to a Gemini model. Asked for: *"caption ke liye deepgram hi banao
+yahi best hai bahut credit de raha hai."* Groq deliberately skipped.
+
+**New `deepgram.py`**, a provider client in the `freesound.py` mould — talks
+HTTP, knows nothing about FastAPI, jobs or the timeline. No new dependency;
+`requests` was already here.
+
+⚠ **Not because it is cheaper — it is not.** Nova-3 batch is ~$0.0043/min
+against the ~$0.0007/min we quote for Gemini audio. It wins on **$200 of
+non-expiring free credit** — several hundred hours; no single figure is quoted
+anywhere in the code because published ones disagree ($200 at $0.0043/min is
+~775 hours, Deepgram's marketing has said ~435) and the difference is batch vs
+streaming plus add-ons — and on **measuring** word timings where a language
+model infers them.
+
+⚠ **The language parameter is the dangerous one, and it drove the design.**
+Deepgram's default is `language=en`, and a wrong language does not fail — it
+returns confident English-ish nonsense at correct timings, so everything
+downstream passes and the user gets a paid run of unreadable subtitles. So
+`language_code()` never returns `""` for any input; unmappable films become
+`multi`. The test walks 22 inputs to prove it.
+
+⚠ **Hindi works, Hinglish does not, and no flag fixes it.** Deepgram writes
+Hindi in Devanagari and has no romanisation option, while this app's Hinglish is
+Hindi in Latin script. `CAPTION_PROVIDER=gemini` is the right answer for a
+Hinglish board. Documented in `.env`, `.env.example` and D7 rather than papered
+over.
+
+The output shape is unchanged — `[{start_ms, end_ms, text}, …]` untidied — so
+`tidy_lines` and everything after it stay provider-blind; the test feeds
+Deepgram output straight into `tidy_lines` to prove it. `estimate()` now takes
+the provider *and* the language (Deepgram charges more for `multi`, and quotes
+that dearer rate when nobody names a language), and both `/captions/estimate`
+and `/captions` pass the same `language` so the quote and the run cannot
+disagree.
+
+One real bug found by its own test: the rate constants were built from
+`os.environ` at import, so the documented override only worked if the variable
+was set before the process started. Rates are read at call time now, matching
+`model_id()`.
+
+New `tests/deepgram_captions_check.py` (51 checks, `requests.post` faked, no
+network). New **RULEBOOK D7** (PAKKA).
+
+**LIVE-RUN LOG — 2026-09-06, verified against the real API.** Three calls on the
+user's own `output/_animatics/**/media/audio_*.wav`, ~$0.003 total:
+
+  1. A 4.5s clip returned `transcript: ""`, `utterances: []`. ⚠ **Not a bug —
+     the file is PURE SILENCE** (peak amplitude 0; most per-shot voiceover WAVs
+     in `output/` are silent padding). It exercised the empty-transcript branch
+     for real and it reported the right sentence. The raw JSON also confirmed the
+     paths this module reads — `results.channels[0].alternatives[0]`,
+     `results.utterances`, `metadata.duration` — and that `nova-3` resolves to
+     `general-nova-3` server-side.
+  2. A 7.6s clip returned `"What's this?"` at **6160–6879 ms**. ⚠ **Cross-checked
+     against the app's OWN free detector**: `captions.speech_spans()` — pure
+     waveform arithmetic, no model, no quota — independently put the sound at
+     **6260–6880 ms**. Two unrelated methods agreeing inside 100 ms is the
+     strongest evidence available that the timings are real, and Deepgram's
+     slightly earlier start is correct (it catches the soft onset before the
+     waveform crosses a threshold).
+  3. A 21.5s clip returned `"Oh, look at that."` at 20105–21225 ms, and
+     `tidy_lines` took all three untouched.
+
+So the request shape, the auth header, the response parsing and the hand-off to
+`tidy_lines` are confirmed against the live API, not only against the docs.
+⚠ **Still unproven live: a non-English film.** Every clip to hand was English, so
+`language=multi` was exercised but a Devanagari result was not seen. Phases 3–4
+not started.
+
+### 2026-09-06 — SIX KINDS OF SPEND, SIX KEYS (Phase 1 of the provider split)
+
+Asked for directly: *"mai chahta hun ki video aur image ke liye to gemini lagega
+mereko but aur chize jo hai mera uska alag alag rakkho"* — so that a free or
+cheaper backend can be tried per capability during testing and swapped from
+`.env` at deploy time.
+
+**The audit first.** Only `chat` had its own provider, model and key. `image`,
+`video` and `text` had their own PROVIDER switch but shared `GEMINI_API_KEY`;
+`voice` (TTS), `caption` (STT) and `reframe` had neither — they rode
+`TEXT_PROVIDER` and the shared key. And `.env.example` had advertised
+`GEMINI_KEY_MEDIA` since August that **no code ever read**: pasting a key into it
+changed nothing, silently.
+
+**New `ai_keys.py`** — one table, six capabilities, `<CAP>_PROVIDER` +
+`GEMINI_KEY_<CAP>`. It imports nothing from the app, which is load-bearing:
+`script_breakdown` imports `gemini_client`, so a table in `llm_json` (where the
+chat's lived) was one the picture and video clients could only copy.
+`llm_json.CAPABILITIES` is now that same object rather than a second copy.
+
+Wired through `gemini_client` (image), `video_client` (video),
+`script_breakdown` (text — and therefore plan, audit, reframe, research and the
+Director, which reach it without naming a capability), `captions` (caption) and
+`tts` (voice). D5's *"the key is also the switch"* rule now holds for all six,
+with `<CAP>_PROVIDER` still outranking it. `voice`/`caption` fall back to
+`TEXT_PROVIDER` so an existing deployment is untouched.
+
+Two bugs fixed on the way. A blank `IMAGE_PROVIDER=` raised *"Unknown
+IMAGE_PROVIDER ''"* — emptying a value is how people switch a setting off, so
+blank now means unset. And every missing-key error now names the variable to
+edit plus the switch that avoids it, which is the point of splitting the keys.
+
+⚠ **No automatic fallback when a free key runs out, deliberately.** A free tier
+expires silently; code that moved the work onto the shared paid key would turn
+that into unchosen spend found on an invoice. It raises, naming the line.
+
+`GEMINI_KEY_MEDIA` deleted from `.env.example` and from the user's `.env`.
+New `tests/ai_keys_check.py` (49 checks, 17 env vars controlled, no network);
+`chat_provider_check`, `captions_check`, `autoframe_check`, `capability_check`
+and `director_contract_check` all still pass. `smoke_test_providers.py` fails
+identically before and after this change — the GCP project is 403
+`CONSUMER_INVALID` and `GEMINI_API_KEY` is empty; both predate it.
+
+New **RULEBOOK D6** (PAKKA). Phases 2–4 (Deepgram captions, Sarvam/Edge-TTS
+voiceover, `openai_compatible` for the breakdown) are not started.
+
 ### 2026-09-06 — THE BATCH'S THREE “COULDN'T USE” ITEMS HAVE TWO REAL FIXES
 
 The AI Editor's batch response exposed two separate production faults. A model

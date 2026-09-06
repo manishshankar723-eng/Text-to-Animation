@@ -4400,7 +4400,10 @@ def estimate_captions(
     # sends the whole recording however many pieces it has been cut into, so
     # quoting the audible total would quote less than the run actually costs.
     track = _captioned_clips(job, body.upload_id)[0]
-    quote = captions_mod.estimate(track.duration_ms)
+    # ⚠ THE LANGUAGE TRAVELS WITH THE QUOTE. Deepgram charges more for its
+    # code-switching mode than for a single named language, so a quote that
+    # ignored the field the run is about to use would price a different run.
+    quote = captions_mod.estimate(track.duration_ms, language=body.language)
     return AudioCostEstimate(
         seconds=quote["seconds"],
         usd=quote["usd"],
@@ -4443,7 +4446,11 @@ def caption_animatic(
                 "layer you aren't using and try again."
             ),
         )
-    quote = captions_mod.estimate(track.duration_ms)
+    # ⚠ THE SAME ARGUMENTS AS /estimate ABOVE, and that is not tidiness. Both
+    # routes take the same body, so the number quoted can only be the price of
+    # the thing this button then does — drop `language` here and the dialog would
+    # promise one rate while the run recorded another.
+    quote = captions_mod.estimate(track.duration_ms, language=body.language)
     if quote["over_limit"]:
         raise HTTPException(
             status_code=413,

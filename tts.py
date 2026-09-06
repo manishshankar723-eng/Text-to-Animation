@@ -34,9 +34,29 @@ import wave
 
 from google.genai import types
 
+import ai_keys
 import script_breakdown
 
 logger = logging.getLogger(__name__)
+
+# --- Whose bill this lands on -----------------------------------------------
+# ⚠ THE VOICEOVER IS ITS OWN CAPABILITY, AND IT IS THE ONE MOST LIKELY TO LEAVE
+# GOOGLE. It is billed per CHARACTER, and which backend reads a line best is a
+# question about the FILM'S LANGUAGE rather than about this app: an Indic-language
+# board is served by a backend trained on Indic speech, and an English one by
+# whichever is cheapest that week. So the switch has to be a line in `.env`.
+#
+# `VOICE_PROVIDER` and `GEMINI_KEY_VOICE`, falling back to `TEXT_PROVIDER` so a
+# deployment that has never heard of either keeps working. See `ai_keys`.
+CAPABILITY = "voice"
+
+
+def resolve_provider(provider: str | None = None) -> str:
+    """The backend that will speak: explicit > VOICE_* > TEXT_PROVIDER > vertex."""
+    return ai_keys.resolve_provider(
+        CAPABILITY, provider, fallback=("TEXT_PROVIDER",)
+    )
+
 
 # What the TTS models return: signed 16-bit little-endian PCM, mono, 24kHz.
 # Not negotiable and not detected — it is the documented output format, and the
@@ -346,7 +366,9 @@ def speak(text: str, *, voice: str | None = None, provider: str | None = None) -
     if not line:
         raise VoiceoverError("There is nothing to read aloud.")
 
-    client = script_breakdown.get_client(provider)
+    client = script_breakdown.get_client(
+        resolve_provider(provider), key_env=ai_keys.key_env(CAPABILITY)
+    )
     model_id = tts_model_id()
     name = resolve_voice(voice)
     try:
