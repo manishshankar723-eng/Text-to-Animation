@@ -308,7 +308,9 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-09-06 — **A CHAT THE USER RENAMED WENT BACK TO BEING NAMED BY ITS FIRST MESSAGE.** *"mai chat ko rename kiya tha chat 1 … fir prompt daala to chat ka name prompt ke words ban gaya — agar user rename kar diya hai to wahi naam hamesha rahna chahiye"*. Renamed to **"chat 1"**, a message sent in it later, and the row in 🕘 went back to reading *"is shorts/reel ke hisaab se sound effects and…"*. ⚠ **THE BROWSER DID KNOW NOT TO DO THAT — IT KNEW IT IN A PLACE THAT DOES NOT SURVIVE.** `useChatSessions` kept the renamed chats in a React ref (`renamedRef`) and skipped sending a title for those; **a ref is emptied by a reload**, and nothing ever fills it again, so the first autosave after the panel was reopened posted the first line of the chat as its title and the chosen name was gone for good. A second tab and a retried save had the same hole. ⚠ **SO THE REFUSAL MOVED TO THE STORE, WHICH IS THE ONLY PLACE ALL THREE PASS THROUGH.** A title now travels with `title_auto` — true from the autosave, absent from the rename box — and `chat_sessions.save_session` writes `title_locked` when a person names a chat and **drops** every automatic title on a locked one. **Clear chat unlocks it**, because that makes a conversation new again, name and all. The listing carries `title_locked` so a reloaded panel takes the answer from the server instead of guessing, and the row on screen never flickers to the wrong name. Files: `server/chat_sessions.py`, `server/schemas.py`, `server/editor_chat.py`, `client/src/api.js`, `client/src/animatic/agent/useChatSessions.js`. `tests/chat_sessions_check.py` gains **§12 — 18 checks**, including the exact live sequence (rename → next message → name survives) and a read of the browser source proving the autosave marks its title automatic and the rename box does not; `chat_sessions_check`, `editor_chat_check`, `editor_chat_doors_check` and `chat_store_check.mjs` all pass. New **RULEBOOK E160** (PAKKA). ⚠ **NOT CLICKED IN A BROWSER (G2)** — the flow is proved through the routes and the store, not through the panel. ⚠ **AND ONE THING WAS DESTROYED IN THIS VISIT, RECORDED HONESTLY:** a patch script opened this file for writing and then died on an encoding error, emptying all 32,874 lines of it. The committed copy was restored and the uncommitted summary above re-typed from what was still on screen — **one section's write-up (＋ Add layer → Storyboard images) was lost**; its code and its RULEBOOK row (E156) are untouched. See **RULEBOOK G1**: build the bytes, write a temp file, rename it over the target — never open the real file for writing.
+**Last updated:** 2026-09-06 — **THE VOICEOVER CAN LEAVE GOOGLE (Phase 3).** `VOICE_PROVIDER=sarvam` reads the dialogue on Sarvam's Bulbul v3 — eleven Indian languages, billed in rupees, and ⚠ **the only backend here that reads HINGLISH** (Hindi in Latin script) as one sentence instead of as bad English. `VOICE_PROVIDER=deepgram` reads it on Aura-2 (English only) against the SAME $200 of free credit the captions already use. Unset, nothing moved and Google still reads it. ⚠ **THE THING THAT WOULD HAVE RUINED A FILM WAS THE STAGE DIRECTION**: `prompt_for` sends Gemini *"Read this line as an elderly man:"* — which is the only way an age reaches that model — and the other two would have READ THAT SENTENCE OUT LOUD, in a paid run. `direction_for`, `prompt_for` and `estimate` are all provider-aware now; off Google the age arrives as CASTING and, on Sarvam, as PACE. ⚠ **SPEECH IS BYTES ON A CLOCK**, so both clients demand 24 kHz/16-bit/mono and REFUSE anything else — there is no resampler on this install, and a 22,050 Hz answer would play 9% slow *and* move every caption built from it; `tts._assert_house_format()` fails at import if the three modules disagree. ⚠ **AND A RUN THAT CANNOT WORK IS REFUSED BEFORE IT SPENDS**: Aura has no Hindi and Bulbul has no Spanish, so the free `tts.preflight()` runs when the 🎙 dialog OPENS (the sentence on screen, **See the price** disabled) and again before the job is queued — a voiceover is one call PER LINE, and finding out on line 1 of 40 is a half-finished paid run. A saved sheet survives the switch: "Kore" is translated through its persona into the new backend's cast, never dropped. Also fixed: the confirm dialog said *"Google bills the actual amount"* for every run, including Deepgram captions — it names the real biller now. Files: new `sarvam.py`, new `tests/tts_providers_check.py`, plus `deepgram.py` (a SPEAK half beside its LISTEN half), `tts.py`, `captions.py`, `server/animatics.py`, `server/schemas.py`, `client/src/components/AnimaticEditor.jsx`, `.env.example`. New **RULEBOOK D8**. ⚠ **AND THE FOUR CAVEATS IT SHIPPED WITH WERE CLOSED THE SAME DAY** (*"sab ko fix karo … production level"*): Sarvam's request shape now comes from the vendor's own **generated SDK** rather than from prose (`sarvamai` 0.1.32 posts `language_code`, and the 44 speaker names and 11 language codes come from the same file — when two docs disagree, read the generated client); the age casting is **`.env`-tunable** (`SARVAM_CAST=grandfather:anand,child:shruti@1.15`, validated against the real roster, a typo logged and ignored rather than fatal); **a promise a backend cannot keep is now PRINTED** — only Google has real child voices, so each persona carries a note and the sheet's own lines fold into one advisory, as a SOFT warning that never reads as an error; and **all seven Aura-2 languages are cast**, not just English, which matters because on that backend the voice NAME *is* the language — `/v1/speak` has no language parameter, so Spanish sent to `aura-2-thalia-en` is read with English phonetics and billed for. `tests/tts_providers_check.py` is now 12 sections / **153 checks**. ⚠ **STILL NOT LIVE-VERIFIED — no real Sarvam or Deepgram TTS call has been made**, and that is the only open item. ⚠ **Edge-TTS deliberately not built** — it is the Edge browser's private endpoint, not a Microsoft API.
+
+**Previously:** 2026-09-06 — **A CHAT THE USER RENAMED WENT BACK TO BEING NAMED BY ITS FIRST MESSAGE.** *"mai chat ko rename kiya tha chat 1 … fir prompt daala to chat ka name prompt ke words ban gaya — agar user rename kar diya hai to wahi naam hamesha rahna chahiye"*. Renamed to **"chat 1"**, a message sent in it later, and the row in 🕘 went back to reading *"is shorts/reel ke hisaab se sound effects and…"*. ⚠ **THE BROWSER DID KNOW NOT TO DO THAT — IT KNEW IT IN A PLACE THAT DOES NOT SURVIVE.** `useChatSessions` kept the renamed chats in a React ref (`renamedRef`) and skipped sending a title for those; **a ref is emptied by a reload**, and nothing ever fills it again, so the first autosave after the panel was reopened posted the first line of the chat as its title and the chosen name was gone for good. A second tab and a retried save had the same hole. ⚠ **SO THE REFUSAL MOVED TO THE STORE, WHICH IS THE ONLY PLACE ALL THREE PASS THROUGH.** A title now travels with `title_auto` — true from the autosave, absent from the rename box — and `chat_sessions.save_session` writes `title_locked` when a person names a chat and **drops** every automatic title on a locked one. **Clear chat unlocks it**, because that makes a conversation new again, name and all. The listing carries `title_locked` so a reloaded panel takes the answer from the server instead of guessing, and the row on screen never flickers to the wrong name. Files: `server/chat_sessions.py`, `server/schemas.py`, `server/editor_chat.py`, `client/src/api.js`, `client/src/animatic/agent/useChatSessions.js`. `tests/chat_sessions_check.py` gains **§12 — 18 checks**, including the exact live sequence (rename → next message → name survives) and a read of the browser source proving the autosave marks its title automatic and the rename box does not; `chat_sessions_check`, `editor_chat_check`, `editor_chat_doors_check` and `chat_store_check.mjs` all pass. New **RULEBOOK E160** (PAKKA). ⚠ **NOT CLICKED IN A BROWSER (G2)** — the flow is proved through the routes and the store, not through the panel. ⚠ **AND ONE THING WAS DESTROYED IN THIS VISIT, RECORDED HONESTLY:** a patch script opened this file for writing and then died on an encoding error, emptying all 32,874 lines of it. The committed copy was restored and the uncommitted summary above re-typed from what was still on screen — **one section's write-up (＋ Add layer → Storyboard images) was lost**; its code and its RULEBOOK row (E156) are untouched. See **RULEBOOK G1**: build the bytes, write a temp file, rename it over the target — never open the real file for writing.
 
 **Previously:** 2026-09-06 — **THE EFFECTS WERE THROWN AWAY A SECOND TIME, AND IT WAS THE FIX FOR THE FIRST TIME THAT DID IT.** *"is shorts/reel ke hisaab se sound effects and background music lago pura story pe aur transition and effects ke saath"* — the same message as before, on a Ganesh Chaturthi reel — came back **9 transitions, 9 sound cues, a music bed, and 16 rows of `add_effect: the step named no effect to add`**, which is the exact screen E144 was already paid for. ⚠ **THE CAUSE WAS ONE FALSE SENTENCE IN A PROMPT.** E144's repair added to `prompts.yaml`: *"an `add_effect` needs `effect`; `kind` belongs to a transition and on an effect it names nothing"*. **`add_effect` takes `kind`** — the very same name `add_transition` takes — so the app was ordering the model to fill a field that does not exist, `fold_steps` dropped it as another verb's argument, and every effect reached the client holding a shot number and nothing else. The schema narrowing E144 also added is correct and removes nothing *for this pair*, because both verbs really do take `kind`. ⚠ **AND THE TEST AGREED WITH THE PROMPT, WHICH IS WHY THE SUITE STAYED GREEN THROUGH A TOTAL FAILURE** — `tests/editor_chat_work_check.py` typed its own fixture, `add_effect(shot, effect, params)`, and asserted the wrong contract was being honoured. A test that invents its own copy of a contract cannot catch the contract being wrong. **It reads `client/src/animatic/agent/actions.js` now** and fails if the prompt contradicts the manifest. ⚠ **THE FLOOR UNDER BOTH IS NEW AND IS THE REAL FIX**: `director._ARG_ALIASES` **renames** a synonym the named verb cannot use to the one it can — `effect`/`fx`/`style`/`preset` → `kind`, `clip`/`frame` → `shot`, `duration_ms` → `ms` — instead of silently dropping it. An alias only ever fires when the verb has no such field of its own (so `preset` on an `apply_text_preset` is untouched) and never overwrites what the model already wrote properly. **A dropped synonym is not a dropped argument, it is a dropped EDIT**, and neither a prompt nor a schema may be the last line of defence — both were, twice, and both failed. Same visit: `params` written as a plain object (`{"amount": "0.4"}`) is now read rather than ignored, which had been leaving effects at their default and reading as the AI not listening. Files: `prompts.yaml` (the false sentence replaced with a manifest-neutral one), `director.py` (`_ARG_ALIASES`, `_canonical_args`, `params`-as-object), `editor_chat_agent.py` (the comments that recorded the wrong argument name), `tests/editor_chat_work_check.py` (reads the manifest; +10 checks; its shot-batch filter was itself fragile — it sniffed for the words "SHOTS" and "ONLY" anywhere in the prompt and swallowed the sound batch the moment a correct paragraph used "ONLY", turning five checks red for no reason — it matches the `YOUR PART OF IT: shots` line now). `editor_chat_work_check`, `editor_chat_check`, `editor_chat_doors_check`, `editor_chat_render_check`, `editor_director_check`, `director_plan_check`, `director_actions_check`, `director_contract_check`, `director_language_check` and `director_guardrails_check` all pass. New **RULEBOOK E147**. ⚠ **NOT RUN LIVE (G7)** — no model has been called since the change, so whether the effects actually land on the timeline is unproven; the alias fold is PAKKA and the prompt wording is GUZARISH. Top of Next Steps.
 
@@ -3672,6 +3674,154 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 ---
 
 ## ✅ Work Log (newest first)
+
+### 2026-09-06 — THE VOICEOVER CAN LEAVE GOOGLE (Phase 3: Sarvam Bulbul + Deepgram Aura-2)
+
+Phase 1 gave the voiceover its own switch (`VOICE_PROVIDER` / `GEMINI_KEY_VOICE`).
+Phase 2 proved a capability could actually leave Google. This gives the voiceover
+somewhere to go, and the reason is not price — it is **which language the film is
+in**. Asked for: *"Sarvam ai + Deepgram par chalane layak banao … production level
+jaisa."*
+
+    VOICE_PROVIDER=vertex|gemini   Google TTS. Anything, real CHILD voices, and the
+                                   ONLY one that takes a stage direction. Default.
+    VOICE_PROVIDER=sarvam          Bulbul v3 — 11 Indian languages, ⚠ THE ONLY ONE
+                                   THAT READS HINGLISH properly. ₹30/10k chars.
+    VOICE_PROVIDER=deepgram        Aura-2 — 7 languages, own voices each, on the $200 of
+                                   free credit the captions already use.
+
+**New `sarvam.py`**, a provider client in the `deepgram.py` / `freesound.py`
+mould — talks HTTP, knows nothing about FastAPI, jobs or the timeline. No new
+dependency; `requests` was already here. **`deepgram.py` grew a SPEAK half**
+beside its LISTEN half: one vendor, one key, two capabilities that move
+independently (`CAPTION_PROVIDER` and `VOICE_PROVIDER`), which is exactly the
+case the "a vendor-named key is not a switch" note was written for in Phase 2.
+
+⚠ **THE THING THAT WOULD HAVE RUINED A FILM: THE STAGE DIRECTION.** `prompt_for`
+wraps a line as *"Read this line as an elderly man:\n\"Sit with me a while.\""* —
+Gemini reads the unquoted half as an instruction and obeys it, and that is the
+**only** way an age or a sex reaches that model. Bulbul and Aura take no
+instruction, they take TEXT: the narrator would have said *"Read this line as an
+elderly man"* out loud, in a paid run, in the middle of the film. `direction_for`
+answers `""` off Google now, `prompt_for` takes the provider — **and so does
+`estimate`**, because the quote counts exactly the characters the run sends and
+Google's string is the longer one. Off Google the age reaches the model as
+CASTING, and on Sarvam as PACE (the one delivery control v3 exposes).
+
+⚠ **SPEECH IS NOT DATA, IT IS BYTES ON A CLOCK — SO A WRONG SAMPLE RATE IS
+REFUSED, NOT ACCEPTED.** Everything downstream measures a sound by COUNTING ITS
+BYTES at 24 kHz / 16-bit / mono: there is no ffprobe on this install and
+`audioop` is gone in this Python, so nothing here can resample or even detect.
+A 22,050 Hz answer let through would play ~9% slow **and** put every caption and
+every stretched shot out by the same amount with nothing on screen to say so.
+Both clients ask for a WAV at the house format, unwrap it to raw PCM, and refuse
+anything else by name; `tts._assert_house_format()` fails at IMPORT if the three
+modules ever disagree.
+
+⚠ **A RUN THAT CANNOT WORK IS REFUSED BEFORE IT SPENDS, NOT DURING IT.** Aura-2
+has **no Hindi**; Bulbul has **no Spanish**. A voiceover is one call PER LINE, so
+finding that out on line 1 of 40 is a half-finished paid run that has already
+moved shots and written a track. New free `tts.preflight()` runs in three places:
+`GET /dialogue` (so the 🎙 dialog prints the sentence the moment it OPENS, with
+**See the price** disabled), the POST route before the job is queued, and inside
+`speak` for anything that arrives another way. Every message names the `.env` line
+that fixes it.
+
+⚠ **THE CAST IS PER BACKEND AND THE PERSONA IS THE JOIN.** "Kore" is a Google
+voice, "ishita" a Sarvam speaker, "aura-2-hera-en" a Deepgram one — and Sarvam's
+own v2 and v3 speaker names share nothing either. `tts.cast()` / `tts.personas()`
+answer for whichever backend is switched on and `GET /dialogue` sends those, so
+the picker can never offer a name the run would be 400'd for. A board voiced last
+week under Gemini and re-read today on Sarvam is **translated** through the
+persona the old name stood for (`voice_for` → `_persona_of_voice`) rather than
+being failed or silently re-cast, because a saved sheet is a decision somebody
+made.
+
+⚠ **AND A 429 IS WAITED THROUGH HERE, WHERE `transcribe` DOES NOT.** One
+transcription call can be pressed again; forty voice calls cannot — a rate limit
+halfway through throws away everything already spoken AND already paid for. Both
+clients retry on 429/5xx along `retry_policy`'s existing ladder (the same one the
+image and video backends wait on) and never retry a 401. A line longer than one
+request (2,500 chars on v3, 2,000 on Aura) is split at sentence ends — the
+Devanagari danda included — and the PCM pieces are concatenated, which needs no
+decoder.
+
+**Fixed on the way past, because it was the same class of bug:** the confirm
+dialog's last line said *"Google bills the actual amount"* for **every** run,
+including Deepgram captions since Phase 2. `biller` now comes down with the
+estimate for both capabilities.
+
+Files: **new `sarvam.py`**, **new `tests/tts_providers_check.py`**; `deepgram.py`
+(SPEAK half), `tts.py` (provider dispatch, per-backend cast/price/prompt,
+`preflight`), `captions.py` (`biller` in the quote), `server/animatics.py`
+(`_project_language`, preflight in two routes, language threaded into
+`_lay_out_speech` and `run_voiceover`), `server/schemas.py`
+(`AudioCostEstimate.biller`, `AnimaticDialogueSheet.provider/engine/warning`),
+`client/src/components/AnimaticEditor.jsx` (the warning, the engine on hover, the
+default voice re-picked for the active backend, the biller line), `.env.example`.
+
+---
+
+**THEN THE FOUR THINGS THIS SHIPPED WITH AS CAVEATS WERE MADE RIGHT, SAME DAY.**
+*"sab ko fix karo … mujhe production level bana hai so koi problem nahi aana
+chahiye."* Fair — a caveat in a summary is a bug with better manners.
+
+**1. "Two documents disagree about Sarvam's language field."** They do. The
+generated SDK settles it: `sarvamai` 0.1.32's `text_to_speech/raw_client.py`
+posts **`language_code`**, and that file is generated from the same API
+definition the server validates against, so it cannot be out of date with the
+endpoint. The eleven language codes, the two model ids and the **44 speaker
+names** now come from that file too rather than from prose. ⚠ **The lesson is
+reusable: when two docs disagree, read the vendor's generated client.** The
+one-shot retry under the older `target_language_code` name is kept — it costs
+nothing on the working path and covers an account still served by an older
+gateway — but it is a safety net now, not a guess.
+
+**2. "Sarvam's ages are my best guess."** They were, because Sarvam publishes a
+SEX per speaker and no ages at all. Two fixes, and neither is a better guess:
+every guessed row now **says it is a guess** (`approx` → `persona_note()` → the
+🎙 dialog, beside the line), and the casting is **`.env`-tunable without a
+deploy** — `SARVAM_CAST=grandfather:anand,child:shruti@1.15`. Overrides are
+checked against that model's real roster and a bad one is **logged and ignored,
+never fatal**: a typo in an optional tuning line must not be able to stop a paid
+run. An overridden row stops apologising, because somebody has now chosen.
+
+**3. "Aura has no child voice, so use Gemini for children."** Still true — that
+is Deepgram's roster, not a bug we can fix — but "remember to use Gemini" is not
+a rule, it is a hope. So the app says it, on screen, before the money: each
+persona carries a `note` (*"no child voices — read by the youngest voice there
+is"*), and `GET /dialogue` folds the sheet's **own lines** into one `advisory`
+(*"2 lines: …"*, repeats folded with a count per E155). A film with no children
+in it never sees a word of it. ⚠ **It is a SOFT warning and must not read as an
+error** — the run is valid and the audio is usable; the point is that the choice
+is free before the run and expensive after it.
+
+**4. "Only English is cast on Deepgram."** Fixed: **all seven Aura-2 languages**
+are cast — English, Spanish, German, French, Dutch, Italian, Japanese — with
+their own voices, ages and accents. ⚠ **This is not cosmetic, because on that
+backend the voice NAME *is* the language**: `/v1/speak` has no language
+parameter, so Spanish text sent to `aura-2-thalia-en` is read with English
+phonetics and billed for. `cast`/`personas`/`resolve_voice`/`voice_for` all take
+the film's language now, `tts_model_id` **ignores a `DEEPGRAM_TTS_MODEL` that
+does not speak it**, and an English voice on a German board is re-cast through
+its persona rather than sent. French is honest about having two voices in total.
+
+**Tests:** `tests/tts_providers_check.py` is now **12 sections, 153 checks** —
+3 backends, 7 Deepgram languages, no network, no key spent, 17 env vars
+controlled. §11 is the honesty (a promise this backend cannot keep is printed,
+not hidden; `SARVAM_CAST`; a typo cannot stop a run) and §12 walks the last two
+hops — the route's summariser and the browser source that prints it, including
+that the Veo dialogs still say "Google bills" **because for them it is true**.
+`captions_check`, `voiceover_fit_check`, `deepgram_captions_check`,
+`ai_keys_check` and `npm run build` all still pass.
+
+New **RULEBOOK D8**. ⚠ **STILL NOT LIVE-VERIFIED — no real Sarvam or Deepgram TTS
+call has been made.** The shapes are as the vendors' own SDK and reference docs
+declare them, not as observed; that is the one remaining gap and it costs a key
+and one paid run to close. ⚠ **Edge-TTS was deliberately NOT built** — it is not
+a Microsoft API, it is the Edge browser's private endpoint used from outside,
+with no commercial guarantee; it is a testing convenience, not a backend to
+deploy behind a paid product.
 
 ### 2026-09-06 — CAPTIONS CAN LEAVE GOOGLE (Phase 2: Deepgram Nova-3)
 
@@ -29186,6 +29336,61 @@ still occasionally be safety-filtered.
 ---
 
 ## 🎯 Current State / Next Steps
+
+### ✅ THE VOICEOVER CAN LEAVE GOOGLE — SARVAM AND DEEPGRAM AURA (Phase 3, 2026-09-06)
+
+`VOICE_PROVIDER=sarvam` reads the dialogue on Bulbul v3; `VOICE_PROVIDER=deepgram`
+reads it on Aura-2; unset, nothing changed and Google still reads it. The reason
+to move is not price — it is the film's language:
+
+| Film | Backend | Why |
+|---|---|---|
+| Hindi / Hinglish / any Indian language | **sarvam** | The only one that reads romanised Hindi ("main office ja raha hoon") as one sentence. ₹30 per 10,000 characters, ₹100 free, billed in rupees. |
+| English | **deepgram** | The same $200 of non-expiring credit the captions use. ~$0.030/1k characters. |
+| Anything else, or a film with CHILDREN in it | **gemini / vertex** | Speaks everything, and it is the only one with real child voices — and the only one that can be TOLD how to read a line. |
+
+Four things were load-bearing and all four are pinned by
+`tests/tts_providers_check.py`:
+
+1. **The stage direction is Google's alone.** Sent to the other two, *"Read this
+   line as an elderly man:"* is a sentence the narrator says out loud in a paid
+   run. `prompt_for` and `estimate` both take the provider now.
+2. **Every backend answers in the same bytes, or is refused.** 24 kHz / 16-bit /
+   mono, checked in each client and asserted across all three at import — a
+   wrong rate would play slow AND move every caption built from it.
+3. **A language the backend cannot speak is refused before the run.** Free
+   `tts.preflight()`, in the dialog as it opens and in the route before the job
+   is queued. A voiceover is one call PER LINE.
+4. **A saved sheet survives the switch.** "Kore" is translated through its
+   persona into the new backend's cast rather than dropped.
+
+5. **A promise this backend cannot keep is PRINTED, not hidden.** Only Google has
+   real child voices; Sarvam publishes no ages at all and Aura's youngest tier is
+   "young adult". Every such casting carries a note to the 🎙 dialog, and the
+   sheet's own lines are folded into one advisory (*"2 lines: no child voices…"*).
+   A soft warning, not an error — the run is valid, the choice is just free now
+   and expensive later.
+6. **On Deepgram the voice NAME is the language**, so all seven Aura-2 languages
+   are cast separately and a voice from the wrong one is re-cast, never sent.
+
+Also fixed: the confirm dialog said *"Google bills the actual amount"* for every
+run, including Deepgram captions. It names the real biller now, both capabilities
+— while the Veo dialogs still say Google, because for them it is true.
+
+Two things the first pass shipped as caveats and this one closed: **Sarvam's
+request shape now comes from the vendor's own generated SDK** (`sarvamai` 0.1.32
+posts `language_code`; the 44 speaker names and 11 language codes come from the
+same file), and **the age casting is `.env`-tunable** — `SARVAM_CAST=grandfather:
+anand,child:shruti@1.15` — because "which of 37 voices sounds like the
+grandfather in THIS film" is a question only somebody listening can answer, and
+needing a deploy per opinion is the wrong shape for it.
+
+New **RULEBOOK D8**; `tests/tts_providers_check.py` is 12 sections / 153 checks.
+⚠ **NOT LIVE-VERIFIED — no real Sarvam or Deepgram TTS call has been made yet**,
+and that is now the ONLY open item: the shapes are as the vendors' own SDK and
+reference docs declare them, not as observed. Next step is one paid run of each
+with a real key. ⚠ **Edge-TTS was deliberately not built** — it is the Edge
+browser's private endpoint, not a Microsoft API, with no commercial guarantee.
 
 ### ✅ A RENAMED CHAT KEEPS ITS NAME — THE LOCK IS IN THE STORE (2026-09-06)
 

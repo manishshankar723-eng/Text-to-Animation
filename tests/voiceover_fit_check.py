@@ -124,8 +124,8 @@ SPEECH_MS = {"[long]": 9000, "[short]": 1000, "[edited]": 500}
 PROMPTS: list[tuple[str, str]] = []  # (voice, prompt) in the order they were sent
 
 
-def stub_speak(text, *, voice=None, provider=None):
-    PROMPTS.append((voice, text))
+def stub_speak(text, **kwargs):  # voice/provider/language/persona — see tts.speak
+    PROMPTS.append((kwargs.get("voice"), text))
     for mark, ms in SPEECH_MS.items():
         if mark in text:
             return tts.silence(ms)

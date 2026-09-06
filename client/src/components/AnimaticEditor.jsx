@@ -9016,6 +9016,14 @@ export default function AnimaticEditor({
       .then((sheet) => {
         setSpeechSheet(sheet);
         setSpeechLines(sheet.lines || []);
+        // ⚠ THE DEFAULT VOICE BELONGS TO WHICHEVER BACKEND IS SWITCHED ON. This
+        // state starts as "Kore", a Google voice, and on Sarvam or Deepgram that
+        // name is in no list — leaving a select showing a value it does not have,
+        // which renders as the FIRST option while still sending "Kore". The
+        // server would translate it (`tts.voice_for`), so nothing breaks; it just
+        // reads as a picker that lies about what it picked.
+        const names = (sheet.voices || []).map((v) => v.name);
+        if (names.length && !names.includes(speechVoice)) setSpeechVoice(names[0]);
       })
       .catch((e) => setSpeechError(e.message))
       .finally(() => setSpeechSheetBusy(false));
@@ -13919,11 +13927,36 @@ export default function AnimaticEditor({
                     its own, and this is only what reads the ones that aren't —
                     the label used to say "Voice" when it was the only choice
                     there was. */}
+                {/* ⚠ WHY THIS RUN CANNOT HAPPEN, SAID BEFORE THE PRICE IS EVEN
+                    ASKED FOR. The voiceover can be pointed at Sarvam or Deepgram
+                    now, and neither reads every language — Aura has no Hindi,
+                    Bulbul has no Spanish. The server checks that for free when
+                    the sheet is built and sends the sentence down with it, so
+                    the .env line to change is on screen instead of being
+                    discovered one paid line at a time. */}
+                {speechSheet?.warning && (
+                  <p className="an-prop-warn">⚠ {speechSheet.warning}</p>
+                )}
+                {/* ⚠ THE SOFT ONE, AND IT IS NOT AN ERROR. The run is valid; some
+                    lines will just be read by the nearest voice this backend has
+                    rather than the one their part asks for — no backend but
+                    Google has real child voices. Said here, while switching or
+                    re-casting is still free, instead of after listening back to
+                    something already paid for. */}
+                {!speechSheet?.warning && speechSheet?.advisory && (
+                  <p className="tiny muted an-vo-note">ℹ {speechSheet.advisory}</p>
+                )}
+
                 <div className="an-prop-row">
                   <span className="an-prop-label">Default voice</span>
                   <select
                     className="an-select"
                     value={speechVoice}
+                    // ⚠ THE ENGINE ON HOVER, NOT IN THE ROW. Which backend reads
+                    // the film is a fact worth being able to check and not worth
+                    // a line of chrome above the sheet — the names in the list
+                    // already change with it.
+                    title={speechSheet?.engine ? `Read by ${speechSheet.engine}` : undefined}
                     onChange={(e) => setSpeechVoice(e.target.value)}
                   >
                     {(speechSheet?.voices || []).map((v) => (
@@ -14021,6 +14054,14 @@ export default function AnimaticEditor({
                               Read as {persona.direction}.
                             </p>
                           )}
+                          {/* ⚠ AND THE PROMISE THIS BACKEND CANNOT KEEP FOR THIS
+                              PART, on the line it applies to. "Child" on Sarvam
+                              or Aura is the nearest adult voice — saying so here
+                              is what makes the Voice picker beside it worth
+                              opening, and it costs nothing to act on. */}
+                          {persona?.note && (
+                            <p className="tiny muted an-vo-note">ℹ {persona.note}</p>
+                          )}
                         </div>
                       );
                     })}
@@ -14078,6 +14119,11 @@ export default function AnimaticEditor({
                   // to refuse, in a dialog that already knows better.
                   (speechFor === "voiceover" &&
                     (speechSheetBusy ||
+                      // ⚠ AND NOT WHEN THE BACKEND CANNOT READ THIS FILM AT ALL.
+                      // The server would 409 the run with the same sentence
+                      // already printed above; pricing it first would be a
+                      // number for something that is not going to happen.
+                      !!speechSheet?.warning ||
                       !speechLines.some((l) => (l.text || "").trim())))
                 }
                 onClick={askForSpeech}
@@ -14132,8 +14178,14 @@ export default function AnimaticEditor({
                 Do it in smaller passes — this is a spend guard, not a technical one.
               </p>
             )}
+            {/* ⚠ IT NAMES WHOEVER ACTUALLY BILLS. This line said "Google" for
+                every run, which stopped being true the day the captions could go
+                to Deepgram and the voiceover to Sarvam — and somebody checking a
+                Google invoice for a run Sarvam charged for concludes the whole
+                estimate is fiction. The name comes down with the price. */}
             <p className="tiny muted">
-              An estimate from list prices, not a quote. Google bills the actual
+              An estimate from list prices, not a quote.{" "}
+              {speechConfirm.estimate.biller || "The provider"} bills the actual
               amount.
             </p>
 

@@ -4233,6 +4233,7 @@ def _lay_out_speech(
     lines: list[dict],
     *,
     voice: str | None = None,
+    language: str = "",
     fit_shots: bool = True,
     progress_cb=None,
 ) -> dict:
@@ -4317,7 +4318,9 @@ def _lay_out_speech(
                     progress_cb(done, spoken_total, line.get("text") or "")
                 done += 1
 
-            pcm, rel = tts_mod.speak_lines(said, voice=voice, progress_cb=_tick)
+            pcm, rel = tts_mod.speak_lines(
+                said, voice=voice, language=language, progress_cb=_tick
+            )
             if pcm:
                 at = max(start, said_clock)
                 pieces.append((at, pcm))
@@ -4408,6 +4411,7 @@ def estimate_captions(
         seconds=quote["seconds"],
         usd=quote["usd"],
         model=quote["model"],
+        biller=quote["biller"],
         over_limit=quote["over_limit"],
         limit=f"{int(quote['limit_seconds'] / 60)} minutes of audio per run",
     )
@@ -4573,6 +4577,25 @@ def run_captions(job_id: str, body: dict, progress_cb=None) -> None:
 
 
 # --- Voiceover --------------------------------------------------------------
+def _project_language(job: Job) -> str:
+    """WHAT LANGUAGE THIS FILM IS IN, for the backend about to read it aloud.
+
+    ⚠ THE PROJECT'S SETTING, NEVER A REQUEST PARAMETER, and `AnimaticSettings.
+    language` says why at length: three things write words into an animatic — the
+    Director's on-screen text, the voiceover, the captions — and each deciding
+    the language on its own is how a Hinglish film ends up with an English title
+    card over a Hindi voiceover. It is written once, by the 🎬 popup, and read
+    here.
+
+    ⚠ AND IT MATTERS MORE THAN IT DID. It used to be a hint; with the voiceover
+    able to leave Google it is now the field that decides whether the run can
+    happen at all — Bulbul does not read Spanish and Aura does not read Hindi.
+    Blank stays a real answer: nobody has said, and each backend has its own
+    documented default for that (see `sarvam.language_code`).
+    """
+    return (_settings_of(job).language or "").strip()
+
+
 @router.get("/{job_id}/dialogue", response_model=AnimaticDialogueSheet)
 def get_dialogue(job_id: str, current: CurrentUser = Depends(get_current_user)):
     """FREE. The board's dialogue for this timeline, ready to be edited and read.
@@ -4582,29 +4605,87 @@ def get_dialogue(job_id: str, current: CurrentUser = Depends(get_current_user)):
     is what fills the dialog the moment 🎙 Voiceover is clicked, and a dialog
     that costs money to open is a dialog nobody opens twice.
 
-    The two pickers come down with it. `tts.CAST` is the only place a voice
+    The two pickers come down with it. `tts.cast()` is the only place a voice
     exists — the browser used to carry its own list of six names, which is a
     second source of truth for something the model call has to agree with.
+
+    ⚠ AND THEY ARE THE ACTIVE BACKEND'S PICKERS, NOT GOOGLE'S. Since the
+    voiceover can be pointed at Sarvam or Deepgram, "which voices exist" is a
+    question only `.env` can answer — `tts.cast` / `tts.personas` answer it, so
+    the dropdown can never offer a name the run would be refused for.
     """
     import tts as tts_mod
 
     job = _get_owned_animatic(job_id, current)
     frames = _frames_of(job)
+    language = _project_language(job)
+    provider = tts_mod.resolve_provider()
+    # ⚠ FREE, AND IT IS THE WHOLE POINT OF ASKING HERE. `preflight` raises when
+    # this backend cannot read this film — no key, or a language it does not
+    # speak — and the dialog shows that sentence instead of letting the user pay
+    # to find out one line at a time.
+    warning = ""
+    try:
+        tts_mod.preflight(provider=provider, language=language)
+    except tts_mod.VoiceoverError as exc:
+        warning = str(exc)
+
+    sheet = _dialogue_sheet(job)
+    cast_for = tts_mod.personas(provider, language)
     return AnimaticDialogueSheet(
-        lines=[AnimaticDialogueLine(**line) for line in _dialogue_sheet(job)],
+        lines=[AnimaticDialogueLine(**line) for line in sheet],
         voices=[
-            VoiceOption(name=v["name"], tone=v["tone"], persona=v["persona"])
-            for v in tts_mod.CAST
+            VoiceOption(name=v["name"], tone=v.get("tone", ""), persona=v.get("persona", ""))
+            for v in tts_mod.cast(provider, language)
         ],
         personas=[
             PersonaOption(
-                key=key, label=p["label"], voice=p["voice"], direction=p["direction"]
+                key=key, label=p["label"], voice=p["voice"],
+                direction=p["direction"], note=p.get("note", ""),
             )
-            for key, p in tts_mod.PERSONAS.items()
+            for key, p in cast_for.items()
         ],
         # "No dialogue" and "these clips aren't from a board" are different
         # problems with different answers, and the dialog says which.
         from_board=any(f.src and f.src.storyboard_id for f in frames),
+        provider=provider,
+        engine=tts_mod.tts_model_id(provider, language),
+        warning=warning,
+        advisory=_casting_advisory(sheet, cast_for),
+    )
+
+
+def _casting_advisory(lines: list[dict], personas: dict[str, dict]) -> str:
+    """⚠ "TWO OF YOUR LINES WILL NOT SOUND LIKE WHAT THEY SAY", IN ONE SENTENCE.
+
+    Counted from THIS sheet's own lines, so a film with no children in it never
+    sees a word about child voices. Empty is the normal answer.
+
+    ⚠ THIS IS NOT AN ERROR AND MUST NOT READ AS ONE. Every one of these runs is
+    valid and will produce usable audio — the persona simply lands on the nearest
+    voice this backend has, because Aura publishes no child voices and Sarvam
+    publishes no ages. It is here so the choice ("switch to Gemini", "cast this
+    line by hand", "set SARVAM_CAST") is made BEFORE the money rather than after
+    listening back.
+    """
+    affected: dict[str, int] = {}
+    for line in lines or []:
+        if not str(line.get("text") or "").strip():
+            continue
+        note = (personas.get(str(line.get("persona") or ""), {}) or {}).get("note") or ""
+        if note:
+            affected[note] = affected.get(note, 0) + 1
+    if not affected:
+        return ""
+    # ⚠ THE SAME REASON N TIMES IS ONE FACT, NOT N FACTS — RULEBOOK E155, which
+    # was paid for by a drops panel that printed one message fifteen times.
+    parts = [
+        f"{count} line{'s' if count != 1 else ''}: {note}"
+        for note, count in sorted(affected.items(), key=lambda kv: -kv[1])
+    ]
+    return (
+        "Some lines will be read by the nearest voice this backend has, not the "
+        "one their part asks for — " + "; ".join(parts) + "."
     )
 
 
@@ -4623,12 +4704,19 @@ def estimate_voiceover(
     import tts as tts_mod
 
     job = _get_owned_animatic(job_id, current)
-    quote = tts_mod.estimate(_requested_lines(job, body))
+    # ⚠ THE LANGUAGE TRAVELS WITH THE QUOTE, for the same reason it does on the
+    # captions: which backend answers and at what rate depends on it, and a
+    # quote that ignored the field the run is about to use would price a
+    # different run.
+    quote = tts_mod.estimate(
+        _requested_lines(job, body), language=_project_language(job)
+    )
     return AudioCostEstimate(
         lines=quote["lines"],
         characters=quote["characters"],
         usd=quote["usd"],
         model=quote["model"],
+        biller=quote["biller"],
         over_limit=quote["over_limit"],
         limit=f"{quote['limit_characters']:,} characters per run",
     )
@@ -4660,7 +4748,16 @@ def voice_animatic(
                 "timeline need spoken lines on the board."
             ),
         )
-    quote = tts_mod.estimate(lines)
+    language = _project_language(job)
+    # ⚠ REFUSED BEFORE THE JOB IS QUEUED, NOT DURING IT. A voiceover is one call
+    # PER LINE, so "Aura does not speak Hindi" found on line 1 of 40 is a paid,
+    # half-finished run that has already moved shots and written a track. This is
+    # free, and every sentence it raises names the `.env` line that fixes it.
+    try:
+        tts_mod.preflight(language=language)
+    except tts_mod.VoiceoverError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    quote = tts_mod.estimate(lines, language=language)
     if quote["over_limit"]:
         raise HTTPException(
             status_code=413,
@@ -4736,6 +4833,10 @@ def run_voiceover(job_id: str, body: dict, progress_cb=None) -> None:
         job,
         lines,
         voice=request.voice,
+        # ⚠ THE FILM'S OWN LANGUAGE, read off the project rather than off the
+        # request — see `_project_language`. On Sarvam it decides how every word
+        # is PRONOUNCED, so it is not a hint here the way it was on the captions.
+        language=_project_language(job),
         fit_shots=request.fit_shots,
         progress_cb=progress_cb,
     )

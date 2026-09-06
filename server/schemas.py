@@ -2942,6 +2942,12 @@ class AudioCostEstimate(BaseModel):
     seconds: float = 0.0
     usd: float = 0.0
     model: str = ""
+    # ⚠ WHO ACTUALLY SENDS THE BILL — "Google", "Sarvam", "Deepgram". The confirm
+    # dialog's last line used to say "Google bills the actual amount" whatever
+    # was switched on, which is a small lie that gets expensive: somebody
+    # watching a Google invoice for a run Deepgram charged for concludes the
+    # estimate is fiction. Blank = say nothing rather than guess.
+    biller: str = ""
     # True when the request is over its own spend guard. The client uses it to
     # disable the button and say why, rather than letting the call 413.
     over_limit: bool = False
@@ -3008,8 +3014,17 @@ class PersonaOption(BaseModel):
     voice: str
     # The stage direction this persona prepends. Shown in the dialog as the
     # reason a line will sound the way it does — it is the only visible sign
-    # that an age and a sex reached the model at all.
+    # that an age and a sex reached the model at all. ⚠ EMPTY OFF GOOGLE: the
+    # other backends take no instruction, so there is nothing to print.
     direction: str = ""
+    # ⚠ WHAT THIS BACKEND CANNOT ACTUALLY DELIVER FOR THIS PART. "" is the normal
+    # answer and means the casting is what it says it is. Non-empty means the
+    # voice is the nearest available thing rather than the thing asked for —
+    # Aura publishes no child voices in any language, Sarvam publishes no ages at
+    # all, and some of Aura's languages have two voices in total. It is NOT an
+    # error: the run is valid, and the user simply deserves to know what they are
+    # buying before they buy it. Printed beside the line in the 🎙 dialog.
+    note: str = ""
 
 
 class AnimaticDialogueLine(VoiceoverLine):
@@ -3040,6 +3055,28 @@ class AnimaticDialogueSheet(BaseModel):
     # True when this animatic's clips come from a board at all — what the dialog
     # says instead of showing an empty sheet.
     from_board: bool = False
+    # --- WHICH BACKEND WILL READ IT (Phase 3: the voiceover can leave Google) --
+    # ⚠ THE PICKERS ABOVE ALREADY BELONG TO THIS BACKEND — "Kore" is a Google
+    # voice and "ishita" is a Sarvam speaker — so the dialog has to be able to
+    # say which one it is showing. `engine` is the model label the estimate will
+    # also quote ("bulbul:v3 (hi-IN)"), and it carries the LANGUAGE for Sarvam
+    # because that is the setting most likely to be wrong and least likely to be
+    # noticed.
+    provider: str = ""
+    engine: str = ""
+    # ⚠ A SOFT WARNING, WHERE `warning` IS A HARD ONE. `warning` means the run
+    # cannot happen; this means it can, but some lines will not sound the way
+    # their persona says — "2 lines are cast for children, and this backend has
+    # no child voice". Counted from the sheet's OWN lines, so a film with no
+    # children never sees it.
+    advisory: str = ""
+    # ⚠ WHY THE RUN WOULD FAIL, SAID BEFORE ANYTHING IS SPENT. "" is the normal
+    # answer. Non-empty means this backend cannot read this film at all (Aura
+    # does not speak Hindi; Bulbul does not speak Spanish; no key is set) and the
+    # sentence names the `.env` line that fixes it. A voiceover is one call PER
+    # LINE, so finding this out on line 1 of 40 is a run that has already moved
+    # shots and written a track — finding it out here costs nothing.
+    warning: str = ""
 
 
 class AnimaticVoiceoverRequest(BaseModel):

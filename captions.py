@@ -295,6 +295,12 @@ def estimate(duration_ms: int, *, language: str = "") -> dict:
         "seconds": round(seconds, 1),
         "usd": round(usd, 4),
         "model": model,
+        "provider": provider,
+        # ⚠ WHO ACTUALLY SENDS THE BILL. The confirm dialog's last line said
+        # "Google bills the actual amount" whatever was switched on, which stopped
+        # being true the day `CAPTION_PROVIDER=deepgram` landed. A price is
+        # advisory; the name beside it must at least be right.
+        "biller": "Deepgram" if provider == "deepgram" else "Google",
         "over_limit": seconds > MAX_AUDIO_SECONDS,
         "limit_seconds": MAX_AUDIO_SECONDS,
     }

@@ -22,6 +22,46 @@ WITHOUT BEING TOLD. There is no ffprobe on an imageio-ffmpeg install (see
 the caller. Generated speech is the exception because it arrives as RAW PCM at a
 known rate: the number of bytes IS the duration, exactly, with no decoder. That
 is what makes the returned line timings trustworthy enough to become captions.
+
+---------------------------------------------------------------------------
+⚠ THREE BACKENDS CAN READ A LINE NOW, AND THE FILM'S LANGUAGE PICKS ONE.
+---------------------------------------------------------------------------
+    gemini / vertex   Google's TTS. Speaks anything, has real CHILD voices, and
+                      is the only one that takes a STAGE DIRECTION (see
+                      `prompt_for`). The default, and the fallback for a film in
+                      a language the other two do not read.
+    sarvam            Bulbul — eleven Indian languages, billed in rupees, and
+                      the only one that reads HINGLISH (Hindi in Latin script)
+                      as one sentence instead of as bad English. `sarvam.py`.
+    deepgram          Aura-2 — English, Spanish, German, French, Dutch, Italian
+                      and Japanese, each with ITS OWN voices, and chosen for the
+                      $200 of free credit shared with the captions. No Indian
+                      language at all. `deepgram.py`.
+
+⚠ AND NONE OF THE THREE IS COMPLETE, SO THE GAPS ARE PRINTED RATHER THAN HIDDEN.
+Google is the only one with real CHILD voices and the only one that can be told
+an age; Sarvam publishes no ages at all; Aura's youngest tier is "young adult"
+and some of its languages have two voices in total. `persona_note()` is the
+sentence that says which promise this backend cannot keep for this part, and the
+🎙 dialog prints it beside the line — free, before the button that spends.
+
+⚠ WHAT MAKES THAT SAFE IS THAT EVERY BACKEND ANSWERS IN THE SAME BYTES. Each one
+is asked for signed 16-bit PCM, mono, at `SAMPLE_RATE`, and each REFUSES anything
+else rather than handing back audio at another rate — because every duration,
+every caption and every stretched shot below is byte arithmetic over that one
+assumed format. `_assert_house_format` checks the three modules agree at import.
+
+⚠ AND TWO THINGS ARE PROVIDER-SHAPED, SO NOTHING ELSE HAS TO BE:
+
+  · THE CAST. "Kore" is a Google voice, "ishita" is a Sarvam speaker, and
+    neither exists for the other. `PERSONAS` — "grandfather", "girl" — is the
+    provider-blind casting layer the browser and the stored dialogue sheet
+    speak, and `cast()` / `personas()` answer for whichever backend is switched
+    on. A voice saved under one provider and run under another is TRANSLATED
+    through its persona rather than failing (`voice_for`).
+  · THE PROMPT. Google is *told* "read this as an elderly man" and obeys; the
+    other two would READ THAT SENTENCE ALOUD. So `prompt_for` is provider-aware,
+    and because the estimate counts exactly what the run sends, so is `estimate`.
 """
 
 from __future__ import annotations
@@ -35,6 +75,8 @@ import wave
 from google.genai import types
 
 import ai_keys
+import deepgram
+import sarvam
 import script_breakdown
 
 logger = logging.getLogger(__name__)
@@ -50,12 +92,35 @@ logger = logging.getLogger(__name__)
 # deployment that has never heard of either keeps working. See `ai_keys`.
 CAPABILITY = "voice"
 
+# ⚠ `sarvam` AND `deepgram` ARE HERE AND NOT IN THE TEXT LIST, the same asymmetry
+# `captions.SUPPORTED_PROVIDERS` carries and for the same reason: most of this app
+# is "which Google backend", and this capability can leave Google entirely because
+# reading a line aloud is a commodity with real competition — and because the
+# thing that decides WHICH backend is right is the FILM'S LANGUAGE, not anything
+# about this app. `vertex`/`gemini` resolve through `script_breakdown`; the other
+# two go to their own vendor module and never touch a genai client.
+SUPPORTED_PROVIDERS = ("vertex", "gemini", "sarvam", "deepgram")
+
+# The backends that are NOT Google, by name. Everything that has to ask "is this
+# a genai call or an HTTP call" asks this rather than listing names again.
+VENDORS = {"sarvam": sarvam, "deepgram": deepgram}
+
 
 def resolve_provider(provider: str | None = None) -> str:
-    """The backend that will speak: explicit > VOICE_* > TEXT_PROVIDER > vertex."""
-    return ai_keys.resolve_provider(
-        CAPABILITY, provider, fallback=("TEXT_PROVIDER",)
-    )
+    """The backend that will speak: explicit > VOICE_* > TEXT_PROVIDER > vertex.
+
+    ⚠ NEITHER `SARVAM_API_KEY` NOR `DEEPGRAM_API_KEY` IS A SWITCH — say
+    `VOICE_PROVIDER=sarvam`. A vendor-named key says who is paid but not what
+    for, and both of those vendors sell transcription as well, so a key that
+    moved a capability on its own would move the CAPTIONS too. Same rule
+    `captions.resolve_provider` states from the other side.
+    """
+    p = ai_keys.resolve_provider(CAPABILITY, provider, fallback=("TEXT_PROVIDER",))
+    if p not in SUPPORTED_PROVIDERS:
+        raise VoiceoverError(
+            f"Unknown VOICE_PROVIDER '{p}'. Use one of {SUPPORTED_PROVIDERS}."
+        )
+    return p
 
 
 # What the TTS models return: signed 16-bit little-endian PCM, mono, 24kHz.
@@ -64,6 +129,35 @@ def resolve_provider(provider: str | None = None) -> str:
 SAMPLE_RATE = 24_000
 SAMPLE_WIDTH = 2
 CHANNELS = 1
+
+
+def _assert_house_format() -> None:
+    """⚠ THE THREE BACKENDS MUST AGREE ON THE BYTES, AND THIS IS WHERE WE FIND OUT.
+
+    Every duration in this module is `bytes ÷ (rate × width × channels)`, so a
+    vendor client that asked its API for 22,050 Hz would make every caption and
+    every stretched shot wrong by 9% with nothing on screen to say so. Each
+    client refuses audio it did not ask for; this checks that what they ask for
+    is what this module measures. At import, because a mismatch is a deployment
+    mistake and not a runtime one.
+    """
+    house = (SAMPLE_RATE, SAMPLE_WIDTH, CHANNELS)
+    theirs = {
+        "sarvam": (sarvam.SAMPLE_RATE, sarvam.SAMPLE_WIDTH, sarvam.CHANNELS),
+        "deepgram": (
+            deepgram.TTS_SAMPLE_RATE, deepgram.TTS_SAMPLE_WIDTH, deepgram.TTS_CHANNELS,
+        ),
+    }
+    for name, shape in theirs.items():
+        if shape != house:
+            raise RuntimeError(
+                f"{name} speaks {shape} but tts.py measures {house}. Every "
+                "duration, caption and shot length here is byte arithmetic over "
+                "one format — fix the vendor module, do not relax this."
+            )
+
+
+_assert_house_format()
 
 DEFAULT_TTS_MODEL = "gemini-2.5-flash-preview-tts"
 
@@ -146,8 +240,38 @@ PERSONAS: dict[str, dict] = {
 # not something to read aloud by accident.
 MAX_CHARACTERS = int(os.environ.get("API_MAX_VOICEOVER_CHARS", "8000"))
 # Advisory list price per 1,000 characters, for the estimate. As everywhere else
-# here: we quote, only Google bills, and the UI says so.
+# here: we quote, only the backend bills, and the UI says so.
 USD_PER_1K_CHARS = float(os.environ.get("API_VOICEOVER_USD_PER_1K", "0.012"))
+
+
+def usd_per_1k_chars(provider: str | None = None) -> float:
+    """The advisory rate THIS backend charges, USD per 1,000 characters.
+
+    ⚠ THE QUOTE HAS TO FOLLOW THE SWITCH. Sarvam is about three times Gemini's
+    list rate and Deepgram about two and a half — a price built from one
+    constant would understate the run by that much the moment `.env` moved, and
+    an advisory number is only worth showing while it describes the button
+    beside it.
+    """
+    vendor = VENDORS.get(resolve_provider(provider))
+    if vendor is sarvam:
+        return sarvam.usd_per_1k_chars()
+    if vendor is deepgram:
+        return deepgram.tts_usd_per_1k_chars()
+    return USD_PER_1K_CHARS
+
+
+def biller(provider: str | None = None) -> str:
+    """WHO ACTUALLY SENDS THE BILL, for the sentence under the price.
+
+    ⚠ THE CONFIRM DIALOG USED TO SAY "GOOGLE BILLS THE ACTUAL AMOUNT" WHATEVER
+    WAS SWITCHED ON. It is a small lie that gets expensive: somebody watching a
+    Google invoice for a run Sarvam charged for concludes the estimate is
+    fiction. The name comes down with the estimate now.
+    """
+    return {"sarvam": "Sarvam", "deepgram": "Deepgram"}.get(
+        resolve_provider(provider), "Google"
+    )
 
 # Silence left between two spoken lines when they would otherwise butt up
 # against each other. Speech with no gap between lines sounds like one run-on
@@ -162,15 +286,132 @@ class VoiceoverError(Exception):
     """
 
 
-def tts_model_id() -> str:
-    """The TTS model to use. Overridable, like every other model id here."""
+def tts_model_id(provider: str | None = None, language: str = "") -> str:
+    """WHAT WILL ACTUALLY READ THE LINE, as a label for the estimate.
+
+    ⚠ THE LANGUAGE IS PART OF THE NAME FOR SARVAM, and deliberately: it is the
+    setting most likely to be wrong and least likely to be noticed, so the
+    confirm dialog says "bulbul:v3 (hi-IN)" and a Tamil film quoted as `hi-IN`
+    is visible BEFORE the money is spent. Same argument as
+    `captions.estimate`'s "nova-3 (multi)".
+    """
+    picked = resolve_provider(provider)
+    if picked == "sarvam":
+        return f"{sarvam.model_id()} ({sarvam.language_code(language) or 'unsupported'})"
+    if picked == "deepgram":
+        return deepgram.tts_model_id(language)
     return os.environ.get("GEMINI_TTS_MODEL", DEFAULT_TTS_MODEL)
 
 
-def resolve_voice(voice: str | None) -> str:
-    """A known voice name, or the default. Unknown names fold down rather than
-    failing: a request that would only ever produce a PAID error is refused
-    before it is sent, and a voice name is not worth losing a run over."""
+# ---------------------------------------------------------------------------
+# The cast, per backend — one list, wherever it is asked from
+# ---------------------------------------------------------------------------
+def cast(provider: str | None = None, language: str = "") -> tuple[dict, ...]:
+    """The voices this backend offers: `[{name, tone, persona}, …]`.
+
+    ⚠ THE BROWSER'S PICKER IS FILLED FROM HERE (through `GET /dialogue`), so it
+    cannot offer a name the run would be refused for. That was already the rule
+    when there was one backend — "the voice list used to be six names typed into
+    the JSX" — and a second backend is exactly the situation it was written for.
+
+    ⚠ AND THE LANGUAGE IS PART OF THE QUESTION ON DEEPGRAM, because there the
+    voice NAME carries the language (`aura-2-thalia-en` vs `aura-2-sirio-es`)
+    and there is no language parameter at all. A picker that offered the English
+    cast for a German film would be offering eleven voices that read German
+    words with English phonetics — and be charged for it.
+    """
+    picked = resolve_provider(provider)
+    if picked == "sarvam":
+        return sarvam.cast()
+    if picked == "deepgram":
+        return deepgram.tts_cast(language)
+    return CAST
+
+
+def default_voice(provider: str | None = None, language: str = "") -> str:
+    """Who reads a line nothing has cast, on this backend, in this language."""
+    picked = resolve_provider(provider)
+    if picked == "sarvam":
+        return sarvam.default_voice()
+    if picked == "deepgram":
+        return deepgram.tts_default_voice(language)
+    return DEFAULT_VOICE
+
+
+def personas(provider: str | None = None, language: str = "") -> dict[str, dict]:
+    """`PERSONAS`, cast for this backend: key → {label, voice, direction, note}.
+
+    ⚠ THE KEYS AND LABELS NEVER CHANGE AND THE VOICE ALWAYS DOES. A stored
+    dialogue sheet holds `persona: "grandfather"`, and that has to keep meaning
+    the same thing whichever backend is switched on tomorrow — the persona is
+    the provider-blind layer, and the voice is the provider's answer to it.
+
+    ⚠ AND `direction` IS EMPTY FOR EVERY BACKEND BUT GOOGLE, because it is not
+    sent to them. The dialog prints it as "Read as an elderly man" — the one
+    visible sign that an age and a sex reached the model — and printing it over
+    a backend that never receives it would be a caption for something that did
+    not happen. On Sarvam and Deepgram the age is carried by the CASTING (and,
+    on Sarvam, by pace), which is what the voice column already shows.
+    """
+    picked = resolve_provider(provider)
+    if picked not in VENDORS:
+        return {key: {**entry, "note": ""} for key, entry in PERSONAS.items()}
+    return {
+        key: {
+            "label": entry["label"],
+            "voice": voice_for_persona(key, picked, language),
+            "direction": "",
+            # ⚠ WHAT THIS BACKEND CANNOT ACTUALLY DELIVER FOR THAT PART. "" when
+            # it can. Neither Aura nor Bulbul publishes a child voice, and
+            # several of Aura's languages have two or three voices in total, so
+            # a persona often lands on the nearest thing — and the dialog says
+            # so, beside the line, before the money. See `persona_note`.
+            "note": persona_note(key, picked, language),
+        }
+        for key, entry in PERSONAS.items()
+    }
+
+
+def persona_note(
+    persona: str | None, provider: str | None = None, language: str = ""
+) -> str:
+    """⚠ THE PROMISE THIS BACKEND CANNOT KEEP FOR THAT PART. "" when it can.
+
+    Google is the only one of the three with real child voices, and the only one
+    that can be TOLD an age; Sarvam publishes no ages at all and Deepgram's
+    youngest tier is "young adult". So a "child" line on either of those is
+    read by the nearest adult, and this is the sentence that says so — printed
+    in the 🎙 dialog beside the line, where it is still free to change the voice,
+    set `SARVAM_CAST`, or switch to `VOICE_PROVIDER=gemini`.
+
+    ⚠ IT IS NOT AN ERROR AND MUST NOT BECOME ONE. The run is perfectly valid;
+    the user simply deserves to know what they are buying before they buy it.
+    """
+    picked = resolve_provider(provider)
+    key = resolve_persona(persona)
+    if picked == "sarvam":
+        return sarvam.persona_note(key)
+    if picked == "deepgram":
+        return deepgram.tts_persona_note(key, language)
+    return ""
+
+
+def resolve_voice(
+    voice: str | None, provider: str | None = None, language: str = ""
+) -> str:
+    """A voice name THIS backend has FOR THIS FILM, or its default.
+
+    Unknown names fold down rather than failing: a request that would only ever
+    produce a PAID error is refused before it is sent, and a voice name is not
+    worth losing a run over. ⚠ ON DEEPGRAM A VOICE FROM ANOTHER LANGUAGE COUNTS
+    AS UNKNOWN — `aura-2-thalia-en` on a Japanese board is exactly the mistake
+    that must not reach the API.
+    """
+    picked = resolve_provider(provider)
+    if picked == "sarvam":
+        return sarvam.resolve_voice(voice)
+    if picked == "deepgram":
+        return deepgram.tts_resolve_voice(voice, language)
     name = (voice or "").strip()
     for known in VOICES:
         if known.lower() == name.lower():
@@ -189,32 +430,97 @@ def resolve_persona(persona: str | None) -> str:
     return key if key in PERSONAS and key else ""
 
 
-def voice_for_persona(persona: str | None) -> str:
-    """The voice this project casts for that kind of speaker."""
-    return PERSONAS[resolve_persona(persona)]["voice"]
+def voice_for_persona(
+    persona: str | None, provider: str | None = None, language: str = ""
+) -> str:
+    """The voice this project casts for that kind of speaker, on this backend."""
+    picked = resolve_provider(provider)
+    key = resolve_persona(persona)
+    if picked == "sarvam":
+        return sarvam.voice_for_persona(key)
+    if picked == "deepgram":
+        return deepgram.tts_voice_for_persona(key, language)
+    return PERSONAS[key]["voice"]
 
 
-def direction_for(persona: str | None) -> str:
-    """How the model is told to read for that kind of speaker. "" = plainly."""
+def direction_for(persona: str | None, provider: str | None = None) -> str:
+    """How the model is TOLD to read for that kind of speaker. "" = plainly.
+
+    ⚠ ALWAYS "" OFF GOOGLE. The other backends take no instruction — they would
+    read one out loud — so there is nothing to tell them and nothing to charge
+    for. See `prompt_for`, which is the only caller that matters.
+    """
+    if resolve_provider(provider) in VENDORS:
+        return ""
     return PERSONAS[resolve_persona(persona)]["direction"]
 
 
-def voice_for(line: dict, default: str | None = None) -> str:
+def _persona_of_voice(name: str) -> str:
+    """WHOSE PART THIS VOICE WAS CAST FOR, on whichever backend owns the name.
+
+    ⚠ THIS IS THE TRANSLATION BETWEEN BACKENDS, and it exists because a dialogue
+    sheet is SAVED. A board voiced last week says `voice: "Kore"`; the same board
+    read today with `VOICE_PROVIDER=sarvam` must not fail, must not silently drop
+    the casting the user did, and must not send "Kore" to an API that has never
+    heard of it. So a name that is not this backend's is looked up in the others,
+    and the PERSONA it stood for — "woman" — is cast again here.
+    """
+    key = (name or "").strip().lower()
+    if not key:
+        return ""
+    tables = [CAST, sarvam.cast("bulbul:v3"), sarvam.cast("bulbul:v2")]
+    # ⚠ EVERY LANGUAGE OF AURA'S, not just this film's: the point of this lookup
+    # is a name that does NOT belong to the run's own cast, and an English voice
+    # on a German board is precisely that case.
+    tables += [deepgram.tts_cast(code) for code in deepgram.tts_languages()]
+    for table in tables:
+        for entry in table:
+            if str(entry["name"]).lower() == key:
+                return entry["persona"]
+    return ""
+
+
+def voice_for(
+    line: dict,
+    default: str | None = None,
+    provider: str | None = None,
+    language: str = "",
+) -> str:
     """WHICH VOICE READS THIS LINE, in the one order that can't surprise anyone.
 
     The line's own voice wins (the user picked it in the dialogue sheet), then
     the persona's casting, then the run's default. ⚠ THE PERSONA MUST NOT MASK
-    THE RUN DEFAULT when there is no persona: `voice_for_persona("")` answers
-    `DEFAULT_VOICE`, so asking it unconditionally would quietly re-cast every
-    unattributed line as Kore however the picker at the top of the dialog was set.
+    THE RUN DEFAULT when there is no persona: `voice_for_persona("")` answers the
+    backend's own default, so asking it unconditionally would quietly re-cast
+    every unattributed line however the picker at the top of the dialog was set.
+
+    ⚠ AND A VOICE FROM ANOTHER BACKEND IS TRANSLATED, NOT DROPPED — see
+    `_persona_of_voice`. Folding it straight to the default would throw away a
+    casting decision the user made and paid attention to, which is worse than
+    the nearest equivalent voice.
     """
+    picked = resolve_provider(provider)
     named = str((line or {}).get("voice") or "").strip()
     if named:
-        return resolve_voice(named)
+        if named.lower() in {v.lower() for v in _names(picked, language)}:
+            return resolve_voice(named, picked, language)
+        borrowed = _persona_of_voice(named)
+        if borrowed:
+            return voice_for_persona(borrowed, picked, language)
     persona = resolve_persona((line or {}).get("persona"))
     if persona:
-        return PERSONAS[persona]["voice"]
-    return resolve_voice(default)
+        return voice_for_persona(persona, picked, language)
+    # The run's default gets the same treatment — it can be a foreign name too,
+    # because it comes from the same saved request the lines do. One level only:
+    # the recursive call carries no default of its own.
+    if str(default or "").strip():
+        return voice_for({"voice": default}, provider=picked, language=language)
+    return default_voice(picked, language)
+
+
+def _names(provider: str | None = None, language: str = "") -> tuple[str, ...]:
+    """Every voice name this backend answers to for this film."""
+    return tuple(entry["name"] for entry in cast(provider, language))
 
 
 # --- Guessing a persona from the board's own words --------------------------
@@ -302,8 +608,8 @@ def persona_from(name: str = "", description: str = "") -> str:
     return "man" if sex == "m" else "woman"
 
 
-def prompt_for(line: dict) -> str:
-    """EXACTLY what one line sends to the model — its direction and its words.
+def prompt_for(line: dict, provider: str | None = None) -> str:
+    """EXACTLY what one line sends to the backend — its direction and its words.
 
     ⚠ THE DIRECTION IS PART OF THE PROMPT, SO IT IS PART OF THE PRICE. `estimate`
     counts this string rather than the bare line, which is what keeps the number
@@ -313,35 +619,97 @@ def prompt_for(line: dict) -> str:
     The shape (direction, colon, the line in quotes) is the one Google documents
     for steering this model, and the quotes are what keep the direction OUT of
     the audio: it reads what is quoted and treats the rest as instruction.
+
+    ⚠ AND OFF GOOGLE THERE IS NO DIRECTION AT ALL — the bare line goes. Sarvam
+    and Deepgram take no instruction, they take TEXT, so a stage direction sent
+    to either is a sentence the film's narrator says out loud ("Read this line as
+    an elderly man") in a paid run. `direction_for` answers "" for them, which
+    makes this one function right for all three; the alternative is a second
+    prompt builder per backend, and then a second thing for `estimate` to get
+    wrong.
     """
     text = str((line or {}).get("text") or "").strip()
     if not text:
         return ""
-    direction = direction_for((line or {}).get("persona"))
+    direction = direction_for((line or {}).get("persona"), provider)
     if not direction:
         return text
     return f'Read this line as {direction}:\n"{text}"'
 
 
 # ---------------------------------------------------------------------------
+# Can this run happen at all? — FREE, and asked BEFORE the button spends
+# ---------------------------------------------------------------------------
+def preflight(*, provider: str | None = None, language: str = "") -> None:
+    """Raise `VoiceoverError` if this backend cannot read this film. Spends nothing.
+
+    ⚠ THE POINT IS TO FAIL BEFORE THE MONEY, NOT DURING IT. A voiceover is one
+    call PER LINE, so "Aura does not speak Hindi" discovered on line 1 of 40 is
+    a run that has already moved shots and written a track; discovered here it
+    is a sentence in the dialog naming the `.env` line to change. Every message
+    this can raise names that line — see each vendor's own hint.
+
+    Called by the route before the job is queued, and again inside `speak` for
+    anything that reaches it another way.
+    """
+    picked = resolve_provider(provider)
+    if picked == "sarvam":
+        if not sarvam.configured():
+            raise VoiceoverError(sarvam.missing_key_hint())
+        if not sarvam.speaks(language):
+            raise VoiceoverError(
+                f"Sarvam's Bulbul does not speak {language.strip() or 'that language'}. "
+                "It reads Hindi, Bengali, Gujarati, Kannada, Malayalam, Marathi, "
+                "Odia, Punjabi, Tamil, Telugu and Indian English. Set "
+                "VOICE_PROVIDER=gemini in your .env and restart to read this "
+                "film on Gemini instead."
+            )
+        return
+    if picked == "deepgram":
+        if not deepgram.configured():
+            raise VoiceoverError(deepgram.tts_missing_key_hint())
+        if not deepgram.tts_speaks(language):
+            raise VoiceoverError(
+                f"Deepgram's Aura voices do not speak {language.strip()}. They "
+                "read English, Spanish, German, French, Dutch, Italian and "
+                "Japanese. For an Indian language set VOICE_PROVIDER=sarvam in "
+                "your .env, or VOICE_PROVIDER=gemini for anything else, and "
+                "restart."
+            )
+        return
+    if picked == "gemini" and not ai_keys.gemini_key(CAPABILITY)[0]:
+        raise VoiceoverError(ai_keys.missing_key_hint(CAPABILITY))
+
+
+# ---------------------------------------------------------------------------
 # The estimate — FREE, and shown before anything is spent
 # ---------------------------------------------------------------------------
-def estimate(lines: list[dict]) -> dict:
+def estimate(
+    lines: list[dict], *, provider: str | None = None, language: str = ""
+) -> dict:
     """What reading these lines aloud should cost. Advisory; spends nothing.
 
     ⚠ COUNTS THE PROMPTS, NOT THE LINES — `prompt_for` is what the run sends, and
     a line with a persona sends its stage direction too. Counting the bare line
     would quote less than the run costs, which is the one direction an advisory
     price must never be wrong in.
+
+    ⚠ AND IT COUNTS THEM FOR THE BACKEND THAT WILL ANSWER. The same sheet is a
+    different number of characters on Google (which is sent the directions) than
+    on Sarvam (which is not), at a rate three times different — so provider and
+    language travel with the quote, exactly as they do with the run.
     """
-    prompts = [prompt_for(line) for line in (lines or [])]
+    picked = resolve_provider(provider)
+    prompts = [prompt_for(line, picked) for line in (lines or [])]
     prompts = [p for p in prompts if p]
     characters = sum(len(p) for p in prompts)
     return {
         "lines": len(prompts),
         "characters": characters,
-        "usd": round(characters / 1000.0 * USD_PER_1K_CHARS, 4),
-        "model": tts_model_id(),
+        "usd": round(characters / 1000.0 * usd_per_1k_chars(picked), 4),
+        "model": tts_model_id(picked, language),
+        "provider": picked,
+        "biller": biller(picked),
         "over_limit": characters > MAX_CHARACTERS,
         "limit_characters": MAX_CHARACTERS,
     }
@@ -350,7 +718,14 @@ def estimate(lines: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 # The model call — the half that costs money
 # ---------------------------------------------------------------------------
-def speak(text: str, *, voice: str | None = None, provider: str | None = None) -> bytes:
+def speak(
+    text: str,
+    *,
+    voice: str | None = None,
+    provider: str | None = None,
+    language: str = "",
+    persona: str | None = None,
+) -> bytes:
     """SPENDS QUOTA. Read one PROMPT aloud. Returns raw PCM (see the constants).
 
     ⚠ A PROMPT, NOT A LINE: `prompt_for` may have wrapped the words in a stage
@@ -361,16 +736,44 @@ def speak(text: str, *, voice: str | None = None, provider: str | None = None) -
     Raw PCM rather than a container, because the caller is about to lay several
     of these end to end at known offsets — and concatenating containers means
     decoding them again, with a decoder this install does not have.
+
+    ⚠ THE DISPATCH IS HERE AND THE BYTES ARE THE SAME ON EVERY BRANCH — the same
+    shape `captions.transcribe` uses for the same reason. Whichever backend
+    answers, what comes back is PCM in the house format, so `speak_lines`,
+    `lay_track`, the shot fitting and the captions never learn there is more than
+    one. A second timing path per backend is how the two would drift apart.
+
+    `persona` is read only where it changes DELIVERY rather than casting (Sarvam's
+    pace). The voice itself is already settled by `voice_for` before we get here.
     """
     line = (text or "").strip()
     if not line:
         raise VoiceoverError("There is nothing to read aloud.")
 
+    picked = resolve_provider(provider)
+    if picked in VENDORS:
+        preflight(provider=picked, language=language)
+        try:
+            if picked == "sarvam":
+                return sarvam.speak(
+                    line,
+                    voice=resolve_voice(voice, picked),
+                    persona=resolve_persona(persona),
+                    language=language,
+                )
+            return deepgram.speak(
+                line, voice=resolve_voice(voice, picked, language), language=language
+            )
+        except (sarvam.SarvamError, deepgram.DeepgramError) as exc:
+            # Re-raised as the error the route already knows how to show. The
+            # message is the vendor's own and already names the line to change.
+            raise VoiceoverError(str(exc)) from exc
+
     client = script_breakdown.get_client(
-        resolve_provider(provider), key_env=ai_keys.key_env(CAPABILITY)
+        picked, key_env=ai_keys.key_env(CAPABILITY)
     )
-    model_id = tts_model_id()
-    name = resolve_voice(voice)
+    model_id = tts_model_id(picked)
+    name = resolve_voice(voice, picked)
     try:
         response = client.models.generate_content(
             model=model_id,
@@ -476,6 +879,7 @@ def speak_lines(
     *,
     voice: str | None = None,
     provider: str | None = None,
+    language: str = "",
     progress_cb=None,
 ) -> tuple[bytes, list[dict]]:
     """SPENDS QUOTA. Read ONE SHOT's lines, back to back, into a single blob.
@@ -493,10 +897,11 @@ def speak_lines(
     the breath before the NEXT shot's line is the caller's to add (`GAP_MS`),
     once, where it can see whether there is a next line at all.
     """
+    picked = resolve_provider(provider)
     track = bytearray()
     spans: list[dict] = []
     for line in lines or []:
-        prompt = prompt_for(line)
+        prompt = prompt_for(line, picked)
         if not prompt:
             continue
         if progress_cb:
@@ -504,7 +909,13 @@ def speak_lines(
         if track:
             track += silence(GAP_MS)
         at = pcm_duration_ms(bytes(track))
-        pcm = speak(prompt, voice=voice_for(line, voice), provider=provider)
+        pcm = speak(
+            prompt,
+            voice=voice_for(line, voice, picked, language),
+            provider=picked,
+            language=language,
+            persona=(line or {}).get("persona"),
+        )
         track += pcm
         spans.append({
             "start_ms": at,

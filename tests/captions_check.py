@@ -1358,7 +1358,7 @@ print("\nVoiceover speech — tts.speak_lines / assemble, through a stub `speak`
 MS_PER_CHAR = 60
 
 
-def stub_speak(text, *, voice=None, provider=None):
+def stub_speak(text, **kwargs):  # voice/provider/language/persona — see tts.speak
     return tts.silence(len(text) * MS_PER_CHAR)
 
 
